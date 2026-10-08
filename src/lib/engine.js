@@ -2281,6 +2281,11 @@ export class Engine {
       group.add(i)
       changed.add(i)
     }
+    // How far each group that joins was moved: the one snapped onto first, so it wins a tie.
+    const parts = [
+      { n: target.length, dx: 0, dy: 0 },
+      { n: ids.length, dx: best.dx, dy: best.dy },
+    ]
 
     // Pull in any other groups that now line up with the merged one.
     for (let found = true; found; ) {
@@ -2294,10 +2299,16 @@ export class Engine {
           shift(other, -m.dx, -m.dy)
           for (const i of other) group.add(i)
           credit(other)
+          parts.push({ n: other.length, dx: -m.dx, dy: -m.dy })
           found = true
         }
       }
     }
+
+    // The largest group stays where it was and everything else lines up with it, so adding a piece
+    // never nudges a big group away from the loose pieces placed around it.
+    const anchor = parts.reduce((a, b) => (b.n > a.n ? b : a))
+    if (anchor.dx || anchor.dy) shift(group, -anchor.dx, -anchor.dy)
 
     let gid = Infinity
     for (const i of group) gid = Math.min(gid, i)

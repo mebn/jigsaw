@@ -1,5 +1,9 @@
 # Changelog
 
+## 8 October 2026
+
+- When pieces connect, the biggest group now stays where it is and the smaller ones move to fit it. Before, adding a piece next to a loose one could nudge your whole main group, knocking it out of line with the pieces you had laid out around it.
+
 ## 7 October 2026
 
 - The outline around selected pieces is smoother: it's the same thickness all the way round and follows the piece's shape closely, without a gap. It's blue for your own selection and in the other player's colour for theirs, and pieces being carried keep their outline too, on your screen and everyone else's.
