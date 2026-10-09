@@ -1007,9 +1007,20 @@ export class Engine {
       this.refShift = null
       this.refFade = null
       this.trayShift = null
+      this.endTrim()
       this.pinch = { d: Math.hypot(a[0] - b[0], a[1] - b[1]), m: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] }
       this.invalidate()
       return
+    }
+    // Trimming an image: a drag over it picks the part to keep, a press anywhere else stops.
+    if (this.trim) {
+      const ref = this.refs.find((r) => r.id === this.trim.id)
+      const [x0, y0, x1, y1] = ref ? this.refRect(ref) : [0, 0, -1, -1]
+      if (e.button === 0 && sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) {
+        this.trim.box = { pointer: e.pointerId, sx0: sx, sy0: sy, sx, sy }
+        return
+      }
+      this.endTrim()
     }
     // A tray's buttons: its auto sort switch, and its menu, opened below the button.
     if (e.button === 0 && !this.panMode) {
@@ -1227,6 +1238,13 @@ export class Engine {
       this.invalidate()
       return
     }
+    const tb = this.trim?.box
+    if (tb && e.pointerId === tb.pointer) {
+      tb.sx = sx
+      tb.sy = sy
+      this.invalidate()
+      return
+    }
     if (this.marquee && e.pointerId === this.marquee.pointer) {
       this.marquee.sx = sx
       this.marquee.sy = sy
@@ -1289,6 +1307,7 @@ export class Engine {
       this.sendCursor(true)
       this.invalidate()
     }
+    if (this.trim?.box && e.pointerId === this.trim.box.pointer) this.applyTrim()
     if (this.refFade && e.pointerId === this.refFade.pointer) {
       const { ref, moved } = this.refFade
       this.refFade = null
@@ -1355,6 +1374,7 @@ export class Engine {
     if (e.target?.closest?.('input, textarea, [contenteditable]')) return
     // Dialogs over the board keep the keyboard.
     if (document.querySelector('.modal-bg')) return
+    if (e.key === 'Escape' && this.trim) return this.endTrim()
     if (e.key === 'Escape' && !this.drag) {
       if (this.selCount) this.setSelection(new Set())
       this.selectRef(null)
@@ -1420,6 +1440,11 @@ export class Engine {
 
   // Hovering a connected piece shows who connected it.
   hover(sx, sy) {
+    if (this.trim) {
+      this.canvas.style.cursor = 'crosshair'
+      this.setHighlight(null)
+      return this.showTip(this.trim.box ? null : { text: 'Drag over the image to pick the part to keep', sx, sy })
+    }
     if (this.panMode) {
       this.canvas.style.cursor = 'grab'
       this.setHighlight(null)
@@ -2568,8 +2593,15 @@ export class Engine {
 
   // ---- reference images ---------------------------------------------------
 
+  // The part of the picture an image shows, as fractions of it: [left, top, width, height].
+  refTrim(ref) {
+    return [ref.trimX ?? 0, ref.trimY ?? 0, ref.trimW ?? 1, ref.trimH ?? 1]
+  }
+
+  // An image's size on the table, of the part that shows: w is its width.
   refSize(ref) {
-    return [ref.w, ref.w * this.refAspect]
+    const [, , tw, th] = this.refTrim(ref)
+    return [ref.w, (ref.w * this.refAspect * th) / tw]
   }
 
   // Adds the reference image centred on a canvas point, or the middle of the view.
@@ -2578,7 +2610,7 @@ export class Engine {
     const [x, y] = this.toWorld(sx, sy)
     // Fit comfortably in the current view.
     const w = Math.min(this.room.width, ((Math.min(this.vw, this.vh / this.refAspect) * 0.6) / this.cam.z))
-    const ref = { id: Math.random().toString(36).slice(2, 10), x, y, w, opacity: 1, author: this.user || '' }
+    const ref = { id: Math.random().toString(36).slice(2, 10), x, y, w, opacity: 1, trimX: 0, trimY: 0, trimW: 1, trimH: 1, author: this.user || '' }
     this.refs.push(ref)
     this.selectRef(ref.id)
     this.onRef?.(ref, false)
@@ -2605,6 +2637,7 @@ export class Engine {
     else this.trackObj('ref', id, null)
     this.refs = this.refs.filter((r) => r.id !== id)
     if (this.refSel === id) this.refSel = null
+    if (this.trim?.id === id) this.endTrim()
     this.selRefs.delete(id)
     if (this.refDrag?.ref.id === id) this.refDrag = null
     if (!remote) this.onRefDelete?.(id)
@@ -2681,6 +2714,86 @@ export class Engine {
     this.invalidate()
   }
 
+  // Trim: the next drag over the image picks the part of it that stays showing; Escape, or pressing
+  // anywhere else, leaves it as it is.
+  startTrim(id) {
+    if (this.guard && !this.guard()) return
+    if (!this.refs.some((r) => r.id === id)) return
+    this.trim = { id, box: null }
+    this.selectRef(id)
+    if (this.selCount) this.setSelection(new Set())
+    this.canvas.style.cursor = 'crosshair'
+    this.invalidate()
+  }
+
+  endTrim() {
+    if (!this.trim) return
+    this.trim = null
+    this.canvas.style.cursor = ''
+    this.showTip(null)
+    this.invalidate()
+  }
+
+  // The trim box, in screen space, kept inside its image: [x0, y0, x1, y1].
+  trimRect() {
+    const t = this.trim
+    const ref = t && this.refs.find((r) => r.id === t.id)
+    if (!ref || !t.box) return null
+    const [x0, y0, x1, y1] = this.refRect(ref)
+    const cx = (v) => Math.min(x1, Math.max(x0, v))
+    const cy = (v) => Math.min(y1, Math.max(y0, v))
+    const b = t.box
+    return [cx(Math.min(b.sx0, b.sx)), cy(Math.min(b.sy0, b.sy)), cx(Math.max(b.sx0, b.sx)), cy(Math.max(b.sy0, b.sy))]
+  }
+
+  // Shows only the part of the image inside the trim box, left where it was on the table.
+  applyTrim() {
+    const ref = this.refs.find((r) => r.id === this.trim?.id)
+    const box = this.trimRect()
+    this.endTrim()
+    if (!ref || !box || box[2] - box[0] < 4 || box[3] - box[1] < 4) return
+    if (this.guard && !this.guard()) return
+    const [x0, y0, x1, y1] = this.refRect(ref)
+    const [tx, ty, tw, th] = this.refTrim(ref)
+    const [a, b] = [(box[0] - x0) / (x1 - x0), (box[2] - x0) / (x1 - x0)]
+    const [c, d] = [(box[1] - y0) / (y1 - y0), (box[3] - y0) / (y1 - y0)]
+    const [wx0, wy0] = this.toWorld(box[0], box[1])
+    const [wx1, wy1] = this.toWorld(box[2], box[3])
+    Object.assign(ref, {
+      trimX: tx + a * tw,
+      trimY: ty + c * th,
+      trimW: Math.max(0.01, (b - a) * tw),
+      trimH: Math.max(0.01, (d - c) * th),
+      x: (wx0 + wx1) / 2,
+      y: (wy0 + wy1) / 2,
+      w: wx1 - wx0,
+    })
+    this.onRef?.(ref, false)
+    this.invalidate()
+  }
+
+  // Shows the whole picture again, at the same scale, with the part that showed staying where it was.
+  untrim(id) {
+    const ref = this.refs.find((r) => r.id === id)
+    if (!ref) return
+    if (this.guard && !this.guard()) return
+    const [tx, ty, tw, th] = this.refTrim(ref)
+    const [w, h] = this.refSize(ref)
+    const fw = w / tw
+    const fh = h / th
+    Object.assign(ref, {
+      x: ref.x - w / 2 - tx * fw + fw / 2,
+      y: ref.y - h / 2 - ty * fh + fh / 2,
+      w: fw,
+      trimX: 0,
+      trimY: 0,
+      trimW: 1,
+      trimH: 1,
+    })
+    this.onRef?.(ref, false)
+    this.invalidate()
+  }
+
   // Screen-space corners of a reference image: [x0, y0, x1, y1].
   refRect(ref) {
     const [w, h] = this.refSize(ref)
@@ -2747,7 +2860,8 @@ export class Engine {
       ref.x = wx + d.dx
       ref.y = wy + d.dy
     } else {
-      const a = this.refAspect
+      const [w0, h0] = this.refSize(ref)
+      const a = h0 / w0
       const min = this.geo.S
       const w = Math.max(min, Math.max(d.sx * (wx + (d.ox || 0) - d.ax), (d.sy * (wy + (d.oy || 0) - d.ay)) / a))
       ref.w = w
@@ -3372,7 +3486,7 @@ export class Engine {
       const on = this.selRefs.has(ref.id)
       const mark = !on && markedRefs.get(ref.id)
       const rect = [sx(ref.x - w / 2), sy(ref.y - h / 2), sx(ref.x + w / 2), sy(ref.y + h / 2)]
-      this.gRefs.set([...rect, ...pm(rgba(on ? this.colors.sel : mark || this.colors.dot)), (on || mark ? 3 : 1) * dpr, ref.opacity ?? 1, 0, 0], refs++ * REF_FLOATS)
+      this.gRefs.set([...rect, ...pm(rgba(on ? this.colors.sel : mark || this.colors.dot)), (on || mark ? 3 : 1) * dpr, ref.opacity ?? 1, 0, 0, ...this.refTrim(ref)], refs++ * REF_FLOATS)
     }
 
     const R = this.radius
@@ -3564,17 +3678,35 @@ export class Engine {
       ctx.strokeStyle = this.colors.sel
       ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
       ctx.fillStyle = this.colors.bg
-      // No handle in the top right corner, which holds the menu button.
-      for (const [hx, hy] of [
-        [x0, y0],
-        [x0, y1],
-        [x1, y1],
-      ]) {
+      // No handle in the top right corner, which holds the menu button, and none while trimming.
+      for (const [hx, hy] of this.trim
+        ? []
+        : [
+            [x0, y0],
+            [x0, y1],
+            [x1, y1],
+          ]) {
         ctx.beginPath()
         ctx.roundRect(hx - HANDLE / 2 - 1, hy - HANDLE / 2 - 1, HANDLE + 2, HANDLE + 2, 3)
         ctx.fill()
         ctx.stroke()
       }
+    }
+    // Trimming: what would be cut away is shaded, the part kept is outlined.
+    const tb = sel && this.trim?.id === sel.id && this.trimRect()
+    if (tb) {
+      const [x0, y0, x1, y1] = this.refRect(sel)
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.beginPath()
+      ctx.rect(x0, y0, x1 - x0, y1 - y0)
+      ctx.rect(tb[0], tb[1], tb[2] - tb[0], tb[3] - tb[1])
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'
+      ctx.fill('evenodd')
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([5, 4])
+      ctx.strokeStyle = this.colors.sel
+      ctx.strokeRect(tb[0], tb[1], tb[2] - tb[0], tb[3] - tb[1])
+      ctx.setLineDash([])
     }
     this.drawPops()
     this.drawCursors()

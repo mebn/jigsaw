@@ -29,6 +29,7 @@ export default function ContextMenu({ engine, at, onClose }) {
   }
   const image = at.kind === 'ref' && engine.refs.find((r) => r.id === at.id)
   const [opacity, setOpacity] = useState(image?.opacity ?? 1)
+  const trimmed = image && engine.refTrim(image).some((v, k) => v !== (k < 2 ? 0 : 1))
   // The opacity being slid to, saved when the slider is let go or the menu closes; null once saved.
   const fade = useRef(null)
   const saveOpacity = () => {
@@ -71,7 +72,11 @@ export default function ContextMenu({ engine, at, onClose }) {
       : at.kind === 'tray'
         ? [...turn, { label: 'Auto sort', keys: tray?.auto ? 'On' : 'Off', run: () => engine.setTrayAuto(at.id, !tray?.auto) }, remove('Remove tray')]
         : at.kind === 'ref'
-          ? [remove('Remove image')]
+          ? [
+              { label: 'Trim', keys: '', run: () => engine.startTrim(at.id) },
+              ...(trimmed ? [{ label: 'Show whole image', keys: '', run: () => engine.untrim(at.id) }] : []),
+              remove('Remove image'),
+            ]
           : [{ label: 'Edit note', keys: 'Double click', run: () => requestAnimationFrame(() => engine.notes?.edit(at.id)) }, remove('Remove note')]
 
   // Keep the menu on screen.

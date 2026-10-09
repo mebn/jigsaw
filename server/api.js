@@ -206,11 +206,12 @@ function createApi(dbFile) {
       INSERT INTO times (room_id, user, seen) VALUES (?, ?, ?)
       ON CONFLICT (room_id, user) DO UPDATE SET seen = excluded.seen`),
     deleteTimes: db.prepare('DELETE FROM times WHERE room_id = ?'),
-    refs: db.prepare('SELECT id, x, y, w, opacity, author, created FROM refs WHERE room_id = ? ORDER BY created'),
+    refs: db.prepare('SELECT id, x, y, w, opacity, trim_x AS trimX, trim_y AS trimY, trim_w AS trimW, trim_h AS trimH, author, created FROM refs WHERE room_id = ? ORDER BY created'),
     upsertRef: db.prepare(`
-      INSERT INTO refs (id, room_id, x, y, w, opacity, author, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (room_id, id) DO UPDATE SET x = excluded.x, y = excluded.y, w = excluded.w, opacity = excluded.opacity`),
-    ref: db.prepare('SELECT id, x, y, w, opacity, author, created FROM refs WHERE room_id = ? AND id = ?'),
+      INSERT INTO refs (id, room_id, x, y, w, opacity, trim_x, trim_y, trim_w, trim_h, author, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (room_id, id) DO UPDATE SET x = excluded.x, y = excluded.y, w = excluded.w, opacity = excluded.opacity,
+        trim_x = excluded.trim_x, trim_y = excluded.trim_y, trim_w = excluded.trim_w, trim_h = excluded.trim_h`),
+    ref: db.prepare('SELECT id, x, y, w, opacity, trim_x AS trimX, trim_y AS trimY, trim_w AS trimW, trim_h AS trimH, author, created FROM refs WHERE room_id = ? AND id = ?'),
     deleteRef: db.prepare('DELETE FROM refs WHERE room_id = ? AND id = ?'),
     deleteRefs: db.prepare('DELETE FROM refs WHERE room_id = ?'),
     trays: db.prepare(
@@ -374,12 +375,20 @@ function createApi(dbFile) {
     text: String(b?.text || '').slice(0, 2000),
     author: String(b?.author || '').slice(0, 32),
   })
+  // The part of an image that shows, as fractions of the picture: the whole of it when not given.
+  const cleanTrim = (b) => {
+    const f = (v, d, lo, hi) => Math.min(hi, Math.max(lo, v == null || !Number.isFinite(+v) ? d : +v))
+    const trimX = f(b?.trimX, 0, 0, 0.99)
+    const trimY = f(b?.trimY, 0, 0, 0.99)
+    return { trimX, trimY, trimW: f(b?.trimW, 1, 0.01, 1 - trimX), trimH: f(b?.trimH, 1, 0.01, 1 - trimY) }
+  }
   const cleanRef = (b) => ({
     id: String(b?.id || '').slice(0, 40),
     x: +b?.x || 0,
     y: +b?.y || 0,
     w: Math.max(1, +b?.w || 0),
     opacity: Math.min(1, Math.max(0.1, +b?.opacity || 1)),
+    ...cleanTrim(b),
     author: String(b?.author || '').slice(0, 32),
   })
 
@@ -414,7 +423,7 @@ function createApi(dbFile) {
     if (!r.id) return null
     if (live) return { ...r, created: +b.created || 0 }
     r.author = playerId(r.author) || ''
-    q.upsertRef.run(r.id, roomId, r.x, r.y, r.w, r.opacity, r.author, Date.now())
+    q.upsertRef.run(r.id, roomId, r.x, r.y, r.w, r.opacity, r.trimX, r.trimY, r.trimW, r.trimH, r.author, Date.now())
     return q.ref.get(roomId, r.id)
   }
 

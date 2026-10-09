@@ -15,7 +15,7 @@
 // images [rect border (width opacity - -)].
 export const PIECE_FLOATS = 8
 export const TRAY_FLOATS = 16
-export const REF_FLOATS = 12
+export const REF_FLOATS = 16
 
 // The shadow mask's resolution, as a fraction of the screen's.
 const SHADOW_K = 3
@@ -114,15 +114,17 @@ struct O {
   @location(3) @interpolate(flat) border: vec4f,
   @location(4) @interpolate(flat) bw: f32,
   @location(5) @interpolate(flat) op: f32,
+  @location(6) @interpolate(flat) part: vec4f,
 }
 @vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) rect: vec4f, @location(1) border: vec4f,
-              @location(2) prm: vec4f) -> O {
+              @location(2) prm: vec4f, @location(3) part: vec4f) -> O {
   let e = prm.x * 0.5 + 1.0;
   let d = mix(rect.xy - e, rect.zw + e, corner(vi));
   var o: O;
   o.p = clip(d);
   o.d = d - (rect.xy + rect.zw) * 0.5;
-  o.uv = (d - rect.xy) / (rect.zw - rect.xy);
+  o.uv = part.xy + (d - rect.xy) / (rect.zw - rect.xy) * part.zw;
+  o.part = part;
   o.hs = (rect.zw - rect.xy) * 0.5;
   o.border = border;
   o.bw = prm.x;
@@ -131,7 +133,7 @@ struct O {
 }
 @fragment fn fs(i: O) -> @location(0) vec4f {
   let s = box(i.d, i.hs, 0.0);
-  let img = textureSample(tex, samp, clamp(i.uv, vec2f(0.0), vec2f(1.0))) * clamp(0.5 - s, 0.0, 1.0) * i.op;
+  let img = textureSample(tex, samp, clamp(i.uv, i.part.xy, i.part.xy + i.part.zw)) * clamp(0.5 - s, 0.0, 1.0) * i.op;
   let k = clamp(i.bw * 0.5 + 0.5 - abs(s), 0.0, 1.0);
   return i.border * k + img * (1.0 - i.border.a * k);
 }
@@ -365,7 +367,7 @@ class Gpu {
     const [bg, tray, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline] = await Promise.all([
       pipe(mBg, 'vsFull', 'fsBg', [], { format: this.format }, []),
       pipe(mTray, 'vs', 'fs', [{ arrayStride: TRAY_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, []),
-      pipe(mRef, 'vs', 'fs', [{ arrayStride: REF_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4') }], screen, [lTex]),
+      pipe(mRef, 'vs', 'fs', [{ arrayStride: REF_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, [lTex]),
       pipe(mPiece, 'vs', 'fs', pieceBuffers, screen, [lAtlas]),
       pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.RED }, [lAtlas]),
       pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.GREEN }, [lAtlas]),

@@ -1,5 +1,9 @@
 # Changelog
 
+## 9 October 2026
+
+- Images can be trimmed: choose **Trim** in an image's menu (**⋯** or right click) and drag over the part you want to keep. The rest is hidden and the part you kept stays where it was. Trim again to narrow it down further, or choose **Show whole image** to get the whole picture back. **Esc** cancels.
+
 ## 8 October 2026
 
 - When pieces connect, the biggest group now stays where it is and the smaller ones move to fit it. Before, adding a piece next to a loose one could nudge your whole main group, knocking it out of line with the pieces you had laid out around it.
