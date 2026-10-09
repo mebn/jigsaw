@@ -601,8 +601,22 @@ export class Engine {
     this.invalidate()
   }
 
+  // C: frames everything on the table: pieces, trays, images and notes.
   fit(animate = true) {
-    this.frame(this.bbox(this.order), 0.82, animate)
+    const b = this.bbox(this.order)
+    const add = (x0, y0, x1, y1) => {
+      b.x0 = Math.min(b.x0, x0)
+      b.y0 = Math.min(b.y0, y0)
+      b.x1 = Math.max(b.x1, x1)
+      b.y1 = Math.max(b.y1, y1)
+    }
+    for (const t of this.trays) add(t.x, t.y, t.x + t.w, t.y + t.h)
+    for (const r of this.refs) {
+      const [w, h] = this.refSize(r)
+      add(r.x - w / 2, r.y - h / 2, r.x + w / 2, r.y + h / 2)
+    }
+    for (const n of this.notes?.get() || []) add(n.x, n.y, n.x + n.w, n.y + n.h)
+    this.frame(b, 0.82, animate)
   }
 
   saveCam() {
@@ -1190,7 +1204,7 @@ export class Engine {
         const l = c.lift
         c.lift = null
         if (l.ids.length) {
-          this.startDrag(l.ids, l.wx, l.wy, c.pointer, l.sx, l.sy)
+          this.startDrag(l.ids, l.wx, l.wy, c.pointer, l.sx, l.sy, true)
           // Not a click, so no piece gets turned over or selected.
           this.drag.moved = true
           // Lifted as if from the tray's middle: growing around the pointer would push the pieces
@@ -1530,7 +1544,8 @@ export class Engine {
 
   // ---- dragging -----------------------------------------------------------
 
-  startDrag(ids, wx, wy, pointer, sx, sy) {
+  // tray: the pieces are riding along with a moved tray, so they aren't outlined as carried.
+  startDrag(ids, wx, wy, pointer, sx, sy, tray = false) {
     if (!ids.length) return
     const set = new Set(ids)
     this.toTop(set)
@@ -1538,6 +1553,7 @@ export class Engine {
       ids,
       set,
       pointer,
+      tray,
       touch: this.touches.has(pointer),
       sx,
       sy,
@@ -1571,7 +1587,7 @@ export class Engine {
     this.showTip(null)
     this.setHighlight(null)
     const d = this.drag
-    this.send({ type: 'grab', ids, ox: d.ox.map(r2), oy: d.oy.map(r2), r0: d.r0, px: r2(wx), py: r2(wy) })
+    this.send({ type: 'grab', ids, ox: d.ox.map(r2), oy: d.oy.map(r2), r0: d.r0, px: r2(wx), py: r2(wy), tray: tray || undefined })
     this.lastLive = performance.now()
     this.invalidate()
   }
@@ -2459,7 +2475,7 @@ export class Engine {
       }
       this.remote.set(msg.client, d)
       if (this.spectator) this.traces.set(msg.client, { ids: msg.ids, ox: msg.ox, oy: msg.oy, r0: msg.r0, frames: [] })
-      this.rlift.set(msg.client, { ids: d.ids, set: new Set(d.ids), value: this.rlift.get(msg.client)?.value || 0, target: 1 })
+      this.rlift.set(msg.client, { ids: d.ids, set: new Set(d.ids), value: this.rlift.get(msg.client)?.value || 0, target: 1, tray: !!msg.tray })
       this.toTop(new Set(d.ids))
       this.remoteLive(d, msg.px, msg.py, msg.k | 0, now)
     } else if (msg.type === 'live') {
@@ -3562,8 +3578,8 @@ export class Engine {
     // The hover outline leaves out selected pieces, which have the selection's.
     const hover = this.hl && !this.drag ? this.hl.ids.filter((i) => !this.sel.has(i)) : []
     // The pieces we carry are outlined too, over everything. There is no hover while carrying, so
-    // they take its place.
-    const hl = this.drag && this.lift ? outlined(this.lift.ids, hlBox) : hover.length ? outlined(hover, hlBox) : [0, 0]
+    // they take its place. Pieces riding along in a moved tray are not.
+    const hl = this.drag && this.lift ? (this.drag.tray ? [0, 0] : outlined(this.lift.ids, hlBox)) : hover.length ? outlined(hover, hlBox) : [0, 0]
     // What other players hold, select or hover over, each in their cursor colour. What they carry is
     // outlined as it's drawn, lifted, over everything, like ours.
     const extra = []
@@ -3571,9 +3587,12 @@ export class Engine {
       if (extra.length >= MAX_OUTLINES) break
       const m = this.marks.get(c)
       const rl = this.rlift.get(c)
-      const up = new Set(rl?.target ? rl.ids.filter((i) => !lifted?.has(i)) : [])
+      // Pieces riding along in a tray they move aren't outlined, as with ours.
+      const tray = rl?.target && rl.tray
+      const up = new Set(rl?.target && !tray ? rl.ids.filter((i) => !lifted?.has(i)) : [])
       // Pieces we carry are left out: they're outlined in our colour, where we hold them.
-      const ids = new Set([...(m?.sel || []), ...(m?.hl || []), ...(this.remote.get(c)?.ids || [])].filter((i) => !up.has(i) && !lifted?.has(i)))
+      const held = tray ? [] : this.remote.get(c)?.ids || []
+      const ids = new Set([...(m?.sel || []), ...(m?.hl || []), ...held].filter((i) => !up.has(i) && !lifted?.has(i)))
       const color = rgba(this.colorOf(c))
       if (ids.size) {
         const box = [Infinity, Infinity, -Infinity, -Infinity]

@@ -3,6 +3,8 @@
 ## 9 October 2026
 
 - Images can be trimmed: choose **Trim** in an image's menu (**⋯** or right click) and drag over the part you want to keep. The rest is hidden and the part you kept stays where it was. Trim again to narrow it down further, or choose **Show whole image** to get the whole picture back. **Esc** cancels.
+- **C** (fit to screen) now makes room for trays, images and notes too, not just the pieces.
+- Moving a tray no longer outlines all the pieces in it, on your screen or anyone else's.
 
 ## 8 October 2026
 
