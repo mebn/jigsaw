@@ -1,6 +1,6 @@
 // Imperative canvas engine: rendering (with WebGPU, see gpu.js), camera, dragging, rotation and snapping.
 import { buildPuzzle, outlinePath, pack, packExtent, scatter, unitCells } from './geometry.js'
-import { drawFront, levels, MIPS, spriteSize } from './sprites.js'
+import { buildSprite, MIPS, spriteSize } from './sprites.js'
 import { createGpu, PIECE_FLOATS, REF_FLOATS, TRAY_FLOATS } from './gpu.js'
 
 const Q = Math.PI / 2
@@ -265,7 +265,7 @@ export class Engine {
     const [spw, sph] = spriteSize(this.geo, this.margin, this.spriteScale)
     this.spriteW = spw / this.spriteScale
     this.spriteH = sph / this.spriteScale
-    // Per piece: its sprite and halved copies of it (see levels()), made in the background.
+    // Per piece: its sprite, { color, shape } with halved copies of each (see sprites.js), made in the background.
     this.sprites = new Array(n)
     this.built = 0
 
@@ -378,13 +378,41 @@ export class Engine {
     this.gRefs = new Float32Array(0)
     gpu.onLost = (why) => console.error('WebGPU device lost:', why)
     gpu.setRefImage(this.refImg)
+    gpu.setCorners(this.spriteCorners(spw, sph))
     this.sprites.forEach((lv, i) => lv && gpu.upload(i, lv))
     this.canvas.before(this.gpuEl)
     this.canvas.after(this.gpuTop)
     this.resize()
   }
 
-  // A piece's sprite levels, kept and sent to the GPU.
+  // Every piece's four corners in its sprite, for the GPU to keep them sharp (see PIECE in gpu.js):
+  // per corner, its place in sprite pixels and the outward normals of the sides into and out of it,
+  // and whether both those sides are cut (not inside a long piece).
+  spriteCorners(spw, sph) {
+    const out = new Float32Array(this.n * 32)
+    const sc = this.spriteScale
+    const normal = (ax, ay, bx, by) => {
+      const l = Math.hypot(bx - ax, by - ay) || 1
+      return [(by - ay) / l, -(bx - ax) / l]
+    }
+    for (const p of this.geo.pieces) {
+      const o = p.outline
+      const last = o.length / 2 - 1
+      for (let s = 0; s < 4; s++) {
+        const at = p.sides[s]
+        const before = at > 0 ? at - 1 : last - 1
+        const vx = o[at * 2]
+        const vy = o[at * 2 + 1]
+        const n1 = normal(o[before * 2], o[before * 2 + 1], vx, vy)
+        const n2 = normal(vx, vy, o[at * 2 + 2], o[at * 2 + 3])
+        const sharp = !p.inner || (!p.inner[s] && !p.inner[(s + 3) % 4])
+        out.set([vx * sc + spw / 2, vy * sc + sph / 2, n1[0], n1[1], n2[0], n2[1], sharp ? 1 : 0, 0], p.i * 32 + s * 8)
+      }
+    }
+    return out
+  }
+
+  // A piece's sprite ({ color, shape }), kept and sent to the GPU.
   setSprite(i, lv) {
     if (!this.sprites[i]) this.built++
     this.sprites[i] = lv
@@ -934,18 +962,12 @@ export class Engine {
     while (this.buildAt < this.n && performance.now() < until) {
       const i = this.buildAt++
       if (this.sprites[i]) continue
-      this.setSprite(i, levels(this.makeSprite(i), makeCanvas))
+      this.setSprite(i, buildSprite(this.spriteOpts(), this.geo.pieces[i], this.paths[i], makeCanvas))
     }
   }
 
   spriteOpts() {
     return { geo: this.geo, room: this.room, image: this.image, margin: this.margin, sc: this.spriteScale }
-  }
-
-  makeSprite(i) {
-    const c = makeCanvas(...spriteSize(this.geo, this.margin, this.spriteScale))
-    drawFront(c.getContext('2d'), this.spriteOpts(), this.geo.pieces[i], this.paths[i])
-    return c
   }
 
   // What a point on the screen is over: an image (rh, or its resize handle), a tray (th) or a piece (i).

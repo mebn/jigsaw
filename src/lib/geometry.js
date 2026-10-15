@@ -36,7 +36,11 @@ export function gridFor(count, width, height) {
 // Each profile returns [u, v] points with u in [0, 1] along the edge and v the
 // perpendicular offset in units of the piece's short side.
 
+// Curves are drawn as this many times the given steps, so outlines stay smooth zoomed far in.
+const DETAIL = 3
+
 function cubic(out, p0, p1, p2, p3, steps) {
+  steps *= DETAIL
   for (let s = 1; s <= steps; s++) {
     const t = s / steps
     const m = 1 - t
@@ -148,7 +152,7 @@ const profiles = {
     const t2 = Math.atan2(-c, du)
     const span = Math.PI * 2 - (t2 - t1)
     const out = [[0, 0]]
-    const steps = 28
+    const steps = 28 * DETAIL
     for (let s = 0; s <= steps; s++) {
       const th = t1 - (span * s) / steps
       out.push([cu + R * Math.cos(th), c + R * Math.sin(th)])
@@ -185,7 +189,7 @@ const profiles = {
     const amp = 0.09 + j(r, 0.02)
     const h2 = j(r, 0.03)
     const out = []
-    const steps = 32
+    const steps = 32 * DETAIL
     for (let s = 0; s <= steps; s++) {
       const u = s / steps
       out.push([u, amp * Math.sin(Math.PI * 2 * u) + h2 * Math.sin(Math.PI * 4 * u)])
@@ -411,7 +415,7 @@ export function buildPuzzle({ cols, rows, width, height, shape, seed, longPieces
       add(H[y + 1][x], true)
       add(V[y][x], true)
       sides.push(pts.length / 2 - 1)
-      const piece = { i, col: x, row: y, cx, cy, outline: Float32Array.from(pts) }
+      const piece = { i, col: x, row: y, cx, cy, outline: Float32Array.from(pts), sides }
       // In a long piece: which sides (top, right, bottom, left) are inside it, not cut.
       if (unit) {
         const inner = [
@@ -420,12 +424,24 @@ export function buildPuzzle({ cols, rows, width, height, shape, seed, longPieces
           y < rows - 1 && inside(i, i + cols),
           x > 0 && inside(i, i - 1),
         ]
-        if (inner.some(Boolean)) Object.assign(piece, { inner, sides })
+        if (inner.some(Boolean)) piece.inner = inner
       }
       pieces.push(piece)
     }
   }
   return { w, h, S, pad: S * reachFor(shape), pieces, unit }
+}
+
+// For each line of piece p's outline, from one point to the next, which side (0 to 3: top, right,
+// bottom, left) it's on, plus 4 when that side is cut (not inside a long piece).
+export function sideCodes(p) {
+  const out = []
+  for (let s = 0; s < 4; s++) {
+    for (let k = p.sides[s]; k < p.sides[s + 1]; k++) out.push(s | (p.inner?.[s] ? 0 : 4))
+  }
+  // The line from the last point back to the first, which is the same point.
+  out.push(3 | 4)
+  return out
 }
 
 export function outlinePath(outline) {
@@ -438,15 +454,23 @@ export function outlinePath(outline) {
 
 // For drawing a cell of a long piece so its cells look like one piece: fill is the outline pushed
 // out a little over the sides inside the piece (grow), so the cells overlap instead of leaving a
-// hairline between them; rim is only the cut sides, for the edge lines; cuts are the lines of the
-// inner sides, [ax, ay, bx, by, nx, ny] with (nx, ny) pointing out of the cell. Null for a cell
-// that's a piece of its own.
+// hairline between them; rim is only the cut sides, for the edge lines; pts is fill's corners as
+// x, y pairs, and code[k] the line from corner k to the next's side code (see sideCodes()). Null
+// for a cell that's a piece of its own.
 export function longPaths(p, grow) {
   if (!p.inner) return null
   const o = p.outline
   const fill = new Path2D()
   const rim = new Path2D()
-  const cuts = []
+  // fill's corners, as x, y pairs, and for each line from one to the next which side it's on and
+  // whether that's a cut side (see sideCodes()).
+  const pts = [o[0], o[1]]
+  const code = []
+  const to = (x, y, s, c) => {
+    fill.lineTo(x, y)
+    pts.push(x, y)
+    code.push(s | (c ? 4 : 0))
+  }
   fill.moveTo(o[0], o[1])
   let pen = false
   for (let s = 0; s < 4; s++) {
@@ -461,22 +485,21 @@ export function longPaths(p, grow) {
       const l = Math.hypot(bx - ax, by - ay) || 1
       const nx = (by - ay) / l
       const ny = -(bx - ax) / l
-      fill.lineTo(ax + nx * grow, ay + ny * grow)
-      fill.lineTo(bx + nx * grow, by + ny * grow)
-      fill.lineTo(bx, by)
-      cuts.push([ax, ay, bx, by, nx, ny])
+      to(ax + nx * grow, ay + ny * grow, s, false)
+      to(bx + nx * grow, by + ny * grow, s, false)
+      to(bx, by, s, false)
       pen = false
       continue
     }
     if (!pen) rim.moveTo(o[a * 2], o[a * 2 + 1])
     pen = true
     for (let k = a + 1; k <= b; k++) {
-      fill.lineTo(o[k * 2], o[k * 2 + 1])
+      to(o[k * 2], o[k * 2 + 1], s, true)
       rim.lineTo(o[k * 2], o[k * 2 + 1])
     }
   }
   fill.closePath()
-  return { fill, rim, cuts }
+  return { fill, rim, pts, code }
 }
 
 // Room around a module when laying modules out side by side: enough that tabs don't overlap

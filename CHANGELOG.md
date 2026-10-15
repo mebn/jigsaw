@@ -2,6 +2,7 @@
 
 ## 15 October 2026
 
+- Pieces keep a sharp, smooth edge however far you zoom in, instead of going blurry and blocky. A thin line marks each piece's edge at any zoom, in place of the soft rim and shadow, and connected pieces join without gaps.
 - Settings open in a window in the middle of the screen instead of a dropdown, with **General**, **Account** and **How to play** in a list down the side. **H** opens the window on How to play, and the first time you open a jigsaw it opens there by itself. Press **Esc** to open or close them, as long as Esc has nothing else to do, like clearing a selection or closing a menu.
 - **Log out** has moved to the **Account** panel in the settings, which your own player window's **Account** button now opens too.
 - The QR code under **Account** always logs you in on your phone. The switch to leave that out is gone.

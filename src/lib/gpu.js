@@ -3,13 +3,17 @@
 //
 // - the table and its dot grid, worked out per pixel,
 // - trays (rounded boxes) and reference images,
-// - the pieces, one instance each, from their sprites in one texture atlas (a texture array of
-//   pages, every sprite in its own cell, with its halved copies in the mip levels),
+// - the pieces, one instance each, from their sprites in two texture atlases laid out alike (texture
+//   arrays of pages, every sprite in its own cell, with its halved copies in the mip levels): the
+//   picture around each piece, and its shape, which cuts the piece out with a sharp edge at any zoom
+//   (see sprites.js),
 // - the selection and hover outlines: the pieces' silhouettes go into a mask, which is grown by the
 //   outline's width and has the silhouettes, grown a little, cut back out,
 // - the drop shadow of lifted pieces: their silhouettes at a third of the resolution, blurred.
 //
 // Positions reach the GPU in device pixels, worked out on the CPU, so the shaders don't need the camera.
+
+import { SDF_R } from './sprites.js'
 
 // Floats per instance: pieces [m00 m01 m10 m11 x y cell -], trays [rect fill stroke (radius width - -)],
 // images [rect border (width opacity - -)].
@@ -140,11 +144,21 @@ struct O {
 `
 
 const PIECE = /* wgsl */ `
+// How far a piece's shape's distance reaches either side of its outline, in sprite pixels (see
+// SDF_R in sprites.js).
+const SDF_R = ${SDF_R}.0;
 @group(1) @binding(0) var atlas: texture_2d_array<f32>;
+@group(1) @binding(1) var shapes: texture_2d_array<f32>;
+// Each piece's four corners, two vec4s each: the corner in sprite pixels and the outward normal of
+// the side coming into it, then the outward normal of the side leaving it and 1 when the corner is
+// to be kept sharp (0 next to a side inside a long piece).
+@group(1) @binding(2) var<storage, read> corners: array<vec4f>;
 struct O {
   @builtin(position) p: vec4f,
   @location(0) uv: vec2f,
   @location(1) @interpolate(flat) layer: u32,
+  @location(2) sp: vec2f,
+  @location(3) @interpolate(flat) cell: u32,
 }
 @vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) m: vec4f, @location(1) pos: vec2f,
               @location(2) cell: u32) -> O {
@@ -157,17 +171,54 @@ struct O {
   let k = cell % perPage;
   o.uv = (vec2f(f32(k % perRow), f32(k / perRow)) * u.s1.zw + c * u.s2.xy) / u.s1.xy;
   o.layer = cell / perPage;
+  o.sp = c * u.s2.xy;
+  o.cell = cell;
   return o;
 }
-@fragment fn fs(i: O) -> @location(0) vec4f {
-  return textureSample(atlas, samp, i.uv, i.layer);
+// How far inside the piece this pixel is, in sprite pixels (negative outside). Blending the
+// shape's distance between sprite pixels rounds the piece's corners off, by up to half a sprite
+// pixel, which shows zoomed far in as a gap where corners meet. So near a corner the distance is
+// worked out from the corner itself.
+fn inside(i: O, r: f32) -> f32 {
+  var d = (r - 0.5) * 2.0 * SDF_R;
+  for (var n = 0u; n < 4u; n++) {
+    let a = corners[i.cell * 8u + n * 2u];
+    let b = corners[i.cell * 8u + n * 2u + 1u];
+    let q = i.sp - a.xy;
+    let far = length(q);
+    if (b.z > 0.5 && far < 2.5) {
+      let h = vec2f(dot(q, a.zw), dot(q, b.xy));
+      let out = length(max(h, vec2f(0.0))) + min(max(h.x, h.y), 0.0);
+      d = mix(d, -out, clamp(2.5 - far, 0.0, 1.0));
+    }
+  }
+  return d;
 }
-// The piece's shape: its sprite is opaque inside the outline and at most a faint shadow outside it.
+// How much of this pixel is inside the piece, at a distance d inside it, grown by grow screen
+// pixels. The distance changes linearly across the outline at any zoom, so measured in screen
+// pixels (fwidth) it gives an edge a pixel wide.
+fn cover(d: f32, grow: f32) -> f32 {
+  return clamp(d / max(fwidth(d), 1e-4) + 0.5 + grow, 0.0, 1.0);
+}
+@fragment fn fs(i: O) -> @location(0) vec4f {
+  let c = textureSample(atlas, samp, i.uv, i.layer);
+  let s = textureSample(shapes, samp, i.uv, i.layer);
+  let d = inside(i, s.r);
+  // A piece reaches a screen pixel past its outline, under the line, so pieces side by side
+  // overlap a little instead of letting the table show between them. Past the picture's own edge
+  // there is nothing, so it stops there.
+  let k = cover(d, 1.0) * clamp(c.a * 2.0, 0.0, 1.0);
+  // A thin line on the cut sides' outline, a couple of screen pixels wide at any zoom, so joined
+  // pieces still show.
+  let line = clamp(1.25 - abs(d) / max(fwidth(d), 1e-4), 0.0, 1.0) * 0.3 * s.g;
+  let rgb = mix(c.rgb / max(c.a, 1e-4), vec3f(0.0), line);
+  return vec4f(rgb * k, k);
+}
 @fragment fn fsMask(i: O) -> @location(0) vec4f {
-  return vec4f(smoothstep(0.4, 0.75, textureSample(atlas, samp, i.uv, i.layer).a));
+  return vec4f(cover(inside(i, textureSample(shapes, samp, i.uv, i.layer).r), 0.0));
 }
 @fragment fn fsShadow(i: O) -> @location(0) vec4f {
-  return vec4f(textureSample(atlas, samp, i.uv, i.layer).a);
+  return vec4f(cover(inside(i, textureSample(shapes, samp, i.uv, i.layer).r), 0.0));
 }
 `
 
@@ -283,12 +334,17 @@ class Gpu {
     this.cell = { cw, ch, perRow, perPage: perRow * rowsPerPage, levels }
     this.atlasSize = [pw, ph]
     this.spritePx = [spw, sph]
-    this.atlas = device.createTexture({
-      size: [pw, ph, layers],
-      format: 'rgba8unorm',
-      mipLevelCount: levels,
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    })
+    const atlas = (format) =>
+      device.createTexture({
+        size: [pw, ph, layers],
+        format,
+        mipLevelCount: levels,
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      })
+    this.atlas = atlas('rgba8unorm')
+    this.shapes = atlas('rg8unorm')
+    // Each piece's corners (see PIECE above), set with setCorners().
+    this.corners = device.createBuffer({ size: Math.max(1, cells) * 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     this.has = new Uint8Array(cells)
 
     this.uniform = new Float32Array(28)
@@ -315,7 +371,13 @@ class Gpu {
         { binding: 1, visibility: F, sampler: {} },
       ],
     })
-    const lAtlas = d.createBindGroupLayout({ entries: [{ binding: 0, visibility: F, texture: { viewDimension: '2d-array' } }] })
+    const lAtlas = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: F, texture: { viewDimension: '2d-array' } },
+        { binding: 1, visibility: F, texture: { viewDimension: '2d-array' } },
+        { binding: 2, visibility: F, buffer: { type: 'read-only-storage' } },
+      ],
+    })
     const lTex = d.createBindGroupLayout({ entries: [{ binding: 0, visibility: F, texture: {} }] })
     const lPost = d.createBindGroupLayout({
       entries: [
@@ -332,7 +394,14 @@ class Gpu {
         { binding: 1, resource: this.sampler },
       ],
     })
-    this.gAtlas = d.createBindGroup({ layout: lAtlas, entries: [{ binding: 0, resource: this.atlas.createView({ dimension: '2d-array' }) }] })
+    this.gAtlas = d.createBindGroup({
+      layout: lAtlas,
+      entries: [
+        { binding: 0, resource: this.atlas.createView({ dimension: '2d-array' }) },
+        { binding: 1, resource: this.shapes.createView({ dimension: '2d-array' }) },
+        { binding: 2, resource: { buffer: this.corners } },
+      ],
+    })
 
     const module = async (code) => {
       const m = d.createShaderModule({ code: COMMON + code })
@@ -381,24 +450,35 @@ class Gpu {
     this.setRefImage(null)
   }
 
-  // Puts a sprite and its halved copies (canvases or ImageBitmaps) in its atlas cell.
-  upload(cell, levels) {
+  // Puts a sprite ({ color, shape }, each the image and its halved copies, as canvases or
+  // ImageBitmaps) in its cell of the two atlases.
+  upload(cell, { color, shape }) {
     if (cell >= this.has.length) return
     const { cw, ch, perRow, perPage } = this.cell
     const k = cell % perPage
     const x = (k % perRow) * cw
     const y = Math.floor(k / perRow) * ch
     const z = Math.floor(cell / perPage)
-    const n = Math.min(levels.length, this.cell.levels)
-    for (let l = 0; l < n; l++) {
-      const src = levels[l]
-      this.device.queue.copyExternalImageToTexture(
-        { source: src },
-        { texture: this.atlas, mipLevel: l, origin: { x: x >> l, y: y >> l, z }, premultipliedAlpha: true },
-        { width: src.width, height: src.height },
-      )
+    for (const [texture, levels] of [
+      [this.atlas, color],
+      [this.shapes, shape],
+    ]) {
+      const n = Math.min(levels.length, this.cell.levels)
+      for (let l = 0; l < n; l++) {
+        const src = levels[l]
+        this.device.queue.copyExternalImageToTexture(
+          { source: src },
+          { texture, mipLevel: l, origin: { x: x >> l, y: y >> l, z }, premultipliedAlpha: true },
+          { width: src.width, height: src.height },
+        )
+      }
     }
     this.has[cell] = 1
+  }
+
+  // Every piece's corners: 32 floats each, as the shader reads them (see PIECE above).
+  setCorners(data) {
+    this.device.queue.writeBuffer(this.corners, 0, data.buffer, data.byteOffset, data.byteLength)
   }
 
   // The image reference images show: a canvas, with halved copies made for its mip levels.
