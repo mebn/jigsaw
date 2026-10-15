@@ -7,15 +7,14 @@ import NewRoom from './NewRoom.jsx'
 import Confirm from '../components/Confirm.jsx'
 import { formatTime } from '../lib/time.js'
 
-// A jigsaw in the list: its picture fills the card, with the title, time, pieces and progress over
-// the bottom of it.
+// A jigsaw in the list: its picture in a frame, with how far along it is, the time and the pieces
+// under it.
 export function Card({ r, mine, onOpen, onDelete }) {
   const pct = Math.round(r.progress * 100)
   return (
     <a
       className={`card${r.done ? ' done' : ''}`}
       href={`/r/${r.id}`}
-      title={r.name}
       onClick={(e) => {
         // Modified clicks still open the jigsaw in a new tab or window.
         if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
@@ -23,44 +22,37 @@ export function Card({ r, mine, onOpen, onDelete }) {
         onOpen(r.id)
       }}
     >
-      <img className="thumb" src={r.thumb} alt="" loading="lazy" />
-      <div className="card-badges">
-        {r.done && (
-          <span className="chip done" title="Complete">
+      <span className="card-pic">
+        <img className="thumb" src={r.thumb} alt="" loading="lazy" />
+      </span>
+      <span className="progress" title="Pieces connected">
+        <span style={{ width: `${r.done ? 100 : pct}%` }} />
+      </span>
+      <span className="card-stats">
+        <span title="Total time spent">
+          <Clock />
+          {formatTime(r.seconds || 0)}
+        </span>
+        <span title="Pieces">
+          <Piece />
+          {r.n}
+        </span>
+        {!!r.private && (
+          <span title="Private room: only people with the link can see it">
+            <Lock />
+          </span>
+        )}
+        {r.done ? (
+          <span className="pct" title="Complete">
             <Check />
             Done
           </span>
-        )}
-        {!!r.private && (
-          <span className="chip" title="Private room: only people with the link can see it">
-            <Lock />
-            Private
+        ) : (
+          <span className="pct" title="Pieces connected">
+            {pct}%
           </span>
         )}
-      </div>
-      <div className="card-info">
-        <span className="name">{r.name}</span>
-        <span className="card-stats">
-          <span title="Total time spent">
-            <Clock />
-            {formatTime(r.seconds || 0)}
-          </span>
-          <span title="Pieces">
-            <Piece />
-            {r.n}
-          </span>
-          {!r.done && (
-            <span className="pct" title="Pieces connected">
-              {pct}%
-            </span>
-          )}
-        </span>
-        {!r.done && (
-          <span className="progress">
-            <span style={{ width: `${pct}%` }} />
-          </span>
-        )}
-      </div>
+      </span>
       {mine && (
         <button className="icon-btn del" onClick={(e) => onDelete(e, r)} aria-label="Delete" title="Delete jigsaw">
           <Trash />
@@ -70,13 +62,13 @@ export function Card({ r, mine, onOpen, onDelete }) {
   )
 }
 
-// Grey stand-ins for cards while the jigsaws load, shimmering, with bars where the name and
-// numbers go. className sets out the cards, a grid by default. With caption, each has a line under
-// it as well, as in a player's window (see PlayerDialog.jsx), so nothing moves when the cards come.
+// Grey stand-ins for cards while the jigsaws load, shimmering, with a bar where the numbers go.
+// className sets out the cards, a grid by default. With caption, each has a line under it as well,
+// as in a player's window (see PlayerDialog.jsx), so nothing moves when the cards come.
 export function CardGhosts({ count = 6, className = 'grid', caption = false }) {
   const ghost = (k) => (
     <div key={k} className="card ghost" aria-hidden="true">
-      <span className="ghost-bar name" />
+      <span className="card-pic" />
       <span className="ghost-bar stats" />
     </div>
   )
@@ -217,7 +209,7 @@ export default function RoomsDialog({ view, setView, closing, onClose }) {
       )}
       {doomed && (
         <Confirm
-          title={`Delete "${doomed.name}"?`}
+          title="Delete this jigsaw?"
           text="The jigsaw and everything on its table goes for everyone. This can't be undone."
           action="Delete"
           danger

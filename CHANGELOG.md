@@ -2,6 +2,10 @@
 
 ## 15 October 2026
 
+- Jigsaw cards have a new, quieter look that fits the rest of the window: the picture sits in a frame, with the progress line, time, pieces and percentage under it instead of over the picture. Finished jigsaws say **Done** there, and private ones show a lock. The grey placeholders while jigsaws load have the same shape, so nothing jumps when the cards arrive.
+- The **Wobbly** piece shape is gone from the new jigsaw form. Jigsaws already made with it still work.
+- Tabs and holes on **Dovetail**, **Wave**, **Mixed** and **Jagged** pieces now sit a little off the middle of each edge, like on a real jigsaw and like Classic pieces already did. Jigsaws you've already started get the new pieces too; everything still fits together.
+- Jigsaws no longer have a title. The title field is gone from the new jigsaw form, and the jigsaw list shows just the picture, time, pieces and progress.
 - The shared picture has a smaller podium, and the site's address is now a small label in the bottom right corner of both the picture and the timelapse GIF.
 - The podium has a **Share** button under it, and turns slightly towards your pointer as you move it.
 - The share button on a finished jigsaw opens a **Share** window. Copy the picture with the podium as before, or share a **timelapse GIF** of the biggest piece growing until the jigsaw is done. Timelapses are recorded from now on, so jigsaws started earlier only show the part played after this update.

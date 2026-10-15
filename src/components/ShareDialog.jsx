@@ -4,12 +4,9 @@ import { api } from '../lib/api.js'
 import { renderShare, shareImage } from '../lib/share.js'
 import { framesFor, renderTimelapse } from '../lib/timelapse.js'
 
-const fileName = (name, ext) => `${name.replace(/[^\w-]+/g, '-').toLowerCase() || 'jigsaw'}.${ext}`
-
 // Sharing a finished jigsaw: a picture of it with the podium, to copy, or a GIF of it being put
 // together, to share or save. Both are made when the dialog opens, and shown before they're picked.
 export default function ShareDialog({ engine, ranked, onClose, closing }) {
-  const name = engine.room?.name || 'jigsaw'
   // The picture as a promise, so copying it still counts as the click that asked for it.
   const picture = useRef(null)
   picture.current ??= renderShare({ image: engine.refImg, ranked })
@@ -54,16 +51,16 @@ export default function ShareDialog({ engine, ranked, onClose, closing }) {
   }
 
   const copy = async () => {
-    const result = await shareImage(picture.current, name).catch(() => null)
+    const result = await shareImage(picture.current, 'jigsaw').catch(() => null)
     if (result) flash(result)
   }
 
-  const file = gif?.blob && new File([gif.blob], fileName(name, 'gif'), { type: 'image/gif' })
+  const file = gif?.blob && new File([gif.blob], 'jigsaw.gif', { type: 'image/gif' })
   const canShare = !!file && !!navigator.canShare?.({ files: [file] })
   const shareGif = async () => {
     if (canShare) {
       try {
-        await navigator.share({ files: [file], title: name })
+        await navigator.share({ files: [file], title: 'Jigsaw' })
         flash('shared')
       } catch {}
       return

@@ -5,7 +5,6 @@ import { SHAPES, buildPuzzle, gridFor, longPaths, outlinePath, samplePiecePath, 
 import { useApp } from '../App.jsx'
 import { Arrow, Chevron, Close, Upload } from '../components/icons.jsx'
 import InviteList from '../components/Invite.jsx'
-import TextField from '../components/TextField.jsx'
 
 const MIN = 4
 const MAX = 4000
@@ -25,14 +24,6 @@ function loadImage(file) {
     img.src = url
   })
 }
-
-// A title from a file name, without its extension.
-const titleFrom = (name) =>
-  name
-    .replace(/\.[^.]+$/, '')
-    .replace(/[-_]+/g, ' ')
-    .trim()
-    .slice(0, 60)
 
 function encode(img, maxSide, quality) {
   const k = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight))
@@ -211,7 +202,6 @@ function Preview({ img, cols, rows, shape, seed, longPieces }) {
 export default function NewRoom({ bar }) {
   const { requireName, currentPlayer, openRoom } = useApp()
   const [img, setImg] = useState(null)
-  const [name, setName] = useState('')
   // Pieces asked for, by slider or typed. The jigsaw gets the closest grid to it.
   const [count, setCount] = useState(() => toCount(44))
   // What's in the number field while typing; null shows the actual piece count.
@@ -229,27 +219,16 @@ export default function NewRoom({ bar }) {
   const grid = gridFor(count, img?.naturalWidth || 4, img?.naturalHeight || 3)
   const slider = toSlider(count)
 
-  // The title given from the image, which the next image may replace (a typed one it never does).
-  const autoName = useRef('')
-  const nameFrom = (text) => {
-    if (name.trim() && name !== autoName.current) return
-    autoName.current = titleFrom(text)
-    setName(autoName.current)
-  }
-
-  // Pasted images get a generic file name like "image.png", so they don't set the title.
-  const pick = async (file, named = true) => {
+  const pick = async (file) => {
     if (!file || !file.type.startsWith('image/')) return
     const image = await loadImage(file)
     setImg(image)
-    if (named) nameFrom(file.name)
   }
 
-  // Back to no image. A title that came from the image goes too.
+  // Back to no image.
   const clear = () => {
     setImg(null)
     input.current.value = ''
-    if (name === autoName.current) setName('')
   }
 
   // Paste an image anywhere on the page. In a text field, text still pastes as usual.
@@ -262,7 +241,7 @@ export default function NewRoom({ bar }) {
       if (!file) return
       if (e.target?.closest?.('input, textarea') && data.types.includes('text/plain')) return
       e.preventDefault()
-      pickRef.current(file, false)
+      pickRef.current(file)
     }
     window.addEventListener('paste', paste)
     return () => window.removeEventListener('paste', paste)
@@ -278,7 +257,7 @@ export default function NewRoom({ bar }) {
       const room = { cols: grid.cols, rows: grid.rows, width: full.width, height: full.height, shape, seed, longPieces }
       const { id } = await api.create({
         ...room,
-        name: name.trim() || 'Jigsaw',
+        name: 'Jigsaw',
         image: full.data,
         thumb: thumb.data,
         private: hidden,
@@ -349,18 +328,6 @@ export default function NewRoom({ bar }) {
       </div>
 
       <div className="create-settings">
-        <section className="field">
-          <h2 className="label">Title</h2>
-          <TextField
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Title"
-            maxLength={60}
-            aria-label="Title"
-            title="Title"
-          />
-        </section>
-
         <div className="row pieces-row">
           <section className="field grow">
             <h2 className="label">Pieces</h2>

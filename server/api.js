@@ -308,7 +308,7 @@ function createApi(dbFile) {
       mailer.send({
         to: p.email,
         subject: `${from.name} invited you to a jigsaw`,
-        text: `${from.name} invited you to play "${room.name}", a private jigsaw.\n\nOpen it here: ${link}\n\nOnly people with this link can see and play it.`,
+        text: `${from.name} invited you to play a private jigsaw.\n\nOpen it here: ${link}\n\nOnly people with this link can see and play it.`,
       })
       n++
     }

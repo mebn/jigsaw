@@ -11,9 +11,9 @@ export function rng(seed) {
   }
 }
 
-// The shapes a new jigsaw can have. Older jigsaws may also have round, arrow or square pieces, which
-// still work (see profiles).
-export const SHAPES = ['classic', 'dovetail', 'wave', 'wobbly', 'mixed', 'jagged']
+// The shapes a new jigsaw can have. Older jigsaws may also have round, arrow, square or wobbly
+// pieces, which still work (see profiles).
+export const SHAPES = ['classic', 'dovetail', 'wave', 'mixed', 'jagged']
 
 // Max perpendicular reach of a tab, in units of the piece's short side.
 export const TAB_REACH = 0.4
@@ -57,6 +57,10 @@ function cubic(out, p0, p1, p2, p3, steps) {
 
 const j = (r, amount) => (r() * 2 - 1) * amount
 
+// Where a tab or hole sits along its edge: always a little off the middle, like on a real jigsaw,
+// to either side by 60 to 100% of max.
+const off = (r, max = 0.07) => 0.5 + (r() < 0.5 ? -1 : 1) * max * (0.6 + r() * 0.4)
+
 // A knob on a neck, like the classic tab, shaped by its options: size scales all of it, pos is
 // where its middle sits along the edge, lean moves the head to one side, neck, head and tall scale
 // the neck's width, the head's width and the height, and a, e and c lift the edge before the knob,
@@ -86,11 +90,12 @@ function knob({ size = 1, pos = 0.5, lean = 0, neck = 1, head = 1, tall = 1, a =
   return out
 }
 
-// A classic tab with everything about it a little different from edge to edge.
-const wobblyKnob = (r) =>
+// A classic tab with everything about it a little different from edge to edge, placed along the
+// edge by at (see off()).
+const wobblyKnob = (r, at = (r) => 0.5 + j(r, 0.05)) =>
   knob({
     size: 0.85 + r() * 0.3,
-    pos: 0.5 + j(r, 0.05),
+    pos: at(r),
     lean: j(r, 0.04),
     neck: 0.8 + r() * 0.4,
     head: 0.85 + r() * 0.25,
@@ -161,7 +166,7 @@ const profiles = {
     return out
   },
   dovetail(r) {
-    const b = j(r, 0.05)
+    const b = off(r, 0.05) - 0.5
     return [
       [0, 0],
       [0.39 + b, 0],
@@ -188,11 +193,14 @@ const profiles = {
   wave(r) {
     const amp = 0.09 + j(r, 0.02)
     const h2 = j(r, 0.03)
+    const m = off(r, 0.05)
     const out = []
     const steps = 32 * DETAIL
     for (let s = 0; s <= steps; s++) {
       const u = s / steps
-      out.push([u, amp * Math.sin(Math.PI * 2 * u) + h2 * Math.sin(Math.PI * 4 * u)])
+      // The crest and trough meet off the middle, at m, instead of at 0.5.
+      const t = u < m ? (u / m) * 0.5 : 0.5 + ((u - m) / (1 - m)) * 0.5
+      out.push([u, amp * Math.sin(Math.PI * 2 * t) + h2 * Math.sin(Math.PI * 4 * t)])
     }
     return out
   },
@@ -202,16 +210,16 @@ const profiles = {
       [1, 0],
     ]
   },
-  wobbly: wobblyKnob,
+  wobbly: (r) => wobblyKnob(r),
   // Every edge gets its own kind of tab: a classic one, a ball on a thin neck, a dovetail or two
   // small knobs side by side.
   mixed(r) {
     const k = r()
-    if (k < 0.4) return wobblyKnob(r)
+    if (k < 0.4) return wobblyKnob(r, off)
     if (k < 0.6)
-      return knob({ size: 0.9 + r() * 0.2, pos: 0.5 + j(r, 0.05), lean: j(r, 0.03), neck: 0.55 + r() * 0.15, head: 0.95 + r() * 0.15, a: j(r, 0.05), e: j(r, 0.05) })
+      return knob({ size: 0.9 + r() * 0.2, pos: off(r), lean: j(r, 0.03), neck: 0.55 + r() * 0.15, head: 0.95 + r() * 0.15, a: j(r, 0.05), e: j(r, 0.05) })
     if (k < 0.8) {
-      const m = 0.5 + j(r, 0.06)
+      const m = off(r, 0.05)
       const n = 0.07 + r() * 0.04
       const top = n + 0.06 + r() * 0.05
       const d = 0.2 + r() * 0.07
@@ -226,18 +234,19 @@ const profiles = {
         [1, 0],
       ]
     }
-    // Two knobs, each drawn on half the edge.
+    // Two knobs, each drawn on half the edge, both moved the same way off the middle of their half.
+    const pos = off(r, 0.08)
     const half = (u0) =>
-      knob({ size: 0.6 + r() * 0.1, neck: 1.8 + r() * 0.4, head: 1.8 + r() * 0.3, tall: 1.3 + r() * 0.2, a: j(r, 0.03), e: j(r, 0.03) }).map(
+      knob({ size: 0.6 + r() * 0.1, pos, neck: 1.8 + r() * 0.4, head: 1.8 + r() * 0.3, tall: 1.3 + r() * 0.2, a: j(r, 0.03), e: j(r, 0.03) }).map(
         ([u, v]) => [u0 + u * 0.5, v],
       )
     return [...half(0), ...half(0.5).slice(1)]
   },
   // Straight lines and sharp corners: a kinked edge with an angular head on a neck.
   jagged(r) {
-    const m = 0.5 + j(r, 0.06)
+    const m = off(r)
     const n = 0.07 + r() * 0.04
-    const hw = 0.14 + r() * 0.06
+    const hw = 0.13 + r() * 0.05
     const nh = 0.1 + r() * 0.05
     const ht = 0.24 + r() * 0.06
     const lean = j(r, 0.04)
@@ -628,7 +637,8 @@ export function samplePiecePath(shape, size = 100) {
     return 'M' + pts.join('L') + 'Z'
   }
   const profile = profiles[shape] || profiles.classic
-  const fixed = () => 0.5
+  // Every random number the same, a little past the middle, so the tabs sit a little off centre.
+  const fixed = () => 0.75
   const e = profile(fixed)
   const pts = []
   const push = (x, y) => pts.push(`${x.toFixed(2)} ${y.toFixed(2)}`)

@@ -387,129 +387,66 @@ button {
   padding: 2px;
 }
 
-/* A jigsaw card: the picture fills it, with the details on a shade over the bottom. */
+/* A jigsaw card: the picture in a frame, with a thin progress line and the numbers under it, quiet
+   like the rest of the window. */
 .card {
   position: relative;
-  display: block;
-  aspect-ratio: 4 / 3;
-  overflow: hidden;
-  border-radius: 14px;
-  background: var(--hover);
-  box-shadow: 0 0 0 1px var(--line);
-  color: #fff;
-  text-decoration: none;
-  isolation: isolate;
-  transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease;
-}
-/* A stand-in while the jigsaws load (see CardGhosts in Rooms.jsx): a light sweeps across it. */
-.card.ghost,
-.ghost-bar {
-  background: linear-gradient(100deg, var(--hover) 30%, color-mix(in srgb, var(--hover) 40%, var(--bg)) 50%, var(--hover) 70%) var(--hover);
-  background-size: 300% 100%;
-  animation: ghost 1.4s ease-in-out infinite;
-}
-.card.ghost {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 8px;
-  padding: 14px;
-  pointer-events: none;
-}
-.ghost-bar {
-  display: block;
-  height: 10px;
-  border-radius: 999px;
-  background-color: var(--line);
-  background-image: linear-gradient(100deg, var(--line) 30%, color-mix(in srgb, var(--line) 40%, var(--bg)) 50%, var(--line) 70%);
-}
-.ghost-bar.name {
-  width: 60%;
-  height: 12px;
-}
-.ghost-bar.stats {
-  width: 38%;
-}
-.ghost-bar.caption {
-  width: 45%;
-  height: 8px;
-}
-.ghost-bar.label-bar {
-  width: 90px;
-}
-/* Later cards shimmer a little after the earlier ones, with their lines under them in a player's window. */
-.card.ghost:nth-child(3n + 2),
-.card.ghost:nth-child(3n + 2) .ghost-bar,
-.profile-room:nth-child(3n + 2) > .card.ghost,
-.profile-room:nth-child(3n + 2) .ghost-bar {
-  animation-delay: 0.15s;
-}
-.card.ghost:nth-child(3n),
-.card.ghost:nth-child(3n) .ghost-bar,
-.profile-room:nth-child(3n) > .card.ghost,
-.profile-room:nth-child(3n) .ghost-bar {
-  animation-delay: 0.3s;
-}
-@keyframes ghost {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: 0 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .card.ghost,
-  .ghost-bar {
-    animation: none;
-  }
+  padding: 6px 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--field);
+  color: var(--fg);
+  text-decoration: none;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 .card:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 0 0 1px var(--line),
-    0 10px 24px rgba(0, 0, 0, 0.22);
+  border-color: var(--line-strong);
+  background: var(--hover);
 }
 .card:focus-visible {
   outline: 2px solid var(--sel);
   outline-offset: 2px;
 }
+.card-pic {
+  display: block;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 9px;
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
 .card .thumb {
-  position: absolute;
-  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.4s ease;
 }
-.card:hover .thumb {
-  transform: scale(1.04);
-}
-.card-info {
-  position: absolute;
-  inset: auto 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 36px 12px 12px;
-  background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.45) 40%, rgba(0, 0, 0, 0.78));
-}
-.card .name {
+.card .progress {
+  display: block;
+  height: 3px;
+  margin: 0 4px;
   overflow: hidden;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.4);
+  border-radius: 2px;
+  background: var(--line);
+}
+.card .progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--fg);
 }
 .card-stats {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: rgba(255, 255, 255, 0.82);
+  height: 17px;
+  padding: 0 4px;
+  color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -524,78 +461,105 @@ button {
 }
 .card-stats .pct {
   margin-left: auto;
-  color: #fff;
+  color: var(--fg);
   font-weight: 600;
 }
-.card .progress {
-  display: block;
-  height: 3px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.25);
+.card.done .progress span {
+  background: var(--line-strong);
 }
-.card .progress span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: #fff;
-}
-.card-badges {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  display: flex;
-  gap: 6px;
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 9px 0 7px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  font-size: 12px;
-  font-weight: 500;
-}
-.chip svg {
-  width: 13px;
-  height: 13px;
-}
-.chip.done {
-  background: #fff;
-  color: #000;
-}
-.chip.done svg {
+.card.done .pct svg {
   stroke-width: 2.4;
 }
 .card .del {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 32px;
-  height: 32px;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
   opacity: 0;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--fg);
   transition:
     opacity 0.15s,
-    background 0.15s;
+    background 0.15s,
+    color 0.15s;
 }
 .card:hover .del,
 .card:focus-visible .del {
   opacity: 1;
 }
-.card .del:hover {
+.card .del:hover:not(:disabled) {
+  border-color: var(--danger);
   background: var(--danger);
+  color: #fff;
+}
+.card .del svg {
+  width: 16px;
+  height: 16px;
 }
 @media (hover: none) {
   .card .del {
     opacity: 1;
+  }
+}
+
+/* A stand-in while the jigsaws load (see CardGhosts in Rooms.jsx): a light sweeps across its
+   picture and its line of numbers. */
+.card.ghost {
+  pointer-events: none;
+}
+.card.ghost .card-pic,
+.ghost-bar {
+  background: linear-gradient(100deg, var(--hover) 30%, color-mix(in srgb, var(--hover) 40%, var(--bg)) 50%, var(--hover) 70%) var(--hover);
+  background-size: 300% 100%;
+  box-shadow: none;
+  animation: ghost 1.4s ease-in-out infinite;
+}
+.ghost-bar {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background-color: var(--line);
+  background-image: linear-gradient(100deg, var(--line) 30%, color-mix(in srgb, var(--line) 40%, var(--bg)) 50%, var(--line) 70%);
+}
+.ghost-bar.stats {
+  width: 45%;
+  /* As tall as a card's progress line and numbers together. */
+  margin: 10px 4px 8px;
+}
+.ghost-bar.caption {
+  width: 45%;
+  height: 8px;
+}
+.ghost-bar.label-bar {
+  width: 90px;
+}
+/* Later cards shimmer a little after the earlier ones, with their lines under them in a player's window. */
+.card.ghost:nth-child(3n + 2) .card-pic,
+.card.ghost:nth-child(3n + 2) .ghost-bar,
+.profile-room:nth-child(3n + 2) .card-pic,
+.profile-room:nth-child(3n + 2) .ghost-bar {
+  animation-delay: 0.15s;
+}
+.card.ghost:nth-child(3n) .card-pic,
+.card.ghost:nth-child(3n) .ghost-bar,
+.profile-room:nth-child(3n) .card-pic,
+.profile-room:nth-child(3n) .ghost-bar {
+  animation-delay: 0.3s;
+}
+@keyframes ghost {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card.ghost .card-pic,
+  .ghost-bar {
+    animation: none;
   }
 }
 
@@ -1197,9 +1161,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   .grid {
     grid-template-columns: 1fr 1fr;
     gap: 10px;
-  }
-  .card-info {
-    padding: 28px 10px 10px;
   }
   .card-stats {
     gap: 8px;
@@ -1913,7 +1874,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
     width: 170px;
   }
   .profile-empty {
-    height: calc(170px * 3 / 4 + 24px);
+    height: calc((170px - 14px) * 3 / 4 + 78px);
   }
 }
 /* What they did in a jigsaw, under its card. */
@@ -1942,7 +1903,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
      its height when the cards turn out to be none. */
   display: grid;
   place-items: center;
-  height: calc(220px * 3 / 4 + 24px);
+  height: calc((220px - 14px) * 3 / 4 + 78px);
   margin: 0;
   color: var(--muted);
   text-align: center;
