@@ -1,42 +1,38 @@
-// Builds every piece's sprites off the main thread and posts them back in batches as ImageBitmaps.
-// Posts { kind: 'fail' } if it can't draw
-// here, and the engine builds whatever is missing itself.
-import { buildPuzzle, outlinePath } from './geometry.js'
-import { buildSprite } from './sprites.js'
+// Works out pieces' shapes off the main thread (see spriteShape()) and posts them back in batches,
+// as plain pixels the engine writes straight into the GPU's shape atlas. Gets { job, size, sc, items },
+// items being { i, pts, codes } (see shapeOutline()), and posts { job, kind: 'front', items: [{ i,
+// shape }] } as it goes, then { job, kind: 'done' }, or { job, kind: 'fail' } if it can't draw here.
+// It's kept for the next jigsaw once done.
+import { spriteShape } from './sprites.js'
 
-// A batch is posted after about this long (ms), so sprites show up while the rest are drawn.
+// A batch is posted after about this long (ms), so pieces show up while the rest are worked out.
 const BATCH_MS = 16
 
 self.onmessage = (e) => {
-  const { room, image, margin, sc } = e.data
+  const { job, size, sc, items: todo } = e.data
   try {
-    const geo = buildPuzzle(room)
-    const o = { geo, room, image, margin, sc }
-    const make = (w, h) => new OffscreenCanvas(w, h)
-    if (!make(1, 1).getContext('2d')) throw new Error('no 2d context')
+    const [w, h] = size
+    const ctx = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true })
+    if (!ctx) throw new Error('no 2d context')
     let items = []
     let transfer = []
     let t = performance.now()
-    const add = (i, sprite) => {
-      const lv = { color: sprite.color.map((c) => c.transferToImageBitmap()), shape: sprite.shape.map((c) => c.transferToImageBitmap()) }
-      items.push({ i, lv })
-      transfer.push(...lv.color, ...lv.shape)
-    }
-    const flush = (kind, force) => {
+    const flush = (force) => {
       if (!items.length || (!force && performance.now() - t < BATCH_MS)) return
-      self.postMessage({ kind, items }, transfer)
+      self.postMessage({ job, kind: 'front', items }, transfer)
       items = []
       transfer = []
       t = performance.now()
     }
-    const paths = geo.pieces.map((p) => outlinePath(p.outline))
-    for (const p of geo.pieces) {
-      add(p.i, buildSprite(o, p, paths[p.i], make))
-      flush('front')
+    for (const it of todo) {
+      const data = spriteShape(ctx, sc, it)
+      items.push({ i: it.i, shape: { w, h, data } })
+      transfer.push(data.buffer)
+      flush()
     }
-    flush('front', true)
-    self.postMessage({ kind: 'done' })
+    flush(true)
+    self.postMessage({ job, kind: 'done' })
   } catch (err) {
-    self.postMessage({ kind: 'fail', message: String(err) })
+    self.postMessage({ job, kind: 'fail', message: String(err) })
   }
 }

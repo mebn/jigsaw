@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
-import { Engine } from '../lib/engine.js'
+import { Engine, warmSprites } from '../lib/engine.js'
 import { navigate, store, useApp } from '../App.jsx'
 import {
   Hand,
@@ -174,10 +174,14 @@ export default function Room({ id }) {
     let sock = null
     ;(async () => {
       try {
-        const room = await api.room(id)
+        // The workers that cut the pieces start loading, and the picture with the jigsaw.
+        warmSprites()
         const image = new Image()
         image.src = api.imageUrl(id)
-        await image.decode()
+        const decoded = image.decode()
+        decoded.catch(() => {})
+        const room = await api.room(id)
+        await decoded
         if (dead) return
         store.set('lastRoom', id)
         eng = new Engine(canvas.current, {

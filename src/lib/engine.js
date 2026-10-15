@@ -1,6 +1,6 @@
 // Imperative canvas engine: rendering (with WebGPU, see gpu.js), camera, dragging, rotation and snapping.
 import { buildPuzzle, outlinePath, pack, packExtent, scatter, unitCells } from './geometry.js'
-import { buildSprite, MIPS, spriteSize } from './sprites.js'
+import { MIPS, shapeOutline, spriteShape, spriteSize } from './sprites.js'
 import { createGpu, PIECE_FLOATS, REF_FLOATS, TRAY_FLOATS } from './gpu.js'
 
 const Q = Math.PI / 2
@@ -21,6 +21,24 @@ const POP_DELAY = 80
 const MAX_POPS = 12
 // Pieces held with a finger ride this far (screen px) above it, so the finger doesn't hide them.
 const TOUCH_LIFT = 72
+// At most this many workers work out the pieces' shapes (see startSprites()).
+const SPRITE_WORKERS = 8
+// Those workers, kept from one jigsaw to the next so they're ready at once, and a count that tells
+// one jigsaw's job from the next.
+const spritePool = []
+let spriteJob = 0
+const spriteWorkerCount = () => Math.max(1, Math.min(SPRITE_WORKERS, (navigator.hardwareConcurrency || 2) - 1))
+const canSprite = () => typeof Worker === 'function' && typeof OffscreenCanvas === 'function'
+
+// Starts the sprite workers ahead of time, so they're loaded by the time a jigsaw needs them.
+export function warmSprites() {
+  if (!canSprite()) return
+  try {
+    while (spritePool.length < spriteWorkerCount()) spritePool.push(new Worker(new URL('./sprites.worker.js', import.meta.url), { type: 'module' }))
+  } catch {
+    // Started when they're needed instead, or not at all.
+  }
+}
 const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
@@ -260,14 +278,15 @@ export class Engine {
     this.radius = Math.hypot(w / 2 + this.margin, h / 2 + this.margin)
     const spriteArea = n * (w + 2 * this.margin) * (h + 2 * this.margin)
     this.spriteScale = Math.min(2, Math.max(0.35, Math.sqrt(16e6 / spriteArea)))
-    this.imgScale = image.naturalWidth / room.width
     // Every sprite has the same size, and is drawn at this size in world units.
     const [spw, sph] = spriteSize(this.geo, this.margin, this.spriteScale)
     this.spriteW = spw / this.spriteScale
     this.spriteH = sph / this.spriteScale
-    // Per piece: its sprite, { color, shape } with halved copies of each (see sprites.js), made in the background.
+    // Per piece: its shape (see sprites.js), made in the background, until it's on the GPU, and true
+    // after. The picture around it goes there in one go, see startGpu().
     this.sprites = new Array(n)
     this.built = 0
+    this.startSprites()
 
     // Reference images, shared by the room: { id, x, y, w, author } in world units (centre and width).
     this.refs = (refs || []).filter((r) => isFinite(r.x) && isFinite(r.y) && r.w > 0)
@@ -356,7 +375,6 @@ export class Engine {
 
     this.bind()
     this.resize()
-    this.startSprites()
     const saved = this.loadCam()
     if (saved) this.cam = saved
     else this.fit(false)
@@ -379,7 +397,19 @@ export class Engine {
     gpu.onLost = (why) => console.error('WebGPU device lost:', why)
     gpu.setRefImage(this.refImg)
     gpu.setCorners(this.spriteCorners(spw, sph))
-    this.sprites.forEach((lv, i) => lv && gpu.upload(i, lv))
+    const mids = new Float32Array(this.n * 2)
+    for (const p of this.geo.pieces) mids.set([p.cx, p.cy], p.i * 2)
+    const k = this.image.naturalWidth / this.room.width
+    gpu.drawPicture(this.image, mids, {
+      sc: this.spriteScale,
+      size: [this.room.width, this.room.height],
+      uv: [1 / this.room.width, k / this.image.naturalHeight],
+    })
+    this.sprites.forEach((shape, i) => {
+      if (shape === true || !shape) return
+      gpu.upload(i, shape)
+      this.sprites[i] = true
+    })
     this.canvas.before(this.gpuEl)
     this.canvas.after(this.gpuTop)
     this.resize()
@@ -412,11 +442,13 @@ export class Engine {
     return out
   }
 
-  // A piece's sprite ({ color, shape }), kept and sent to the GPU.
+  // A piece's shape ({ w, h, data }), sent to the GPU, or kept until it's there.
   setSprite(i, lv) {
     if (!this.sprites[i]) this.built++
     this.sprites[i] = lv
-    this.gpu?.upload(i, lv)
+    if (!this.gpu) return
+    this.gpu.upload(i, lv)
+    this.sprites[i] = true
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -511,8 +543,8 @@ export class Engine {
     clearTimeout(this.checkTimer)
     cancelAnimationFrame(this.raf)
     this.raf = -1
-    this.spriteHost?.terminate()
-    this.spriteWorker = this.spriteHost = null
+    if (this.spriteWorker) this.dropSpriteWorkers(this.spriteWorker.workers)
+    this.spriteWorker = null
     this.gpu?.destroy()
     this.gpu = null
     this.gpuEl.remove()
@@ -919,55 +951,70 @@ export class Engine {
     if (notes.length) this.notes?.move(notes, 'save')
   }
 
-  // Sprites are drawn in a worker when the browser can, and sent back as ImageBitmaps (which are
-  // also quicker to draw). Otherwise, or if the worker fails, render() builds them here a slice of
-  // a frame at a time. The worker is kept until destroy(), even when done: Chrome frees the bitmaps
-  // it made when it ends. this.spriteWorker is set only while it is still sending sprites.
+  // Pieces' shapes are worked out in a few workers when the browser can, each given a run of
+  // pieces' outlines, and sent back as plain pixels for the GPU. Otherwise, or if a worker fails,
+  // render() works out the rest here a slice of a frame at a time. this.spriteWorker is set only
+  // while they are still sending shapes.
   startSprites() {
     this.buildAt = 0
     this.spriteWorker = null
-    if (typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function' || typeof createImageBitmap !== 'function') return
-    let worker
-    try {
-      worker = new Worker(new URL('./sprites.worker.js', import.meta.url), { type: 'module' })
-    } catch {
-      return
-    }
-    this.spriteWorker = this.spriteHost = worker
-    const stop = () => {
-      if (this.spriteWorker === worker) this.spriteWorker = null
+    if (!canSprite()) return
+    warmSprites()
+    const parts = Math.min(spritePool.length, Math.ceil(this.n / 100))
+    if (!parts) return
+    const job = ++spriteJob
+    const workers = spritePool.slice(0, parts)
+    const run = { job, workers, left: parts }
+    this.spriteWorker = run
+    // When all are done, or one fails: the main thread works out whatever is still missing.
+    const stop = (failed) => {
+      if (this.spriteWorker !== run) return
+      this.spriteWorker = null
+      if (failed) this.dropSpriteWorkers(workers)
       this.invalidate()
     }
-    worker.onmessage = ({ data }) => {
-      if (this.spriteWorker !== worker) return
-      if (data.kind === 'front') {
-        for (const { i, lv } of data.items) this.setSprite(i, lv)
-        this.invalidate()
-      } else if (data.kind === 'done') {
-        stop()
-      } else stop()
-    }
-    worker.onerror = stop
-    createImageBitmap(this.image)
-      .then((image) => {
-        if (this.spriteWorker !== worker) return
-        const msg = { room: this.room, image, margin: this.margin, sc: this.spriteScale }
-        worker.postMessage(msg, [image])
-      })
-      .catch(stop)
+    const size = spriteSize(this.geo, this.margin, this.spriteScale)
+    const per = Math.ceil(this.n / parts)
+    workers.forEach((worker, part) => {
+      worker.onmessage = ({ data }) => {
+        if (this.spriteWorker !== run || data.job !== job) return
+        if (data.kind === 'front') {
+          for (const { i, shape } of data.items) this.setSprite(i, shape)
+          this.invalidate()
+        } else if (data.kind === 'done') {
+          if (!--run.left) stop(false)
+        } else stop(true)
+      }
+      worker.onerror = () => stop(true)
+      const items = []
+      const transfer = []
+      for (let i = part * per; i < Math.min(this.n, (part + 1) * per); i++) {
+        const o = shapeOutline(this.geo.pieces[i], this.geo)
+        items.push({ i, ...o })
+        transfer.push(o.pts.buffer, o.codes.buffer)
+      }
+      worker.postMessage({ job, size, sc: this.spriteScale, items }, transfer)
+    })
   }
 
-  // Main thread fallback: builds sprites until the deadline.
+  // Ends sprite workers that failed, or are still busy with a jigsaw that's gone.
+  dropSpriteWorkers(workers) {
+    for (const w of workers) {
+      w.terminate()
+      const k = spritePool.indexOf(w)
+      if (k >= 0) spritePool.splice(k, 1)
+    }
+  }
+
+  // Main thread fallback: works out shapes until the deadline.
   buildSome(until) {
+    if (this.buildAt < this.n) this.shapeCtx ??= makeCanvas(...spriteSize(this.geo, this.margin, this.spriteScale)).getContext('2d', { willReadFrequently: true })
     while (this.buildAt < this.n && performance.now() < until) {
       const i = this.buildAt++
       if (this.sprites[i]) continue
-      this.setSprite(i, buildSprite(this.spriteOpts(), this.geo.pieces[i], this.paths[i], makeCanvas))
+      const data = spriteShape(this.shapeCtx, this.spriteScale, shapeOutline(this.geo.pieces[i], this.geo))
+      this.setSprite(i, { w: this.shapeCtx.canvas.width, h: this.shapeCtx.canvas.height, data })
     }
-  }
-
-  spriteOpts() {
-    return { geo: this.geo, room: this.room, image: this.image, margin: this.margin, sc: this.spriteScale }
   }
 
   // What a point on the screen is over: an image (rh, or its resize handle), a tray (th) or a piece (i).

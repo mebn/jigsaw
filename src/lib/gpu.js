@@ -281,6 +281,66 @@ fn mask(p: vec2f) -> f32 {
 }
 `
 
+// Draws the picture around each piece into its cell of the colour atlas, as the sprite shows it:
+// sprite pixels per world unit sc, the piece's middle in the middle of the sprite. Past the
+// picture's edge there is nothing, with the pixels it ends in partly covered.
+const PICTURE = /* wgsl */ `
+struct PU {
+  // Atlas page size, sprite size (pixels).
+  a: vec4f,
+  // Cell size (pixels), sprites per row, sprites per page.
+  b: vec4f,
+  // sc, picture uv per world unit (x, y), -.
+  c: vec4f,
+  // The picture's size in world units.
+  d: vec4f,
+}
+@group(0) @binding(0) var<uniform> pu: PU;
+@group(0) @binding(1) var pic: texture_2d<f32>;
+@group(0) @binding(2) var samp: sampler;
+struct O {
+  @builtin(position) p: vec4f,
+  @location(0) @interpolate(flat) org: vec2f,
+  @location(1) @interpolate(flat) mid: vec2f,
+}
+@vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) cell: u32, @location(0) mid: vec2f) -> O {
+  let k = vi % 6u;
+  let c = vec2f(select(0.0, 1.0, k == 1u || k == 4u || k == 5u), select(0.0, 1.0, k == 2u || k == 3u || k == 5u));
+  let perRow = u32(pu.b.z);
+  let n = cell % u32(pu.b.w);
+  var o: O;
+  o.org = vec2f(f32(n % perRow), f32(n / perRow)) * pu.b.xy;
+  let d = o.org + c * pu.a.zw;
+  o.p = vec4f(d.x / pu.a.x * 2.0 - 1.0, 1.0 - d.y / pu.a.y * 2.0, 0.0, 1.0);
+  o.mid = mid;
+  return o;
+}
+@fragment fn fs(i: O) -> @location(0) vec4f {
+  let sc = pu.c.x;
+  let w = i.mid + (i.p.xy - i.org - pu.a.zw * 0.5) / sc;
+  let c = textureSampleLevel(pic, samp, w * pu.c.yz, 0.0);
+  let h = 0.5 / sc;
+  let cover = clamp((min(w + h, pu.d.xy) - max(w - h, vec2f(0.0))) / (2.0 * h), vec2f(0.0), vec2f(1.0));
+  return c * cover.x * cover.y;
+}
+`
+
+// One mip level from the one above it: each pixel the average of the 2 x 2 it covers (the last row
+// or column standing in for a missing one). Cells are a multiple of the coarsest step apart, so each
+// sprite's halved copy lands in its own cell.
+const HALVE = /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4f {
+  return vec4f(f32(vi & 1u) * 4.0 - 1.0, f32(vi >> 1u) * 4.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f {
+  let s = vec2i(textureDimensions(src)) - 1;
+  let q = vec2i(p.xy) * 2;
+  return (textureLoad(src, min(q, s), 0) + textureLoad(src, min(q + vec2i(1, 0), s), 0) +
+          textureLoad(src, min(q + vec2i(0, 1), s), 0) + textureLoad(src, min(q + 1, s), 0)) * 0.25;
+}
+`
+
 const premul = ([r, g, b, a]) => [r * a, g * a, b * a, a]
 
 // canvas holds the table, top the trays and everything above the notes (see frame()).
@@ -346,6 +406,8 @@ class Gpu {
     // Each piece's corners (see PIECE above), set with setCorners().
     this.corners = device.createBuffer({ size: Math.max(1, cells) * 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     this.has = new Uint8Array(cells)
+    // Per page of the shape atlas, the rows (pixels) with shapes whose halved copies are still to be made.
+    this.stale = new Map()
 
     this.uniform = new Float32Array(28)
     this.ubuf = device.createBuffer({ size: this.uniform.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
@@ -446,34 +508,106 @@ class Gpu {
       pipe(mPost, 'vsFull', 'fsOutline', [], screen, [lPost]),
     ])
     this.pipes = { bg, tray, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline }
+    const mPicture = d.createShaderModule({ code: PICTURE })
+    const mHalve = d.createShaderModule({ code: HALVE })
+    const halve = (format) =>
+      d.createRenderPipelineAsync({
+        layout: 'auto',
+        vertex: { module: mHalve, entryPoint: 'vs' },
+        fragment: { module: mHalve, entryPoint: 'fs', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' },
+      })
+    ;[this.pipes.picture, this.pipes.halveColor, this.pipes.halveShape] = await Promise.all([
+      d.createRenderPipelineAsync({
+        layout: 'auto',
+        vertex: { module: mPicture, entryPoint: 'vs', buffers: [{ arrayStride: 8, stepMode: 'instance', attributes: [{ format: 'float32x2', offset: 0, shaderLocation: 0 }] }] },
+        fragment: { module: mPicture, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+        primitive: { topology: 'triangle-list' },
+      }),
+      halve('rgba8unorm'),
+      halve('rg8unorm'),
+    ])
     // Until an image is set, images draw from a single clear pixel.
     this.setRefImage(null)
   }
 
-  // Puts a sprite ({ color, shape }, each the image and its halved copies, as canvases or
-  // ImageBitmaps) in its cell of the two atlases.
-  upload(cell, { color, shape }) {
-    if (cell >= this.has.length) return
+  // The cell's place in the atlases: [x, y, page].
+  cellAt(cell) {
     const { cw, ch, perRow, perPage } = this.cell
     const k = cell % perPage
-    const x = (k % perRow) * cw
-    const y = Math.floor(k / perRow) * ch
-    const z = Math.floor(cell / perPage)
-    for (const [texture, levels] of [
-      [this.atlas, color],
-      [this.shapes, shape],
-    ]) {
-      const n = Math.min(levels.length, this.cell.levels)
-      for (let l = 0; l < n; l++) {
-        const src = levels[l]
-        this.device.queue.copyExternalImageToTexture(
-          { source: src },
-          { texture, mipLevel: l, origin: { x: x >> l, y: y >> l, z }, premultipliedAlpha: true },
-          { width: src.width, height: src.height },
-        )
-      }
-    }
+    return [(k % perRow) * cw, Math.floor(k / perRow) * ch, Math.floor(cell / perPage)]
+  }
+
+  // Puts a piece's shape ({ w, h, data }, two bytes a pixel, see sprites.js) in its cell of the shape
+  // atlas. Its halved copies are made before the next frame.
+  upload(cell, { w, h, data }) {
+    if (cell >= this.has.length) return
+    const [x, y, z] = this.cellAt(cell)
+    this.device.queue.writeTexture({ texture: this.shapes, origin: { x, y, z } }, data, { bytesPerRow: w * 2 }, { width: w, height: h })
+    const r = this.stale.get(z)
+    this.stale.set(z, r ? [Math.min(r[0], y), Math.max(r[1], y + h)] : [y, y + h])
     this.has[cell] = 1
+  }
+
+  // Draws the picture around every piece into the colour atlas, with its halved copies. image: the
+  // whole picture; mids: each piece's middle (x, y) in world units; sc: sprite pixels per world
+  // unit; size: the picture's size in world units; uv: picture uv per world unit (x, y).
+  drawPicture(image, mids, { sc, size, uv }) {
+    const d = this.device
+    const w = image.naturalWidth || image.width
+    const h = image.naturalHeight || image.height
+    const pic = d.createTexture({ size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT })
+    d.queue.copyExternalImageToTexture({ source: image }, { texture: pic, premultipliedAlpha: true }, { width: w, height: h })
+    const { cw, ch, perRow, perPage } = this.cell
+    const ubuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    d.queue.writeBuffer(ubuf, 0, new Float32Array([...this.atlasSize, ...this.spritePx, cw, ch, perRow, perPage, sc, uv[0], uv[1], 0, size[0], size[1], 0, 0]))
+    const vbuf = d.createBuffer({ size: Math.max(8, mids.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST })
+    d.queue.writeBuffer(vbuf, 0, mids)
+    const group = d.createBindGroup({
+      layout: this.pipes.picture.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: ubuf } },
+        { binding: 1, resource: pic.createView() },
+        { binding: 2, resource: d.createSampler({ magFilter: 'linear', minFilter: 'linear' }) },
+      ],
+    })
+    const enc = d.createCommandEncoder()
+    const n = this.has.length
+    for (let z = 0; z * perPage < n; z++) {
+      const pass = enc.beginRenderPass({ colorAttachments: [{ view: this.layer(this.atlas, z, 0), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
+      pass.setPipeline(this.pipes.picture)
+      pass.setBindGroup(0, group)
+      pass.setVertexBuffer(0, vbuf)
+      pass.draw(6, Math.min(perPage, n - z * perPage), 0, z * perPage)
+      pass.end()
+      this.halve(enc, this.atlas, this.pipes.halveColor, z, 0, this.atlasSize[1])
+    }
+    d.queue.submit([enc.finish()])
+    // Freed once the GPU is done with them.
+    pic.destroy()
+    ubuf.destroy()
+    vbuf.destroy()
+  }
+
+  // One page and mip level of an atlas, as a 2D view.
+  layer(texture, z, level) {
+    return texture.createView({ dimension: '2d', baseArrayLayer: z, arrayLayerCount: 1, baseMipLevel: level, mipLevelCount: 1 })
+  }
+
+  // Remakes the halved copies of rows y0 to y1 (pixels) of an atlas's page z, level by level.
+  halve(enc, texture, pipeline, z, y0, y1) {
+    for (let l = 1; l < this.cell.levels; l++) {
+      const H = Math.max(1, this.atlasSize[1] >> l)
+      const a = Math.min(H, y0 >> l)
+      const b = Math.min(H, Math.ceil(y1 / (1 << l)))
+      if (b <= a) break
+      const pass = enc.beginRenderPass({ colorAttachments: [{ view: this.layer(texture, z, l), loadOp: 'load', storeOp: 'store' }] })
+      pass.setPipeline(pipeline)
+      pass.setBindGroup(0, this.device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: this.layer(texture, z, l - 1) }] }))
+      pass.setScissorRect(0, a, Math.max(1, this.atlasSize[0] >> l), b - a)
+      pass.draw(3)
+      pass.end()
+    }
   }
 
   // Every piece's corners: 32 floats each, as the shader reads them (see PIECE above).
@@ -602,6 +736,8 @@ class Gpu {
     const refs = this.fill('refs', f.refs.data, f.refs.count * REF_FLOATS)
     const { seg } = f
     const enc = d.createCommandEncoder()
+    for (const [z, [y0, y1]] of this.stale) this.halve(enc, this.shapes, this.pipes.halveShape, z, y0, y1)
+    this.stale.clear()
     const draw = (pass, range) => {
       if (range[1]) pass.draw(6, range[1], 0, range[0])
     }
