@@ -1616,11 +1616,20 @@ export class Engine {
       sy0: sy,
       moved: false,
     }
-    for (const i of ids) {
+    const d0 = this.drag
+    ids.forEach((i, j) => {
+      // A piece picked up while still turning on the table finishes the turn in the hand.
+      const t = this.turns.get(i)
+      if (t) {
+        d0.cx[j] = t.self ? d0.ox[j] : t.cx - wx
+        d0.cy[j] = t.self ? d0.oy[j] : t.cy - wy
+        d0.sa[j] = t.a
+        d0.spinning = true
+      }
       this.turns.delete(i)
       this.moving.delete(i)
-    }
-    const keep = this.lift && this.lift.ids.length === ids.length && set.has(this.lift.ids[0])
+    })
+    const keep =this.lift && this.lift.ids.length === ids.length && set.has(this.lift.ids[0])
     this.lift = { ids, set, value: keep ? this.lift.value : 0, target: 1, px: wx, py: wy, angle: 0 }
     this.canvas.style.cursor = 'grabbing'
     this.showTip(null)
@@ -2308,6 +2317,7 @@ export class Engine {
     const tray = this.carry?.trays[0] && this.trays.find((t) => t.id === this.carry.trays[0].id)
     if (tray) {
       this.placeInTrays(d.ids, d.px, d.py, tray)
+      this.keepSpin(d)
       this.commit(changed)
       // Moving a whole tray doesn't sort it again.
       return
@@ -2325,12 +2335,33 @@ export class Engine {
       else changes.push(this.placeInTrays(grp, d.px, d.py, this.trays.find((t) => t.id === trayOf.get(a)) || null))
     }
     if (loose.length) changes.push(this.placeInTrays(loose, d.px, d.py))
+    this.keepSpin(d)
     this.commit(changed)
     for (const c of changes) this.autoSort(c)
     // A tray whose last pieces were dragged out goes. It's the same step to undo, so undo brings it
     // back with them.
     const emptied = new Set(changes.flatMap((c) => c?.left || []).filter((t) => !t.pieces.length))
     for (const t of emptied) this.removeTray(t.id)
+  }
+
+  // What's left of a spin when the carried pieces are let go (a quick press, turn and release, still
+  // lifting) carries on as a turn on the table around each module's middle, where it lands.
+  keepSpin(d) {
+    if (!d.spinning) return
+    const turns = new Map()
+    d.ids.forEach((i, j) => {
+      if (Math.abs(d.sa[j]) < 0.001) return
+      // The pieces of one module share their middle and what's left of their spin.
+      const key = `${d.cx[j]},${d.cy[j]},${d.sa[j]}`
+      let t = turns.get(key)
+      if (!t) {
+        const [x, y] = this.target(i)
+        const [dx, dy] = rot(d.cx[j] - d.ox[j], d.cy[j] - d.oy[j], d.k)
+        t = { cx: x + dx, cy: y + dy, a: d.sa[j] }
+        turns.set(key, t)
+      }
+      this.turns.set(i, t)
+    })
   }
 
   // With out given, out.onto is set to the piece the group snapped onto, if any.
@@ -3937,7 +3968,11 @@ export class Engine {
     const px = l.px + gx * Math.cos(a) - gy * Math.sin(a)
     const py = l.py + gx * Math.sin(a) + gy * Math.cos(a)
     if (!d) {
-      for (const i of l.ids) fn(i, px + (this.x[i] - l.px) * s, py + (this.y[i] - l.py) * s, this.r[i] * Q, s)
+      // Landing, with what's left of a turn.
+      for (const i of l.ids) {
+        this.poseInto(i)
+        fn(i, px + (this.qx - l.px) * s, py + (this.qy - l.py) * s, this.qa, s)
+      }
       return
     }
     const ca = Math.cos(d.angle)
