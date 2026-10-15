@@ -206,6 +206,13 @@ export class Engine {
     this.r = new Int8Array(n)
     this.g = new Int32Array(n)
     this.by = new Array(n).fill(null)
+    // The tray each piece is in (its id, null: none), saved with its moves, and when it went in (ms),
+    // the order a tray sorts in. A tray's pieces list is made from these, see syncTrays(). An id no
+    // tray has (deleted, or not heard of yet) counts as none.
+    this.tray = new Array(n).fill(null)
+    this.trayAt = new Float64Array(n)
+    // Pieces whose tray this player changed, sent with the next commit().
+    this.trayChanged = new Set()
     // Pieces turned in place on the table, still animating: i -> { cx, cy, a } (a in radians, decays to
     // 0), one object shared by all the pieces of a module.
     this.turns = new Map()
@@ -239,6 +246,8 @@ export class Engine {
       this.r[p.i] = p.r
       this.g[p.i] = p.g
       this.by[p.i] = p.by || null
+      this.tray[p.i] = p.t || null
+      this.trayAt[p.i] = p.ta || 0
     }
     const sizes = new Map()
     for (let i = 0; i < n; i++) sizes.set(this.g[i], (sizes.get(this.g[i]) || 0) + 1)
@@ -280,11 +289,13 @@ export class Engine {
     this.btnT = 0
 
     // Trays, shared by the room: { id, x, y, w, h, color, pieces, author } in world units, x and y
-    // being the top left corner. pieces lists the pieces in it, which it fits itself around. The last
-    // one is on top. One can be selected: space and G then work on its pieces, Delete removes it.
+    // being the top left corner. pieces lists the pieces in it (from this.tray), which it fits itself
+    // around. The last one is on top. One can be selected: space and G then work on its pieces,
+    // Delete removes it.
     this.trays = (trays || [])
       .filter((t) => isFinite(t.x) && isFinite(t.y) && t.w > 0 && t.h > 0)
-      .map((t) => ({ ...t, auto: !!t.auto, pieces: Array.isArray(t.pieces) ? t.pieces : [] }))
+      .map((t) => ({ ...t, auto: !!t.auto, pieces: [] }))
+    this.syncTrays()
     this.traySel = null
     this.hist = { undo: [], redo: [] }
     // What every piece looked like at the last move, by anyone, so each move knows what it changed.
@@ -1193,17 +1204,17 @@ export class Engine {
       if (c.moved && c.lift) {
         const l = c.lift
         c.lift = null
-        if (l.ids.length) {
-          this.startDrag(l.ids, l.wx, l.wy, c.pointer, l.sx, l.sy, true)
+        // What's in it now, which may have changed since the press.
+        const t = this.trays.find((x) => x.id === c.trays[0]?.id)
+        const ids = t ? this.trayPieces(t) : []
+        if (ids.length) {
+          this.startDrag(ids, l.wx, l.wy, c.pointer, l.sx, l.sy, true)
           // Not a click, so no piece gets turned over or selected.
           this.drag.moved = true
           // Lifted as if from the tray's middle: growing around the pointer would push the pieces
           // far from it out over the tray's edge.
-          const t = this.trays.find((x) => x.id === c.trays[0].id)
-          if (t) {
-            this.lift.cx = c.trays[0].x + t.w / 2 - l.wx
-            this.lift.cy = c.trays[0].y + t.h / 2 - l.wy
-          }
+          this.lift.cx = c.trays[0].x + t.w / 2 - l.wx
+          this.lift.cy = c.trays[0].y + t.h / 2 - l.wy
         }
       }
       if (!this.drag) {
@@ -1811,6 +1822,11 @@ export class Engine {
   // Tells everyone where these pieces ended up (after a drop, turn or sort) and updates the rest.
   // turns: the spins around a point that got them there ({ ids, cx, cy, d }), so others can show them.
   commit(changed, turns, record = true) {
+    // Pieces that only changed tray go too.
+    if (this.trayChanged.size) {
+      changed = new Set([...changed, ...this.trayChanged])
+      this.trayChanged.clear()
+    }
     this.growSelection()
     const items = this.track(changed)
     if (record && items.length) this.queue({ items })
@@ -1820,13 +1836,49 @@ export class Engine {
       turns,
       pieces: [...changed].map((i) => {
         const [x, y] = this.moving.get(i) || [this.x[i], this.y[i]]
-        return { i, x, y, r: this.r[i], g: this.g[i], by: this.by[i] }
+        return { i, x, y, r: this.r[i], g: this.g[i], by: this.by[i], t: this.trayOf(i) }
       }),
     })
     this.checkGroups(new Set([...changed].map((i) => this.g[i])))
     this.emitStats()
     this.invalidate()
     this.checkComplete(true)
+  }
+
+  // Lists each tray's pieces from this.tray, in the order they went in.
+  syncTrays() {
+    const lists = new Map(this.trays.map((t) => [t.id, []]))
+    for (let i = 0; i < this.n; i++) if (this.tray[i] !== null) lists.get(this.tray[i])?.push(i)
+    for (const t of this.trays) t.pieces = lists.get(t.id).sort((a, b) => this.trayAt[a] - this.trayAt[b] || a - b)
+  }
+
+  // The tray a piece is in, if that tray is here.
+  trayOf(i) {
+    const id = this.tray[i]
+    return id !== null && this.trays.some((t) => t.id === id) ? id : null
+  }
+
+  // This player puts pieces in a tray (its id, null: none), after any already in it. Sent with the
+  // next commit(). Returns the trays that gained or lost pieces.
+  setTray(ids, id) {
+    const touched = new Set()
+    const into = id === null ? null : this.trays.find((t) => t.id === id)
+    let at = Date.now()
+    for (const i of into?.pieces || []) at = Math.max(at, this.trayAt[i] + 1)
+    let n = 0
+    for (const i of ids) {
+      if (this.tray[i] === id) continue
+      const from = this.trays.find((t) => t.id === this.tray[i])
+      if (from) touched.add(from)
+      this.tray[i] = id
+      this.trayAt[i] = at
+      this.trayChanged.add(i)
+      n++
+    }
+    if (!n) return touched
+    if (into) touched.add(into)
+    this.syncTrays()
+    return touched
   }
 
   // Which tray each piece lies in now.
@@ -1974,16 +2026,16 @@ export class Engine {
       this.onTray(cur, false)
       return
     }
-    // A tray that was removed comes back with its pieces (those not in another tray by now), and its
-    // number if that is still free.
-    const taken = new Set(this.trays.flatMap((t) => t.pieces))
-    const t = { ...rest, pieces: (pieces || []).filter((i) => !taken.has(i)) }
+    // A tray that was removed comes back with its number if that is still free. Its pieces come back
+    // with the rest of the step (those nobody moved since), see stepHistory().
+    const t = { ...rest, pieces: [] }
     if (t.num && this.trays.some((x) => x.num === t.num)) {
       const used = new Set(this.trays.map((x) => x.num))
       t.num = 0
       for (let n = 1; n <= 9 && !t.num; n++) if (!used.has(n)) t.num = n
     }
     this.trays.push(t)
+    this.syncTrays()
     if (t.pieces.length) this.fitTray(t)
     this.onTray(t, false)
   }
@@ -2023,7 +2075,8 @@ export class Engine {
       for (const o of objs) this.applyObj(o.kind, o.id, o[set])
       const ids = items.map((it) => it.i)
       this.settle(ids)
-      const touched = new Set()
+      // Pieces by the tray they go back into.
+      const into = new Map()
       for (const { i, [set]: v } of items) {
         if (Math.hypot(v.x - this.x[i], v.y - this.y[i]) > 1e-6) this.moving.set(i, [v.x, v.y])
         const d = ((v.r - this.r[i] + 5) % 4) - 1
@@ -2031,22 +2084,11 @@ export class Engine {
         this.r[i] = v.r
         this.g[i] = v.g
         this.by[i] = v.by
-        const cur = this.shTray.get(i) || null
-        if (cur !== v.t) {
-          for (const t of this.trays) {
-            const k = t.pieces.indexOf(i)
-            if (k >= 0) {
-              t.pieces.splice(k, 1)
-              touched.add(t)
-            }
-          }
-          const t = v.t && this.trays.find((x) => x.id === v.t)
-          if (t) {
-            t.pieces.push(i)
-            touched.add(t)
-          }
-        }
+        const t = v.t && this.trays.some((x) => x.id === v.t) ? v.t : null
+        if (this.trayOf(i) !== t) into.set(t, [...(into.get(t) || []), i])
       }
+      const touched = new Set()
+      for (const [t, list] of into) for (const tray of this.setTray(list, t)) touched.add(tray)
       if (ids.length) this.toTop(new Set(ids))
       this.refitTrays(touched)
       this.trackTrays()
@@ -2057,6 +2099,9 @@ export class Engine {
         this.setSelection(new Set(ids))
         this.noSelHistory = false
         this.commit(new Set(ids), undefined, false)
+      } else if (this.trayChanged.size) {
+        // A tray that went again took its pieces out of it.
+        this.commit(new Set(), undefined, false)
       } else {
         this.invalidate()
         this.notifyHistory()
@@ -2467,9 +2512,7 @@ export class Engine {
       this.by[p.i] = null
     }
     this.setSelection(new Set())
-    const full = this.trays.filter((t) => t.pieces.length)
-    for (const t of full) t.pieces = []
-    this.refitTrays(full)
+    this.refitTrays(this.setTray(layout.map((p) => p.i), null))
     this.commit(layout.map((p) => p.i), undefined, false)
     setTimeout(() => this.fit(), 250)
   }
@@ -2575,6 +2618,7 @@ export class Engine {
   applyRemote(list, turns) {
     const g0 = this.g.slice()
     const touched = new Set()
+    let trays = false
     for (const p of list) {
       if (this.drag?.set.has(p.i)) continue
       this.held.delete(p.i)
@@ -2582,6 +2626,12 @@ export class Engine {
       this.r[p.i] = p.r
       this.g[p.i] = p.g
       if (p.by !== undefined) this.by[p.i] = p.by
+      // Left out by pages from before trays were kept on the pieces: the tray stays as it was.
+      if (p.t !== undefined && (p.t || null) !== this.tray[p.i]) {
+        this.tray[p.i] = p.t || null
+        this.trayAt[p.i] = p.ta || Date.now()
+        trays = true
+      }
       const sh = this.sh
       sh.x[p.i] = p.x
       sh.y[p.i] = p.y
@@ -2604,6 +2654,15 @@ export class Engine {
         this.turns.set(i, turn)
       }
     }
+    if (trays) {
+      this.syncTrays()
+      const now = this.trayMap()
+      for (const i of touched) {
+        if (now.has(i)) this.shTray.set(i, now.get(i))
+        else this.shTray.delete(i)
+      }
+      this.pickUp()
+    }
     if (touched.size) this.toTop(touched)
     this.checkGroups(new Set([...touched].map((i) => this.g[i])))
     this.growSelection()
@@ -2617,7 +2676,7 @@ export class Engine {
   resync(pieces) {
     const list = pieces.filter(
       (p) =>
-        p.x !== this.x[p.i] || p.y !== this.y[p.i] || p.r !== this.r[p.i] || p.g !== this.g[p.i],
+        p.x !== this.x[p.i] || p.y !== this.y[p.i] || p.r !== this.r[p.i] || p.g !== this.g[p.i] || (p.t || null) !== this.tray[p.i],
     )
     if (list.length) this.applyRemote(list)
   }
@@ -2657,11 +2716,28 @@ export class Engine {
     const later = []
     const fixed = []
     const grid = (i, a) => rot(((i % cols) - (a % cols)) * w, (((i / cols) | 0) - ((a / cols) | 0)) * h, this.r[a])
+    // Pieces moved to the tray most of their group is in, and the trays that changed.
+    const moved = []
+    const trays = new Set()
     for (const [gid, list] of groups) {
       if (list.length < 2) continue
       if (list.some(busy)) {
         later.push(gid)
         continue
+      }
+      // A group is in one tray (or none). Split, it goes where most of it is; a tie goes to the side
+      // with the lowest piece.
+      const count = new Map()
+      for (const i of list) count.set(this.trayOf(i), (count.get(this.trayOf(i)) || 0) + 1)
+      if (count.size > 1) {
+        const win = [...count].reduce((a, b) => (b[1] > a[1] ? b : a))[0]
+        for (const i of list) {
+          if (this.trayOf(i) === win) continue
+          trays.add(this.trayOf(i)).add(win)
+          this.tray[i] = win
+          this.trayAt[i] = Date.now()
+          moved.push(i)
+        }
       }
       // Pieces by how far they are from where the grid puts them next to the first. Pieces are in
       // index order, so each side's first piece is its lowest.
@@ -2688,14 +2764,29 @@ export class Engine {
       }
     }
     if (later.length) this.checkGroups(later)
-    if (!fixed.length) return
-    const what = fixed.length === 1 ? 'a piece back into line with its group' : `${fixed.length} pieces back into line with their groups`
-    console.warn(`Moved ${what}:`, fixed)
-    const pieces = fixed.map((i) => {
-      const [x, y] = this.moving.get(i)
+    if (!fixed.length && !moved.length) return
+    if (fixed.length) {
+      const what = fixed.length === 1 ? 'a piece back into line with its group' : `${fixed.length} pieces back into line with their groups`
+      console.warn(`Moved ${what}:`, fixed)
+    }
+    if (moved.length) {
+      console.warn(`Moved ${moved.length === 1 ? 'a piece' : `${moved.length} pieces`} into the tray the rest of the group is in:`, moved)
+      this.syncTrays()
+      const now = this.trayMap()
+      for (const i of moved) {
+        if (now.has(i)) this.shTray.set(i, now.get(i))
+        else this.shTray.delete(i)
+      }
+      // Not this player's change, so nothing to undo.
+      this.replaying = true
+      this.refitTrays(this.trays.filter((t) => trays.has(t.id)))
+      this.replaying = false
+    }
+    const pieces = [...new Set([...fixed, ...moved])].map((i) => {
+      const [x, y] = this.target(i)
       this.sh.x[i] = x
       this.sh.y[i] = y
-      return { i, x, y, r: this.r[i], g: this.g[i], by: this.by[i] }
+      return { i, x, y, r: this.r[i], g: this.g[i], by: this.by[i], t: this.trayOf(i) }
     })
     this.send({ type: 'moves', fix: true, pieces })
     this.invalidate()
@@ -3015,23 +3106,17 @@ export class Engine {
       pieces: [],
       author: this.user || '',
     }
-    const left = []
-    if (ids.length) {
-      const moved = new Set(ids)
-      for (const t of this.trays) {
-        if (!t.pieces.some((i) => moved.has(i))) continue
-        t.pieces = t.pieces.filter((i) => !moved.has(i))
-        left.push(t)
-      }
-      tray.pieces = ids
-      this.fitTray(tray)
-    }
     this.trays.push(tray)
+    const left = this.setTray(ids, tray.id)
+    left.delete(tray)
+    if (ids.length) this.fitTray(tray)
     this.refitTrays(left)
     if (this.selCount) this.setSelection(new Set())
     this.selectRef(null)
     this.selectTray(tray.id)
     this.onTray?.(tray, false)
+    // The pieces say which tray they're in now, after the tray itself.
+    if (this.trayChanged.size) this.commit(new Set())
   }
 
   selectTray(id) {
@@ -3041,37 +3126,50 @@ export class Engine {
     this.invalidate()
   }
 
+  // The pieces in a tray that goes stay where they are, in no tray: this player's removal says so
+  // with their moves (so undo puts them back), the server does for everyone else's.
   removeTray(id, remote = false) {
     if (!remote && this.guard && !this.guard()) return
     const gone = this.trays.find((t) => t.id === id)
     if (remote) this.seen('tray', id, null)
-    else this.trackObj('tray', id, null, { pieces: gone ? gone.pieces.slice() : [] })
+    else this.trackObj('tray', id, null)
+    const ids = gone ? gone.pieces.slice() : []
+    if (remote) for (const i of ids) this.tray[i] = null
+    else this.setTray(ids, null)
     this.trays = this.trays.filter((t) => t.id !== id)
     if (this.traySel === id) this.traySel = null
     if (this.carry) this.carry.trays = this.carry.trays.filter((t) => t.id !== id)
     if (!remote) this.onTrayDelete?.(id)
-    this.trackTrays()
+    // Undo replays the pieces itself, see stepHistory().
+    if (remote || this.replaying) this.trackTrays()
+    else if (this.trayChanged.size) this.commit(new Set())
     this.invalidate()
   }
 
-  // Another player added, moved or filled a tray.
+  // Another player added, moved, renamed or recoloured a tray. What's in it comes with the pieces'
+  // moves, so a list sent along is left out.
   remoteTray(tray) {
     if (this.carry?.trays.some((t) => t.id === tray.id)) return
+    const { pieces, ...rest } = tray
     const cur = this.trays.find((t) => t.id === tray.id)
     if (cur) {
       // Its box eases to the new place, as the pieces carried in it do.
-      const { x, y, w, h, ...rest } = tray
-      Object.assign(cur, rest)
+      const { x, y, w, h, ...look } = rest
+      Object.assign(cur, look)
       if ([x, y, w, h].every(isFinite)) this.trayTo.set(cur.id, { x, y, w, h })
       else Object.assign(cur, { x, y, w, h })
-    } else this.trays.push({ ...tray, pieces: tray.pieces || [] })
-    this.seen('tray', tray.id, cur ? { ...cur, ...tray } : tray)
+    } else {
+      this.trays.push({ ...rest, pieces: [] })
+      this.syncTrays()
+    }
+    this.seen('tray', tray.id, cur ? { ...cur, ...rest } : rest)
     this.trackTrays()
     this.invalidate()
   }
 
   setTrays(trays) {
-    this.trays = trays.map((t) => ({ ...t, auto: !!t.auto, pieces: t.pieces || [] }))
+    this.trays = trays.map(({ pieces, ...t }) => ({ ...t, auto: !!t.auto, pieces: [] }))
+    this.syncTrays()
     this.trayTo.clear()
     if (this.traySel && !this.trays.some((t) => t.id === this.traySel)) this.traySel = null
     this.resetSeen('tray', this.trays)
@@ -3123,17 +3221,23 @@ export class Engine {
       t.h = S * TRAY_H
       return
     }
+    // Pieces someone is carrying, here or elsewhere, are left out: they stay in the tray until let go,
+    // but wherever they are held over isn't part of it. With all of them carried, the box stays put.
+    const carried = new Set(this.drag?.ids)
+    for (const d of this.remote.values()) for (const i of d.ids) carried.add(i)
     let x0 = Infinity
     let y0 = Infinity
     let x1 = -Infinity
     let y1 = -Infinity
     for (const i of t.pieces) {
+      if (carried.has(i)) continue
       const [x, y] = this.target(i)
       x0 = Math.min(x0, x)
       y0 = Math.min(y0, y)
       x1 = Math.max(x1, x)
       y1 = Math.max(y1, y)
     }
+    if (x0 === Infinity) return
     const pad = this.trayPad
     t.x = x0 - pad
     t.y = y0 - pad
@@ -3151,16 +3255,9 @@ export class Engine {
       const t = this.trays[k]
       if (wx >= t.x && wx <= t.x + t.w && wy >= t.y && wy <= t.y + t.h) into = t
     }
-    const moved = this.withGroups(ids)
-    const touched = new Set(into ? [into] : [])
-    const left = []
-    for (const t of this.trays) {
-      if (t === into || !t.pieces.some((i) => moved.has(i))) continue
-      t.pieces = t.pieces.filter((i) => !moved.has(i))
-      touched.add(t)
-      left.push(t)
-    }
-    if (into) into.pieces = [...new Set([...into.pieces, ...moved])]
+    const touched = this.setTray(this.withGroups(ids), into ? into.id : null)
+    const left = [...touched].filter((t) => t !== into)
+    if (into) touched.add(into)
     this.refitTrays(touched)
     return { into, left }
   }
@@ -3335,9 +3432,61 @@ export class Engine {
       refs: [],
       notes: [],
       trays: [{ id: t.id, x: t.x, y: t.y }],
-      lift: { ids: this.trayPieces(t), wx, wy, sx, sy },
+      lift: { wx, wy, sx, sy },
     }
     this.canvas.style.cursor = 'grabbing'
+    this.invalidate()
+  }
+
+  // Pieces someone else put in the tray this player is carrying join what's carried, easing over
+  // from where they landed, so they move with it rather than being left behind.
+  pickUp() {
+    const c = this.carry
+    const t = c?.trays[0] && !c.lift && this.trays.find((x) => x.id === c.trays[0].id)
+    if (!t || (this.drag && !this.drag.tray)) return
+    // An empty tray on the move: these are the first pieces it carries.
+    if (!this.drag) {
+      const p = this.pointers.get(c.pointer)
+      const ids = this.trayPieces(t)
+      if (!c.moved || !p || !ids.length) return
+      const [wx, wy] = c.at || this.toWorld(...p)
+      this.startDrag(ids, wx, wy, c.pointer, p[0], p[1], true)
+      this.drag.moved = true
+      return
+    }
+    const d = this.drag
+    const add = this.trayPieces(t).filter((i) => !d.set.has(i))
+    if (!add.length) return
+    const grow = (a) => {
+      const b = new Float64Array(a.length + add.length)
+      b.set(a)
+      return b
+    }
+    for (const k of ['cx', 'cy', 'sa', 'tx', 'ty']) d[k] = grow(d[k])
+    for (const i of add) {
+      const j = d.ids.length
+      const [x, y] = this.target(i)
+      const [ox, oy] = rot(x - d.px, y - d.py, -d.k)
+      const [nx, ny] = rot(this.x[i] - d.px, this.y[i] - d.py, -d.k)
+      d.ids.push(i)
+      d.set.add(i)
+      d.ox.push(ox)
+      d.oy.push(oy)
+      d.r0.push(mod4(this.r[i] - d.k))
+      d.cx[j] = ox
+      d.cy[j] = oy
+      d.tx[j] = nx - ox
+      d.ty[j] = ny - oy
+      this.moving.delete(i)
+      this.turns.delete(i)
+    }
+    d.spinning = true
+    if (this.lift) {
+      this.lift.ids = d.ids
+      this.lift.set = d.set
+    }
+    this.toTop(new Set(add))
+    this.send({ type: 'grab', ids: d.ids, ox: d.ox.map(r2), oy: d.oy.map(r2), r0: d.r0, px: r2(d.px), py: r2(d.py), k: d.k, tray: true })
     this.invalidate()
   }
 

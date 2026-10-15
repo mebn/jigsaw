@@ -10,6 +10,10 @@
 - Moving a piece or group by just a few pixels works again, for fine adjustments. Letting go after a tiny movement no longer puts it back where it was.
 - Moving or zooming the view while dragging out a selection box keeps the box's starting corner on the same spot of the table, so the box grows to cover what you scroll over instead of sliding along with the view.
 - A piece or group you drag, or turn while holding it, stays selected after you let go, so you can keep turning or sorting it straight away. This also fixes a quick click and **Space** leaving the piece unselected.
+- A tray no longer stretches to reach a piece someone is holding over the table when another player puts pieces in it, takes them out or sorts it.
+- When two players change the same tray at the same moment, neither change is lost: a piece taken out stays out and a piece put in stays in, and everyone sees the same tray.
+- Moving a tray picks up pieces someone else drops into it while you move it, instead of leaving them behind.
+- A group that ended up partly in a tray and partly out of it goes into the tray most of it is in.
 
 ## 14 October 2026
 

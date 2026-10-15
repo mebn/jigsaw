@@ -195,8 +195,8 @@ export default function Room({ id }) {
           send: (msg) => sock?.send(msg),
           onRef: (ref, live) => api.saveRef(id, ref, live),
           onRefDelete: (refId) => api.deleteRef(id, refId),
-          // What's in a tray only changes on a drop, so live updates (while dragging) leave it out.
-          onTray: (tray, live) => api.saveTray(id, live ? { ...tray, pieces: undefined } : tray, live),
+          // What's in a tray goes with the pieces' moves, so the tray is sent without its list.
+          onTray: (tray, live) => api.saveTray(id, { ...tray, pieces: undefined }, live),
           onTrayDelete: (trayId) => api.deleteTray(id, trayId),
           onStats: () => setStats(eng.contributors()),
           onSnap: playSnap,

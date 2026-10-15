@@ -168,7 +168,7 @@ function createApi(dbFile) {
       'SELECT id, name, created, cols, rows, shape, seed, width, height, annoying, long_pieces AS longPieces, owner, private FROM rooms WHERE id = ?',
     ),
     image: db.prepare('SELECT image, image_type FROM rooms WHERE id = ?'),
-    pieces: db.prepare('SELECT idx AS i, x, y, r, g, by, f FROM pieces WHERE room_id = ? ORDER BY idx'),
+    pieces: db.prepare('SELECT idx AS i, x, y, r, g, by, f, tray AS t, tray_at AS ta FROM pieces WHERE room_id = ? ORDER BY idx'),
     insertRoom: db.prepare(`
       INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, annoying, owner, private, long_pieces, units)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -178,6 +178,12 @@ function createApi(dbFile) {
     updatePiece: db.prepare(
       'UPDATE pieces SET x = ?, y = ?, r = ?, g = ?, by = COALESCE(?, by), f = COALESCE(?, f) WHERE room_id = ? AND idx = ?',
     ),
+    // The tray a piece is in, and when it was put there: kept when the tray stays the same.
+    setPieceTray: db.prepare(
+      'UPDATE pieces SET tray = ?1, tray_at = CASE WHEN tray IS ?1 THEN tray_at ELSE ?2 END WHERE room_id = ?3 AND idx = ?4 RETURNING tray_at',
+    ),
+    trayPieces: db.prepare('SELECT idx FROM pieces WHERE room_id = ? AND tray = ? ORDER BY tray_at, idx'),
+    clearTray: db.prepare('UPDATE pieces SET tray = NULL WHERE room_id = ? AND tray = ?'),
     deleteRoom: db.prepare('DELETE FROM rooms WHERE id = ?'),
     deletePieces: db.prepare('DELETE FROM pieces WHERE room_id = ?'),
     join: db.prepare('INSERT OR IGNORE INTO room_players (room_id, player_id, joined) VALUES (?, ?, ?)'),
@@ -215,14 +221,14 @@ function createApi(dbFile) {
     deleteRef: db.prepare('DELETE FROM refs WHERE room_id = ? AND id = ?'),
     deleteRefs: db.prepare('DELETE FROM refs WHERE room_id = ?'),
     trays: db.prepare(
-      'SELECT id, x, y, w, h, name, color, num, auto, pieces, author, created FROM trays WHERE room_id = ? ORDER BY created',
+      'SELECT id, x, y, w, h, name, color, num, auto, author, created FROM trays WHERE room_id = ? ORDER BY created',
     ),
     upsertTray: db.prepare(`
-      INSERT INTO trays (id, room_id, x, y, w, h, name, color, num, auto, pieces, author, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO trays (id, room_id, x, y, w, h, name, color, num, auto, author, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (room_id, id) DO UPDATE SET
         x = excluded.x, y = excluded.y, w = excluded.w, h = excluded.h, name = excluded.name, color = excluded.color,
-        num = excluded.num, auto = excluded.auto, pieces = excluded.pieces`),
-    tray: db.prepare('SELECT id, x, y, w, h, name, color, num, auto, pieces, author, created FROM trays WHERE room_id = ? AND id = ?'),
+        num = excluded.num, auto = excluded.auto`),
+    tray: db.prepare('SELECT id, x, y, w, h, name, color, num, auto, author, created FROM trays WHERE room_id = ? AND id = ?'),
     deleteTray: db.prepare('DELETE FROM trays WHERE room_id = ? AND id = ?'),
     deleteTrays: db.prepare('DELETE FROM trays WHERE room_id = ?'),
     player: db.prepare('SELECT id, name FROM players WHERE id = ?'),
@@ -376,10 +382,17 @@ function createApi(dbFile) {
       if (!known.has(v)) known.set(v, playerId(v))
       return known.get(v)
     }
+    const now = Date.now()
     tx(() => {
       for (const p of pieces) {
         p.by = by(p.by)
         q.updatePiece.run(p.x, p.y, p.r, p.g, p.by, p.f == null ? null : p.f ? 1 : 0, roomId, p.i)
+        // t: the tray it's in (null: none). Left out, as pages from before it send, it stays as it was.
+        // Everyone is told when it went in (ta), so a tray sorts in the same order for all.
+        if (p.t !== undefined) {
+          p.t = typeof p.t === 'string' && p.t ? p.t.slice(0, 40) : null
+          p.ta = q.setPieceTray.get(p.t, now, roomId, p.i)?.tray_at ?? now
+        }
       }
     })
   }
@@ -422,8 +435,9 @@ function createApi(dbFile) {
     pieces: Array.isArray(b?.pieces) ? b.pieces.filter((i) => Number.isInteger(i) && i >= 0).slice(0, 20000) : undefined,
     author: String(b?.author || '').slice(0, 32),
   })
-  // A stored tray, with its pieces as a list again.
-  const trayOut = (row) => row && { ...row, auto: !!row.auto, pieces: JSON.parse(row.pieces || '[]') }
+  // A stored tray, with the pieces in it (see migration 019), in the order they went in. Pages from
+  // before then still go by this list.
+  const trayOut = (row, roomId) => row && { ...row, auto: !!row.auto, pieces: q.trayPieces.all(roomId, row.id).map((p) => p.idx) }
 
   // Notes, reference images and trays: live=true only relays (while dragging), otherwise it's saved.
   function putNote(roomId, b, live) {
@@ -448,9 +462,9 @@ function createApi(dbFile) {
     if (!t.id) return null
     if (live) return { ...t, created: +b.created || 0 }
     t.author = playerId(t.author) || ''
-    const pieces = JSON.stringify(t.pieces || trayOut(q.tray.get(roomId, t.id))?.pieces || [])
-    q.upsertTray.run(t.id, roomId, t.x, t.y, t.w, t.h, t.name, t.color, t.num, t.auto ? 1 : 0, pieces, t.author, Date.now())
-    return trayOut(q.tray.get(roomId, t.id))
+    // What's in a tray is saved on the pieces, with their moves; a list sent with the tray is ignored.
+    q.upsertTray.run(t.id, roomId, t.x, t.y, t.w, t.h, t.name, t.color, t.num, t.auto ? 1 : 0, t.author, Date.now())
+    return trayOut(q.tray.get(roomId, t.id), roomId)
   }
 
   // One socket per open room. Live drag messages ("grab", "live") are only relayed;
@@ -496,7 +510,11 @@ function createApi(dbFile) {
       } else if (m.type === 'note-delete' || m.type === 'ref-delete' || m.type === 'tray-delete') {
         const id = String(m.id || '')
         const del = { 'note-delete': q.deleteNote, 'ref-delete': q.deleteRef, 'tray-delete': q.deleteTray }[m.type]
-        del.run(roomId, id)
+        tx(() => {
+          del.run(roomId, id)
+          // The pieces in a tray that goes stay where they are, in no tray.
+          if (m.type === 'tray-delete') q.clearTray.run(roomId, id)
+        })
         broadcast(roomId, { type: m.type, client, id }, ws)
       }
     }
@@ -693,7 +711,7 @@ function createApi(dbFile) {
             pieces: q.pieces.all(id),
             notes: q.notes.all(id),
             refs: q.refs.all(id),
-            trays: q.trays.all(id).map(trayOut),
+            trays: q.trays.all(id).map((t) => trayOut(t, id)),
             times: q.times.all(id),
             seen: Object.fromEntries(q.seen.all(id).map((s) => [s.user, s.seen])),
             online: online(id),
