@@ -3,14 +3,22 @@ import { api } from '../lib/api.js'
 import { Note as NoteIcon } from './icons.jsx'
 import PlaceButton from './PlaceButton.jsx'
 
-// Note width, in units of the jigsaw's piece size. Notes grow downwards to fit their text.
+// Smallest note width, in units of the jigsaw's piece size. Notes grow wider as a line gets longer,
+// and taller with each new line.
 const NOTE_W = 2.2
 
 // Two clicks on a note within this time (ms) start editing it.
 const DOUBLE_MS = 400
 
-// Makes the text area exactly as tall as its text, so nothing scrolls out of sight.
-function fitHeight(el) {
+// Makes the text area exactly as wide as its longest line and as tall as its text, so nothing scrolls
+// out of sight. An empty note keeps its smallest width, so the placeholder wraps inside it.
+function fitSize(el) {
+  el.style.width = ''
+  if (el.value) {
+    el.style.width = '0'
+    // A little extra room for the caret at the end of the line.
+    el.style.width = `${el.scrollWidth + 2}px`
+  }
   el.style.height = '0'
   el.style.height = `${el.scrollHeight}px`
 }
@@ -25,7 +33,7 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, ensureName
 
   const unit = engine.geo.S
   useLayoutEffect(() => {
-    if (area.current) fitHeight(area.current)
+    if (area.current) fitSize(area.current)
   }, [note.text, unit])
 
   // Drag anywhere on the note to move it; a click without moving selects it, a double click edits it.
@@ -127,14 +135,17 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, busRef, create
 
   // Lets the engine select notes with the selection box and carry them along with a drag.
   useEffect(() => {
+    const size = (id) => {
+      const el = layer.current?.querySelector(`[data-note="${id}"]`)
+      return { w: el?.offsetWidth || NOTE_W * S, h: el?.offsetHeight || S }
+    }
     engine.notes = {
       get: () =>
         latest.current.map((n) => ({
           id: n.id,
           x: n.x,
           y: n.y,
-          w: NOTE_W * S,
-          h: layer.current?.querySelector(`[data-note="${n.id}"]`)?.offsetHeight || S,
+          ...size(n.id),
         })),
       // send: null moves locally only, 'live' also relays, 'save' also stores.
       move: (list, send) => {

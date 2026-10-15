@@ -1353,7 +1353,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   position: absolute;
   display: flex;
   flex-direction: column;
-  width: calc(var(--u) * var(--nw));
+  width: max-content;
+  min-width: calc(var(--u) * var(--nw));
   padding: calc(var(--u) * 0.16) calc(var(--u) * 0.18);
   cursor: grab;
   touch-action: none;
@@ -1421,6 +1422,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .note textarea {
   display: block;
   width: 100%;
+  min-width: 100%;
   min-height: 1.4em;
   padding: 0;
   cursor: grab;
@@ -1431,8 +1433,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   line-height: 1.4;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  /* Lines never wrap: the note grows wider instead. */
+  white-space: pre;
   overflow: hidden;
   resize: none;
   /* Presses go to the note (to drag or select it) until it is being edited; a double tap starts editing. */
@@ -1442,6 +1444,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .note textarea::placeholder {
   color: var(--muted);
+}
+.note textarea:placeholder-shown {
+  white-space: pre-wrap;
 }
 .note textarea:focus {
   cursor: text;
