@@ -2406,44 +2406,45 @@ button.link:hover {
   z-index: 5;
   display: grid;
   place-items: center;
-  width: 104px;
-  height: 72px;
-  padding: 0 0 10px;
+  width: 44px;
+  height: 44px;
+  padding: 0 0 6px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--panel);
+  color: inherit;
+  cursor: pointer;
   transform: translateX(-50%);
-  transition: transform 0.15s;
   animation: podium-in 0.5s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
 .podium-btn:hover {
-  transform: translateX(-50%) scale(1.06);
+  background: var(--hover);
 }
 .podium-icon {
   display: flex;
   align-items: flex-end;
-  gap: 3px;
-  height: 44px;
+  gap: 1px;
+  height: 22px;
 }
 .podium-icon span {
   display: grid;
   place-items: start center;
-  width: 22px;
-  padding-top: 2px;
-  border-radius: 4px 4px 0 0;
+  width: 9px;
+  padding-top: 1px;
+  border-radius: 2px 2px 0 0;
   color: #1c1a0e;
-  font: 700 12px/1.2 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font: 700 7px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 .podium-icon .p1 {
-  height: 44px;
+  height: 22px;
   background: #f5c542;
 }
 .podium-icon .p2 {
-  height: 32px;
+  height: 16px;
   background: #cfd6de;
 }
 .podium-icon .p3 {
-  height: 24px;
+  height: 12px;
   background: #dd9358;
 }
 @keyframes podium-in {
@@ -2462,10 +2463,48 @@ button.link:hover {
 }
 .podium {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  animation: sticker 0.55s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+/* Turned towards the pointer by Podium.jsx, easing after it. */
+.podium-stands {
+  display: flex;
   align-items: flex-end;
   gap: 10px;
   filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.35));
-  animation: sticker 0.55s cubic-bezier(0.3, 1.5, 0.5, 1);
+  transition: transform 0.2s ease-out;
+}
+.podium-stands {
+  will-change: transform;
+}
+/* A sticker like the names on the stands, so it shows on any table. */
+.podium-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border: 4px solid #fff;
+  border-radius: 999px;
+  background: #1c1a0e;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.podium-share:hover {
+  transform: scale(1.05);
+}
+.podium-share:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--ring), 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.podium-share svg {
+  width: 18px;
+  height: 18px;
 }
 .modal-bg.closing .podium {
   animation: pop-out 0.16s ease forwards;
@@ -2770,7 +2809,7 @@ button.link:hover {
 .share-btn {
   position: absolute;
   bottom: 16px;
-  left: calc(50% + 52px + 12px);
+  left: calc(50% + 22px + 8px);
   z-index: 5;
   display: grid;
   place-items: center;
@@ -2791,33 +2830,47 @@ button.link:hover {
   height: 20px;
 }
 
-/* A short message at the bottom of the window, which fades by itself. */
-.toast {
-  position: fixed;
-  bottom: 104px;
-  left: 50%;
-  z-index: 30;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--panel);
-  box-shadow: 0 8px 24px var(--shadow);
-  font-weight: 600;
-  pointer-events: none;
-  transform: translateX(-50%);
-  animation: toast 2.5s ease forwards;
+/* Sharing a finished jigsaw (see ShareDialog.jsx): the picture and the timelapse side by side,
+   each with its own button. */
+.share-dialog {
+  width: min(560px, 100%);
 }
-@keyframes toast {
-  0% {
-    opacity: 0;
-    transform: translateX(-50%) translateY(8px);
-  }
-  8%,
-  80% {
-    opacity: 1;
-    transform: translateX(-50%);
-  }
-  100% {
-    opacity: 0;
+.share-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.share-option {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.share-option .modal-text {
+  margin: 0;
+  font-size: 14px;
+}
+.share-preview {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--field);
+  text-align: center;
+  overflow: hidden;
+}
+.share-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 4px;
+}
+.share-option button {
+  margin-top: auto;
+}
+@media (max-width: 480px) {
+  .share-body {
+    grid-template-columns: 1fr;
   }
 }

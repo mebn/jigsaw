@@ -231,6 +231,13 @@ function createApi(dbFile) {
     tray: db.prepare('SELECT id, x, y, w, h, name, color, num, auto, author, created FROM trays WHERE room_id = ? AND id = ?'),
     deleteTray: db.prepare('DELETE FROM trays WHERE room_id = ? AND id = ?'),
     deleteTrays: db.prepare('DELETE FROM trays WHERE room_id = ?'),
+    // The biggest group, for the timelapse (see snapshot()).
+    biggest: db.prepare('SELECT g, COUNT(*) AS size FROM pieces WHERE room_id = ? GROUP BY g ORDER BY size DESC, g LIMIT 1'),
+    groupCells: db.prepare('SELECT idx FROM pieces WHERE room_id = ? AND g = ?'),
+    lastSnapshot: db.prepare('SELECT size FROM snapshots WHERE room_id = ? ORDER BY t DESC, rowid DESC LIMIT 1'),
+    insertSnapshot: db.prepare('INSERT INTO snapshots (room_id, t, size, pieces) VALUES (?, ?, ?, ?)'),
+    snapshots: db.prepare('SELECT t, size, pieces FROM snapshots WHERE room_id = ? ORDER BY t, rowid'),
+    deleteSnapshots: db.prepare('DELETE FROM snapshots WHERE room_id = ?'),
     player: db.prepare('SELECT id, name FROM players WHERE id = ?'),
     profile: db.prepare('SELECT id, name, created FROM players WHERE id = ?'),
     // The jigsaws a player made, connected pieces in or spent time in, with their share of each.
@@ -394,7 +401,26 @@ function createApi(dbFile) {
           p.ta = q.setPieceTray.get(p.t, now, roomId, p.i)?.tray_at ?? now
         }
       }
+      if (pieces.length) snapshot(roomId, now)
     })
+  }
+
+  // The size of each room's last snapshot, so most moves don't have to read it back.
+  const snapped = new Map()
+
+  // Saves which pieces are in the room's biggest group when it has grown since the last snapshot,
+  // for the timelapse. Groups only grow, so the frames only ever add pieces, unless another group
+  // overtakes the biggest.
+  function snapshot(roomId, now) {
+    const big = q.biggest.get(roomId)
+    if (!big || big.size < 2) return
+    if (!snapped.has(roomId)) snapped.set(roomId, q.lastSnapshot.get(roomId)?.size ?? 0)
+    if (big.size <= snapped.get(roomId)) return
+    const cells = q.groupCells.all(roomId, big.g)
+    const bits = Buffer.alloc(Math.ceil((Math.max(...cells.map((c) => c.idx)) + 1) / 8))
+    for (const { idx } of cells) bits[idx >> 3] |= 1 << (idx & 7)
+    q.insertSnapshot.run(roomId, now, big.size, bits)
+    snapped.set(roomId, big.size)
   }
 
   const cleanNote = (b) => ({
@@ -732,8 +758,10 @@ function createApi(dbFile) {
             q.deleteTrays.run(id)
             q.deleteTimes.run(id)
             q.deleteMembers.run(id)
+            q.deleteSnapshots.run(id)
             q.deleteRoom.run(id)
           })
+          snapped.delete(id)
           broadcast(id, { type: 'deleted' })
           return send(res, 200, { ok: true })
         }
@@ -744,6 +772,13 @@ function createApi(dbFile) {
         res.setHeader('Content-Type', img.image_type)
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
         return res.end(Buffer.from(img.image))
+      }
+
+      // The timelapse: the biggest group each time it grew, as [{ t, size, pieces }], pieces a
+      // base64 bitset (see snapshot()).
+      if (parts[2] === 'snapshots' && req.method === 'GET') {
+        const list = q.snapshots.all(id).map((s) => ({ t: s.t, size: s.size, pieces: Buffer.from(s.pieces).toString('base64') }))
+        return send(res, 200, list)
       }
 
       // A player opened a private jigsaw's link: from now on it shows in their list.

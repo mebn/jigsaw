@@ -1,15 +1,15 @@
 import { formatTime } from './time.js'
 
 // The picture to share: the finished jigsaw, blurred and dimmed, with the podium (as it looks in the
-// game) over it, in a white frame with the site's address along the bottom. Nothing in it is
-// see-through, since many apps paste a copied picture's see-through parts as white or black.
+// game) over it, in a white frame, with the site's address in the bottom right corner. Nothing in it
+// is see-through, since many apps paste a copied picture's see-through parts as white or black.
 const WIDTH = 1200
 const BORDER = 22
-// The bottom of the frame is deeper, to hold the address.
-const FOOTER = 60
 const ADDRESS = 'jigsaw.marnil.dev'
-// The podium is drawn at most this many times the size it has on the page.
-const K_MAX = 1.6
+// The podium is drawn at most this many times the size it has on the page, and at most this share
+// of the picture's height.
+const K_MAX = 1.1
+const PODIUM_H = 0.5
 // The picture behind the podium is blurred and dimmed like the page is behind it in the game.
 const BLUR = 4
 const DIM = 'rgba(0, 0, 0, 0.35)'
@@ -74,6 +74,24 @@ const stat = (ctx, icon, text, x, y, k) => {
   ctx.textAlign = 'center'
 }
 
+// The site's address, small, in a dark pill with its bottom right corner at (right, bottom). k
+// scales it: 1 for a picture about 1200 pixels wide. Also on the timelapse (see timelapse.js).
+export function drawAddress(ctx, right, bottom, k = 1) {
+  ctx.save()
+  ctx.font = `600 ${15 * k}px ${FONT}`
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'middle'
+  const pad = 10 * k
+  const h = 28 * k
+  const w = ctx.measureText(ADDRESS).width + 2 * pad
+  round(ctx, right - w, bottom - h, w, h, h / 2)
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)'
+  ctx.fill()
+  ctx.fillStyle = '#fff'
+  ctx.fillText(ADDRESS, right - pad, bottom - h / 2 + k)
+  ctx.restore()
+}
+
 // image: the picture (a canvas or an image element), ranked: the players, best first, each with
 // name, pieces and seconds.
 export function renderShare({ image, ranked }) {
@@ -83,22 +101,16 @@ export function renderShare({ image, ranked }) {
   const top = ranked.slice(0, 3)
   const canvas = document.createElement('canvas')
   canvas.width = WIDTH + 2 * BORDER
-  canvas.height = ph + BORDER + FOOTER
+  canvas.height = ph + 2 * BORDER
   const ctx = canvas.getContext('2d')
   const px = BORDER
   const py = BORDER
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
-  // The white frame with the address, then the jigsaw inside it, blurred and dimmed like the page
-  // behind the podium.
+  // The white frame, then the jigsaw inside it, blurred and dimmed like the page behind the podium.
   ctx.fillStyle = '#fff'
   ctx.fillRect(0, 0, canvas.width, canvas.height)
-  ctx.fillStyle = INK
-  ctx.font = `600 24px ${FONT}`
-  ctx.textAlign = 'right'
-  ctx.fillText(ADDRESS, px + WIDTH, py + ph + FOOTER / 2)
-  ctx.textAlign = 'center'
   ctx.save()
   round(ctx, px, py, WIDTH, ph, 14)
   ctx.clip()
@@ -112,11 +124,12 @@ export function renderShare({ image, ranked }) {
   ctx.fillStyle = DIM
   ctx.fillRect(px, py, WIDTH, ph)
   ctx.restore()
+  drawAddress(ctx, px + WIDTH - 14, py + ph - 14)
 
   // The podium in the middle, smaller if the picture is short.
   const stands = STANDS.filter((st) => top[st.place])
   if (!stands.length) return toBlob(canvas)
-  const K = Math.min(K_MAX, (ph * 0.7) / (220 + NAME_GAP + NAME_H), (WIDTH * 0.8) / (stands.length * STAND_W + (stands.length - 1) * STAND_GAP))
+  const K = Math.min(K_MAX, (ph * PODIUM_H) / (220 + NAME_GAP + NAME_H), (WIDTH * 0.8) / (stands.length * STAND_W + (stands.length - 1) * STAND_GAP))
   const podiumH = (220 + NAME_GAP + NAME_H) * K
   const sw = STAND_W * K
   const gap = STAND_GAP * K

@@ -9,6 +9,7 @@
     "start": "vite build && vite preview --host"
   },
   "dependencies": {
+    "gifenc": "^1.0.3",
     "nodemailer": "^10.0.12",
     "qrcode-generator": "^1.5.2",
     "react": "^19.0.0",

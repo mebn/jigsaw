@@ -8,7 +8,6 @@ import {
   Redo,
   Rooms,
   Share,
-  Check,
   Undo,
 } from '../components/icons.jsx'
 import Settings from '../components/Settings.jsx'
@@ -22,7 +21,7 @@ import { useLinger } from '../lib/linger.js'
 import { NoteButton, NotesLayer } from '../components/Notes.jsx'
 import ContextMenu from '../components/ContextMenu.jsx'
 import { TrayButton } from '../components/Trays.jsx'
-import { renderShare, shareImage } from '../lib/share.js'
+import ShareDialog from '../components/ShareDialog.jsx'
 import { playSnap } from '../lib/sound.js'
 import { canFullscreen, toggleFullscreen, useNotch } from '../lib/fullscreen.js'
 
@@ -151,8 +150,9 @@ export default function Room({ id }) {
   const closeMenu = useCallback(() => setMenu(null), [])
   const [podium, setPodium] = useState(false)
   const closePodium = useCallback(() => setPodium(false), [])
-  // After sharing: what happened, for a moment ('copied' or 'saved').
-  const [shared, setShared] = useState(null)
+  const [sharing, setSharing] = useState(false)
+  const closeShare = useCallback(() => setSharing(false), [])
+  const [shareShown, shareClosing] = useLinger(sharing)
   const [podiumShown, podiumClosing] = useLinger(podium)
   const [party, setParty] = useState(false)
   // Bumped to play the celebration again from the start, see the dev menu.
@@ -481,33 +481,25 @@ export default function Room({ id }) {
         </button>
       )}
       {engine && done && (
-        <button
-          className="share-btn"
-          onClick={async () => {
-            const picture = renderShare({
-              image: engine.refImg,
-              ranked: rankPlayers({ stats, times, nameOf }),
-            })
-            const result = await shareImage(picture, engine.room?.name).catch(() => null)
-            setShared(result)
-            if (result) setTimeout(() => setShared(null), 2500)
-          }}
-          aria-label="Share"
-          data-tip={shared === 'copied' ? 'Copied to the clipboard' : shared === 'saved' ? 'Saved as an image' : 'Copy a picture of the finished jigsaw and the podium'}
-        >
-          {shared ? <Check /> : <Share />}
+        <button className="share-btn" onClick={() => setSharing(true)} aria-label="Share" data-tip="Share a picture or a timelapse">
+          <Share />
         </button>
-      )}
-      {shared && (
-        <div className="toast" role="status" key={shared + Date.now()}>
-          {shared === 'copied' ? 'Image copied to the clipboard' : 'Image saved'}
-        </div>
       )}
       {podiumShown && (
         <Podium
           ranked={rankPlayers({ stats, times, nameOf })}
           closing={podiumClosing}
           onClose={closePodium}
+          covered={sharing}
+          onShare={() => setSharing(true)}
+        />
+      )}
+      {engine && shareShown && (
+        <ShareDialog
+          engine={engine}
+          ranked={rankPlayers({ stats, times, nameOf })}
+          onClose={closeShare}
+          closing={shareClosing}
         />
       )}
     </div>

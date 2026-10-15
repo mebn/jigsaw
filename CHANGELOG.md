@@ -2,6 +2,10 @@
 
 ## 15 October 2026
 
+- The shared picture has a smaller podium, and the site's address is now a small label in the bottom right corner of both the picture and the timelapse GIF.
+- The podium has a **Share** button under it, and turns slightly towards your pointer as you move it.
+- The share button on a finished jigsaw opens a **Share** window. Copy the picture with the podium as before, or share a **timelapse GIF** of the biggest piece growing until the jigsaw is done. Timelapses are recorded from now on, so jigsaws started earlier only show the part played after this update.
+- The podium button on a finished jigsaw is now the same size as the other buttons, and lights up on hover like them instead of growing.
 - Notes grow wider as you type on a line instead of wrapping it, and start a new row only when you press **Enter**.
 - Sharing a link to the game in apps like Slack, X or Messages now shows a colourful jigsaw preview picture.
 - Pieces keep a sharp, smooth edge however far you zoom in, instead of going blurry and blocky. A thin line marks each piece's edge at any zoom, in place of the soft rim and shadow, and connected pieces join without gaps.

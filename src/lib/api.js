@@ -40,6 +40,8 @@ export const api = {
   invite: (id, passphrase, players) => post(`/api/rooms/${id}/invite`, { passphrase, players }),
   join: (id, passphrase) => post(`/api/rooms/${id}/join`, { passphrase }),
   imageUrl: (id) => `/api/rooms/${id}/image`,
+  // The biggest group each time it grew, for the timelapse: [{ t, size, pieces }] (see timelapse.js).
+  snapshots: (id) => fetch(`/api/rooms/${id}/snapshots`).then(json),
   create: (body) =>
     fetch('/api/rooms', {
       method: 'POST',
