@@ -138,7 +138,9 @@ const grow = (a, n) => (a.length >= n ? a : new Float32Array(Math.max(n, a.lengt
 const PAN_SPEED = 900
 const EDGE_PX = 40
 const PAN_BOOST = 3.5
-const PAN_RAMP = 1500
+const PAN_RAMP = 1000
+// How quickly (ms) the camera gets up to speed when a key is pressed, and coasts to a stop after.
+const PAN_EASE = 90
 const PAN_KEYS = {
   ArrowLeft: [-1, 0],
   ArrowRight: [1, 0],
@@ -1450,8 +1452,23 @@ export class Engine {
   onWheel(e) {
     e.preventDefault()
     this.camAnim = null
-    const [sx, sy] = this.pos(e)
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
+    // Two fingers on a trackpad move the table; a pinch (which arrives with ctrlKey) or a mouse
+    // wheel zooms. A trackpad scrolls in pixels and, in Chrome and Safari, reports wheelDeltaY as
+    // exactly -3 times deltaY; a sideways scroll is a trackpad too. Once seen, the rest of that
+    // gesture's events count as trackpad as well.
+    const now = performance.now()
+    if (!e.ctrlKey && e.deltaMode === 0 && (e.deltaX || (e.wheelDeltaY ? e.wheelDeltaY === -3 * e.deltaY : true)))
+      this.trackpadUntil = now + 300
+    if (!e.ctrlKey && now < this.trackpadUntil) {
+      if (e.deltaMode === 0) this.trackpadUntil = now + 300
+      this.cam.x += (e.deltaX * unit) / this.cam.z
+      this.cam.y += (e.deltaY * unit) / this.cam.z
+      this.clampCam()
+      this.follow()
+      return this.invalidate()
+    }
+    const [sx, sy] = this.pos(e)
     const dy = Math.max(-200, Math.min(200, e.deltaY * unit))
     this.zoomAt(sx, sy, Math.exp(-dy * (e.ctrlKey ? 0.01 : 0.0018)))
     if (this.marquee) this.updateMarquee()
@@ -3657,16 +3674,29 @@ export class Engine {
     }
     vx = Math.sign(vx)
     vy = Math.sign(vy)
+    // The camera's velocity, in screen pixels per second, eases toward the held direction and
+    // back to rest, so starting and stopping glide rather than jump.
+    const pv = (this.panV ||= [0, 0])
     if (vx || vy) {
       this.panSince ||= now
-      const boost = 1 + (PAN_BOOST - 1) * Math.min(1, (now - this.panSince) / PAN_RAMP) ** 2
-      const f = (PAN_SPEED * boost * dt) / 1000 / Math.hypot(vx, vy) / this.cam.z
-      this.cam.x += vx * f
-      this.cam.y += vy * f
+      const boost = 1 + (PAN_BOOST - 1) * Math.min(1, (now - this.panSince) / PAN_RAMP)
+      const s = (PAN_SPEED * boost) / Math.hypot(vx, vy)
+      vx *= s
+      vy *= s
+    } else this.panSince = 0
+    if (vx || vy || pv[0] || pv[1]) {
+      // Coming from rest the last frame may be long ago; step as if it were the one before.
+      const pdt = pv[0] || pv[1] ? dt : Math.min(dt, 17)
+      const k = ease(pdt, PAN_EASE)
+      pv[0] += (vx - pv[0]) * k
+      pv[1] += (vy - pv[1]) * k
+      if (!vx && !vy && Math.hypot(pv[0], pv[1]) < 5) pv[0] = pv[1] = 0
+      this.cam.x += (pv[0] * pdt) / 1000 / this.cam.z
+      this.cam.y += (pv[1] * pdt) / 1000 / this.cam.z
       this.clampCam()
       this.follow()
       again = true
-    } else this.panSince = 0
+    }
 
     if (this.drag) {
       const d = this.drag

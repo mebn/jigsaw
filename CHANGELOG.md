@@ -1,5 +1,10 @@
 # Changelog
 
+## 19 October 2026
+
+- On a trackpad, sliding two fingers now moves around the table, no click needed. Pinch to zoom; a mouse wheel still zooms.
+- Moving around with the arrow keys or WASD now glides smoothly into motion and to a stop, instead of jumping at the start, and speeds up sooner when held.
+
 ## 15 October 2026
 
 - Jigsaw cards have a new, quieter look that fits the rest of the window: the picture sits in a frame, with the progress line, time, pieces and percentage under it instead of over the picture. Finished jigsaws say **Done** there, and private ones show a lock. The grey placeholders while jigsaws load have the same shape, so nothing jumps when the cards arrive.
