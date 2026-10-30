@@ -1,5 +1,10 @@
 # Changelog
 
+## 30 October 2026
+
+- Improvements to sorting: **G** and a tray's **Auto sort** now pull pieces together while keeping each one near its neighbours, and a tray shuffled with **Shift + G** stays shuffled.
+- Sending pieces to a tray with a number key (**1**–**9**) or **Send to** now puts them last in the tray, after the pieces already in it.
+
 ## 19 October 2026
 
 - On a trackpad, sliding two fingers now moves around the table, no click needed. Pinch to zoom; a mouse wheel still zooms.

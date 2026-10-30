@@ -517,23 +517,27 @@ export function packExtent({ w, h, pad }) {
   return Math.max(w, h) / 2 + pad * 0.7
 }
 
-// Lays boxes ({ x0, y0, x1, y1 }) out in a square grid centred on 0, in reading order of where
-// they lie now (or in random order, with shuffle, or in the order given, with keep). Every column is as wide as its widest box and
-// every row as tall as its tallest. Returns the new centre of each box. S is the puzzle's piece
-// size (see buildPuzzle).
+// Lays boxes ({ x0, y0, x1, y1 }) out in a square grid centred on 0, each near where it lies now,
+// so neighbours stay neighbours (or in random order, with shuffle, or in the order given, with
+// keep): the top boxes fill the first row, left to right, the next ones the second, and so on. A
+// grid sorted again stays as it is. Every column is as wide as its widest box and every row as
+// tall as its tallest. Returns the new centre of each box. S is the puzzle's piece size (see
+// buildPuzzle).
 export function pack(boxes, S, shuffle = false, keep = false) {
   const gap = S * 0.12
-  const mid = (b) => [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2]
-  const order = boxes
-    .map((b, k) => ({ k, x: mid(b)[0], row: Math.round(mid(b)[1] / (S * 1.5)) }))
-    .sort((a, b) => (keep ? a.k - b.k : a.row - b.row || a.x - b.x))
-    .map((o) => o.k)
+  const cols = Math.ceil(Math.sqrt(boxes.length))
+  const at = boxes.map((b, k) => ({ k, x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 }))
+  let order = at.map((o) => o.k)
+  if (!keep && !shuffle) {
+    at.sort((a, b) => a.y - b.y || a.x - b.x)
+    order = []
+    for (let n = 0; n < at.length; n += cols) order.push(...at.slice(n, n + cols).sort((a, b) => a.x - b.x).map((o) => o.k))
+  }
   if (shuffle)
     for (let i = order.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
       ;[order[i], order[j]] = [order[j], order[i]]
     }
-  const cols = Math.ceil(Math.sqrt(boxes.length))
   const rows = Math.ceil(boxes.length / cols)
   const cw = new Array(cols).fill(0)
   const rh = new Array(rows).fill(0)
@@ -597,7 +601,7 @@ export function scatter(room, seed = room.seed) {
     const m = Math.floor(r() * (k + 1))
     ;[order[k], order[m]] = [order[m], order[k]]
   }
-  // Every piece gets a box around it, in a single row so pack keeps the shuffled order.
+  // Every piece gets a box around it, kept in the shuffled order.
   const e = packExtent(geo)
   let at = 0
   const items = order.map((cells) => {
@@ -611,7 +615,7 @@ export function scatter(room, seed = room.seed) {
     at = box.x1
     return { cells, k, offs, box, mid: [(x0 + x1) / 2, (box.y0 + box.y1) / 2] }
   })
-  const spots = pack(items.map((t) => t.box), geo.S)
+  const spots = pack(items.map((t) => t.box), geo.S, false, true)
   const out = new Array(room.cols * room.rows)
   items.forEach(({ cells, k, offs, mid }, n) => {
     const [x, y] = spots[n]

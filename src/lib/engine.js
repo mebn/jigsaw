@@ -1878,8 +1878,8 @@ export class Engine {
     this.commit(changed, turned)
   }
 
-  // Lays the selected modules out in a square grid, centred where the selection lies now.
-  // With shuffle (shift), in random order rather than the order they lie in.
+  // Lays the selected modules out in a square grid, centred where the selection lies now, each near
+  // where it lies (see pack). With shuffle (shift), in random order instead.
   sortSelection(shuffle = false, only = null) {
     if (this.guard && !this.guard()) return
     const ids = only || this.freeSelection(true)
@@ -1890,7 +1890,7 @@ export class Engine {
     const cx = (all.x0 + all.x1) / 2
     const cy = (all.y0 + all.y1) / 2
     const boxes = mods.map((m) => this.bbox(m, this.packExtent))
-    const spots = pack(boxes, this.geo.S, shuffle, !!only)
+    const spots = pack(boxes, this.geo.S, shuffle)
     const x0 = this.x.slice()
     const y0 = this.y.slice()
     mods.forEach((m, k) => {
@@ -3306,17 +3306,9 @@ export class Engine {
 
   // The pieces to carry with a tray: its own, with the rest of their groups, less any that someone
   // else is holding.
-  // With ordered, in the order they came into the tray, new ones last.
-  trayPieces(t, ordered = false) {
+  trayPieces(t) {
     const now = performance.now()
-    const all = this.withGroups(t.pieces)
-    const list = [...all]
-    if (ordered) {
-      const rank = new Map()
-      for (const i of t.pieces) if (!rank.has(this.g[i])) rank.set(this.g[i], rank.size)
-      list.sort((a, b) => rank.get(this.g[a]) - rank.get(this.g[b]))
-    }
-    return list.filter((i) => !(this.held.get(i) > now))
+    return [...this.withGroups(t.pieces)].filter((i) => !(this.held.get(i) > now))
   }
 
   // Where a piece is going, if it's still easing there.
@@ -3384,7 +3376,7 @@ export class Engine {
   autoSort(change) {
     if (!change) return
     const list = change.into || change.left ? [change.into, ...(change.left || [])] : [change]
-    for (const t of list) if (t?.auto && t.pieces.length) this.sortSelection(false, this.trayPieces(t, true))
+    for (const t of list) if (t?.auto && t.pieces.length) this.sortSelection(false, this.trayPieces(t))
   }
 
   // Turns a tray's own sorting on or off, for everyone. Turning it on sorts what is in it now.
@@ -3442,8 +3434,9 @@ export class Engine {
     this.invalidate()
   }
 
-  // A number key with pieces selected, or Send to in their menu: lays them out in a grid in the tray
-  // with that number (or id), next to whatever is in it already, and takes them out of any other tray.
+  // A number key with pieces selected, or Send to in their menu: puts them in the tray with that
+  // number (or id) and takes them out of any other tray. In an empty tray they're laid out in a grid in
+  // its middle; otherwise they go last, after what's in it already (see appendSpots).
   sendToTray(which) {
     const t = this.trays.find((x) => (typeof which === 'number' ? x.num === which : x.id === which))
     if (!t) return
@@ -3453,50 +3446,33 @@ export class Engine {
     this.settle(ids)
     const mods = this.modules(ids)
     const boxes = mods.map((m) => this.bbox(m, this.packExtent))
-    const spots = pack(boxes, this.geo.S)
-    // The grid's extent around its middle.
-    let gx0 = Infinity
-    let gx1 = -Infinity
-    let gy0 = Infinity
-    let gy1 = -Infinity
-    boxes.forEach((b, k) => {
-      gx0 = Math.min(gx0, spots[k][0] - (b.x1 - b.x0) / 2)
-      gx1 = Math.max(gx1, spots[k][0] + (b.x1 - b.x0) / 2)
-      gy0 = Math.min(gy0, spots[k][1] - (b.y1 - b.y0) / 2)
-      gy1 = Math.max(gy1, spots[k][1] + (b.y1 - b.y0) / 2)
-    })
-    const gw = gx1 - gx0
-    const gh = gy1 - gy0
     const moved = this.withGroups(ids)
     const rest = t.pieces.filter((i) => !moved.has(i))
-    // Where the grid's top left corner goes: the middle of an empty tray, else beside what's in it.
-    // The tray grows along its shorter side, so a wide one gets the grid above or below it and a
-    // tall one to its left or right, on whichever side the pieces came from.
-    let left = t.x + t.w / 2 - gw / 2
-    let top = t.y + t.h / 2 - gh / 2
-    if (rest.length) {
-      const b = this.bbox(rest, this.packExtent)
-      const from = this.bbox(ids, 0)
-      const fx = (from.x0 + from.x1) / 2
-      const fy = (from.y0 + from.y1) / 2
-      const mx = (b.x0 + b.x1) / 2
-      const my = (b.y0 + b.y1) / 2
-      if (b.x1 - b.x0 >= b.y1 - b.y0) {
-        left = mx - gw / 2
-        top = fy < my ? b.y0 - gh : b.y1
-      } else {
-        top = my - gh / 2
-        left = fx < mx ? b.x0 - gw : b.x1
-      }
+    let spots
+    if (rest.length) spots = this.appendSpots(rest, boxes)
+    else {
+      // The grid's extent around its middle, put in the middle of the tray.
+      spots = pack(boxes, this.geo.S)
+      let gx0 = Infinity
+      let gx1 = -Infinity
+      let gy0 = Infinity
+      let gy1 = -Infinity
+      boxes.forEach((b, k) => {
+        gx0 = Math.min(gx0, spots[k][0] - (b.x1 - b.x0) / 2)
+        gx1 = Math.max(gx1, spots[k][0] + (b.x1 - b.x0) / 2)
+        gy0 = Math.min(gy0, spots[k][1] - (b.y1 - b.y0) / 2)
+        gy1 = Math.max(gy1, spots[k][1] + (b.y1 - b.y0) / 2)
+      })
+      const dx = t.x + t.w / 2 - (gx0 + gx1) / 2
+      const dy = t.y + t.h / 2 - (gy0 + gy1) / 2
+      spots = spots.map(([x, y]) => [x + dx, y + dy])
     }
-    left -= gx0
-    top -= gy0
     const x0 = this.x.slice()
     const y0 = this.y.slice()
     mods.forEach((m, k) => {
       const b = boxes[k]
-      const dx = left + spots[k][0] - (b.x0 + b.x1) / 2
-      const dy = top + spots[k][1] - (b.y0 + b.y1) / 2
+      const dx = spots[k][0] - (b.x0 + b.x1) / 2
+      const dy = spots[k][1] - (b.y0 + b.y1) / 2
       for (const i of m) {
         this.x[i] += dx
         this.y[i] += dy
@@ -3513,6 +3489,49 @@ export class Engine {
     const change = this.placeInTrays(ids, 0, 0, t)
     this.commit(changed)
     this.autoSort(change)
+  }
+
+  // Where boxes (of modules, in the order they lie) go when put after the pieces in rest: on along
+  // the bottom row of rest, left to right, then in new rows under it, like lines of text. The rows
+  // are as wide as rest, or as a square grid of everything if that's wider. Returns each box's centre.
+  appendSpots(rest, boxes) {
+    const S = this.geo.S
+    const gap = S * 0.12
+    const have = this.modules(rest).map((m) => this.bbox(m, this.packExtent))
+    const all = have.concat(boxes)
+    const left = Math.min(...have.map((b) => b.x0))
+    const avg = all.reduce((a, b) => a + b.x1 - b.x0 + gap, 0) / all.length
+    const right = Math.max(...have.map((b) => b.x1), left + Math.ceil(Math.sqrt(all.length)) * avg - gap)
+    // The bottom row: what lies within half a piece of the lowest middle.
+    const mid = (b) => (b.y0 + b.y1) / 2
+    const low = Math.max(...have.map(mid))
+    const row = have.filter((b) => mid(b) > low - S / 2)
+    let x = Math.max(...row.map((b) => b.x1)) + gap
+    const cy = row.reduce((a, b) => a + mid(b), 0) / row.length
+    let bottom = Math.max(...have.map((b) => b.y1))
+    // The top of the new row being filled, once the bottom row is full; boxes line up along it.
+    let top = null
+    // In reading order of where they lie now.
+    const order = boxes.map((b, k) => k).sort((a, b) => {
+      const p = boxes[a]
+      const q = boxes[b]
+      return Math.round((mid(p) - mid(q)) / S) || p.x0 - q.x0
+    })
+    const out = new Array(boxes.length)
+    for (const k of order) {
+      const b = boxes[k]
+      const w = b.x1 - b.x0
+      const h = b.y1 - b.y0
+      if (x + w > right + gap && x > left) {
+        x = left
+        top = bottom + gap
+      }
+      const y = top === null ? cy : top + h / 2
+      out[k] = [x + w / 2, y]
+      bottom = Math.max(bottom, y + h / 2)
+      x += w + gap
+    }
+    return out
   }
 
   // After pieces were turned or sorted: the trays they're in fit themselves around them again.
