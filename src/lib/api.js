@@ -69,6 +69,9 @@ export const api = {
   deleteNote: (id, noteId) => sockets.get(id)?.send({ type: 'note-delete', id: noteId }),
   // Puts the player's reaction of this kind on a note, or takes it off.
   reactNote: (id, noteId, kind, on) => sockets.get(id)?.send({ type: 'note-react', id: noteId, kind, on }),
+  // A reply to a note ({ id, note, text }), and taking one of the player's own replies back.
+  replyNote: (id, reply) => sockets.get(id)?.send({ type: 'note-reply', ...reply }),
+  deleteReply: (id, replyId) => sockets.get(id)?.send({ type: 'note-reply-delete', id: replyId }),
   saveRef: (id, ref, live = false) => sockets.get(id)?.send({ type: 'ref', live, ref }),
   deleteRef: (id, refId) => sockets.get(id)?.send({ type: 'ref-delete', id: refId }),
   saveTray: (id, tray, live = false) => sockets.get(id)?.send({ type: 'tray', live, tray }),

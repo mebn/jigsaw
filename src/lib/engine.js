@@ -167,7 +167,7 @@ export class Engine {
     this.ctx = canvas.getContext('2d')
     this.gpuEl = document.createElement('canvas')
     this.gpuEl.className = 'gpu'
-    // Over the notes: the trays and what lies in them, the pieces being carried and the outlines.
+    // Under the notes: the trays and what lies in them, the pieces being carried and the outlines.
     this.gpuTop = document.createElement('canvas')
     this.gpuTop.className = 'gpu top'
     this.gpu = null
@@ -325,6 +325,9 @@ export class Engine {
     this.trackTrays()
     // Where trays that others move are headed: id -> { x, y, w, h }.
     this.trayTo = new Map()
+    // Trays lifted off the table while they're moved, by this player or another (client, null for
+    // this one): id -> { value, target, client }, value easing from 0 (down) to 1 (up).
+    this.trayUp = new Map()
     // Images, trays and notes as they were at the last change, by anyone, by id.
     this.objSh = { ref: new Map(), tray: new Map(), note: new Map() }
     this.resetSeen('ref', this.refs)
@@ -880,7 +883,7 @@ export class Engine {
     const [wx, wy] = this.toWorld(sx, sy)
     this.canvas.setPointerCapture(e.pointerId)
     this.pointers.set(e.pointerId, [sx, sy])
-    this.carry = { pointer: e.pointerId, wx, wy, sx0: sx, sy0: sy, moved: false, note: id, refs: [], notes: [{ id, x: n.x, y: n.y }], trays: [] }
+    this.carry = { pointer: e.pointerId, wx, wy, sx0: sx, sy0: sy, moved: false, note: id, alone: true, refs: [], notes: [{ id, x: n.x, y: n.y }], trays: [] }
     this.canvas.style.cursor = 'grabbing'
   }
 
@@ -941,6 +944,7 @@ export class Engine {
     this.carry = null
     clearTimeout(this.carryTimer)
     if (!c) return
+    for (const t of c.trays) this.liftTray(t.id, false)
     // A click on a selected note without moving selects just that note.
     if (!c.moved && c.note) return this.notes?.click(c.note)
     if (!c.at) return
@@ -950,6 +954,11 @@ export class Engine {
       if (ref) this.onRef?.(ref, false)
     }
     for (const t of this.carriedTrays(trays)) this.onTray?.(t, false)
+    // A note dropped on its own onto a tray sticks to the tray's bottom right corner.
+    if (c.alone) {
+      const [wx, wy] = c.at
+      notes[0].tray = this.trays.findLast((t) => wx >= t.x && wx <= t.x + t.w && wy >= t.y && wy <= t.y + t.h)?.id || null
+    }
     if (notes.length) this.notes?.move(notes, 'save')
   }
 
@@ -1275,6 +1284,7 @@ export class Engine {
       if (c.moved && c.lift) {
         const l = c.lift
         c.lift = null
+        this.liftTray(c.trays[0].id, true)
         // What's in it now, which may have changed since the press.
         const t = this.trays.find((x) => x.id === c.trays[0]?.id)
         const ids = t ? this.trayPieces(t) : []
@@ -1694,7 +1704,8 @@ export class Engine {
       this.moving.delete(i)
     })
     const keep =this.lift && this.lift.ids.length === ids.length && set.has(this.lift.ids[0])
-    this.lift = { ids, set, value: keep ? this.lift.value : 0, target: 1, px: wx, py: wy, angle: 0 }
+    // Pieces riding in a moved tray aren't lifted themselves: the tray is (see liftTray()).
+    this.lift = { ids, set, value: keep ? this.lift.value : 0, target: 1, px: wx, py: wy, angle: 0, tray }
     this.canvas.style.cursor = 'grabbing'
     this.showTip(null)
     this.setHighlight(null)
@@ -2219,7 +2230,7 @@ export class Engine {
     }
   }
 
-  // The jigsaw is done: it turns the right way up, and the trays, images and notes are cleared away.
+  // The jigsaw is done: it turns the right way up, and the trays and images are cleared away. Notes stay.
   finish() {
     if (this.drag) return
     const ids = Array.from({ length: this.n }, (_, i) => i)
@@ -2243,11 +2254,6 @@ export class Engine {
     }
     for (const t of [...this.trays]) this.removeTray(t.id)
     for (const r of [...this.refs]) this.removeRef(r.id)
-    const notes = this.notes?.get().map((n) => n.id) || []
-    if (notes.length) {
-      this.notes.remove(notes)
-      for (const id of notes) this.trackObj('note', id, null)
-    }
     this.setSelection(new Set())
     this.selectRef(null)
     this.selectTray(null)
@@ -2697,6 +2703,7 @@ export class Engine {
       this.marks.delete(msg.client)
       this.players.delete(msg.client)
       this.rlift.delete(msg.client)
+      for (const u of this.trayUp.values()) if (u.client === msg.client) u.target = 0
       this.markNotes()
       const d = this.remote.get(msg.client)
       if (d) for (const i of d.ids) this.held.delete(i)
@@ -3251,9 +3258,11 @@ export class Engine {
     if (remote) this.seen('tray', id, null)
     else this.trackObj('tray', id, null)
     const ids = gone ? gone.pieces.slice() : []
+    this.notes?.trayGone(id, !remote)
     if (remote) for (const i of ids) this.tray[i] = null
     else this.setTray(ids, null)
     this.trays = this.trays.filter((t) => t.id !== id)
+    this.trayUp.delete(id)
     if (this.traySel === id) this.traySel = null
     if (this.carry) this.carry.trays = this.carry.trays.filter((t) => t.id !== id)
     if (!remote) this.onTrayDelete?.(id)
@@ -3263,10 +3272,22 @@ export class Engine {
     this.invalidate()
   }
 
+  // Lifts a tray off the table while it's moved (on), or puts it down. It eases up, casting a shadow
+  // and hiding what's under it, with the pieces in it lying flat in it (see drawGpu()). client: the
+  // other player moving it, if it isn't this one.
+  liftTray(id, on, client = null) {
+    const u = this.trayUp.get(id)
+    if (u) Object.assign(u, { target: on ? 1 : 0, client })
+    else if (on) this.trayUp.set(id, { value: 0, target: 1, client })
+    this.invalidate()
+  }
+
   // Another player added, moved, renamed or recoloured a tray. What's in it comes with the pieces'
   // moves, so a list sent along is left out.
-  remoteTray(tray) {
+  // live: they're still moving it, so it's lifted until they put it down.
+  remoteTray(tray, live = false, client = null) {
     if (this.carry?.trays.some((t) => t.id === tray.id)) return
+    this.liftTray(tray.id, live, client)
     const { pieces, ...rest } = tray
     const cur = this.trays.find((t) => t.id === tray.id)
     if (cur) {
@@ -3824,6 +3845,14 @@ export class Engine {
       } else again = true
     }
 
+    for (const [id, u] of this.trayUp) {
+      u.value += (u.target - u.value) * ease(dt, u.target ? 55 : 70)
+      if (Math.abs(u.target - u.value) < 0.005) {
+        u.value = u.target
+        if (!u.target) this.trayUp.delete(id)
+      } else again = true
+    }
+
     if (this.pops.length) again = true
 
     this.draw()
@@ -3842,6 +3871,7 @@ export class Engine {
       this.viewFn = this.viewsVer
       for (const fn of this.views) fn(cam, vw, vh)
     }
+    this.notes?.follow()
     if (this.gpu) this.drawGpu(mv)
     if (this.dirty) {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
@@ -3878,15 +3908,26 @@ export class Engine {
     const markedTrays = this.markedBy('tray')
     const markedRefs = this.markedBy('refs')
     const radius = Math.min(this.geo.S * 0.25, 10 / v.z) * z
-    for (const t of this.trays) {
-      if (t.x + t.w < wx0 || t.x > wx1 || t.y + t.h < wy0 || t.y > wy1) continue
+    const bg = rgba(this.colors.bg)
+    // Trays lying on the table first, then lifted ones (see liftTray()), which go over them.
+    const trayInto = (t, up) => {
+      if (t.x + t.w < wx0 || t.x > wx1 || t.y + t.h < wy0 || t.y > wy1) return
       const color = rgba(TRAY_COLORS[t.color] || TRAY_COLORS.gray)
       const on = t.id === this.traySel
       const mark = !on && markedTrays.get(t.id)
       const rect = [sx(t.x), sy(t.y), sx(t.x + t.w), sy(t.y + t.h)]
       const r = Math.min(radius, (rect[2] - rect[0]) / 2, (rect[3] - rect[1]) / 2)
-      this.gTrays.set([...rect, ...pm(color, 0.16), ...pm(on ? rgba(this.colors.sel) : mark ? rgba(mark) : color, on || mark ? 1 : 0.7), r, (on || mark ? 2.5 : 1.25) * dpr, 0, 0], trays++ * TRAY_FLOATS)
+      // Lifting, its see-through fill turns solid, the same colour over the table, so it hides its own
+      // shadow and what it's carried over.
+      const fill = pm(color, 0.16)
+      const solid = [0, 1, 2].map((k) => fill[k] + bg[k] * 0.84).concat(1)
+      const f = fill.map((c, k) => c + (solid[k] - c) * up)
+      this.gTrays.set([...rect, ...f, ...pm(on ? rgba(this.colors.sel) : mark ? rgba(mark) : color, on || mark ? 1 : 0.7), r, (on || mark ? 2.5 : 1.25) * dpr, up, 0], trays++ * TRAY_FLOATS)
     }
+    const trayUp = (t) => this.trayUp.get(t.id)?.value || 0
+    for (const t of this.trays) if (!trayUp(t)) trayInto(t, 0)
+    const traysDown = trays
+    for (const t of this.trays) if (trayUp(t)) trayInto(t, trayUp(t))
 
     this.gRefs = grow(this.gRefs, this.refs.length * REF_FLOATS)
     let refs = 0
@@ -3904,27 +3945,36 @@ export class Engine {
     this.gn = 0
     const lifted = this.lift?.set
     const rlifted = this.rlift.size ? new Set([...this.rlift.values()].flatMap((rl) => rl.ids)) : null
-    // Trays lie above the pieces on the table, and the pieces in them above the trays.
+    // Trays lie above the pieces on the table, and the pieces in them above the trays. Pieces in a
+    // lifted tray go over it, after the trays lying down.
     const inTray = this.trays.length ? new Set(this.trays.flatMap((t) => t.pieces)) : null
+    const inUp = traysDown < trays ? new Set(this.trays.filter(trayUp).flatMap((t) => t.pieces)) : null
     for (const i of this.order) {
       if (lifted?.has(i) || rlifted?.has(i) || inTray?.has(i)) continue
       this.poseInto(i)
       if (seen(this.qx, this.qy, R)) this.gpuPiece(i, this.qx, this.qy, this.qa, 1, v)
     }
     const still = [0, this.gn]
-    if (inTray) {
+    const trayedIn = (up) => {
+      if (!inTray) return
       for (const i of this.order) {
-        if (lifted?.has(i) || rlifted?.has(i) || !inTray.has(i)) continue
+        if (lifted?.has(i) || rlifted?.has(i) || !inTray.has(i) || !!inUp?.has(i) !== up) continue
         this.poseInto(i)
         if (seen(this.qx, this.qy, R)) this.gpuPiece(i, this.qx, this.qy, this.qa, 1, v)
       }
     }
+    trayedIn(false)
     const trayed = [still[1], this.gn - still[1]]
+    const trayedUp = [this.gn, 0]
+    trayedIn(true)
+    trayedUp[1] = this.gn - trayedUp[0]
     const lift = [this.gn, 0]
-    // Lifted pieces (ours and others'), as they're drawn: id -> [x, y, angle, scale]. Outlines use
-    // these, so they fit the pieces while they're lifted, carried and put down again.
+    // Carried pieces (ours and others'), as they're drawn: id -> [x, y, angle, scale]. Outlines use
+    // these, so they fit the pieces while they're lifted, carried and put down again. Those riding
+    // in a moved tray come first, lying flat in it; then those lifted themselves, which cast a shadow.
     const drawn = new Map()
-    if (this.lift) {
+    const ours = (tray) => {
+      if (!this.lift || !!this.lift.tray !== tray) return
       this.liftPoses((i, x, y, a, s) => {
         drawn.set(i, [x, y, a, s])
         if (seen(x, y, R * s)) this.gpuPiece(i, x, y, a, s, v)
@@ -3932,16 +3982,25 @@ export class Engine {
     }
     // Pieces other players carry, grown a little as ours are.
     let rvalue = 0
-    for (const rl of this.rlift.values()) {
-      const s = 1 + 0.045 * rl.value
-      rvalue = Math.max(rvalue, rl.value)
-      for (const i of rl.ids) {
-        if (lifted?.has(i)) continue
-        this.poseInto(i)
-        drawn.set(i, [this.qx, this.qy, this.qa, s])
-        if (seen(this.qx, this.qy, R * s)) this.gpuPiece(i, this.qx, this.qy, this.qa, s, v)
+    const theirs = (tray) => {
+      for (const rl of this.rlift.values()) {
+        if (!!rl.tray !== tray) continue
+        const s = tray ? 1 : 1 + 0.045 * rl.value
+        if (!tray) rvalue = Math.max(rvalue, rl.value)
+        for (const i of rl.ids) {
+          if (lifted?.has(i)) continue
+          this.poseInto(i)
+          drawn.set(i, [this.qx, this.qy, this.qa, s])
+          if (seen(this.qx, this.qy, R * s)) this.gpuPiece(i, this.qx, this.qy, this.qa, s, v)
+        }
       }
     }
+    ours(true)
+    theirs(true)
+    const shade = [this.gn, 0]
+    ours(false)
+    theirs(false)
+    shade[1] = this.gn - shade[0]
     lift[1] = this.gn - lift[0]
     // The outlined pieces exactly as they're drawn, and the box around them on the screen.
     const outlined = (ids, box) => {
@@ -3998,18 +4057,20 @@ export class Engine {
       }
     }
 
-    const lv = Math.max(this.lift?.value || 0, rvalue)
-    const l = this.lift || rvalue > 0 ? { value: lv } : null
+    // One shadow for everything lifted: pieces, and trays being moved.
+    let lv = Math.max(this.lift && !this.lift.tray ? this.lift.value : 0, rvalue)
+    for (const u of this.trayUp.values()) lv = Math.max(lv, u.value)
+    const l = lv > 0 ? { value: lv } : null
     this.gpu.frame({
       W: this.gpuEl.width,
       H: this.gpuEl.height,
       cam: [v.x, v.y, z],
       sprite: [this.spriteW, this.spriteH],
       bg: rgba(this.colors.bg),
-      trays: { data: this.gTrays, count: trays },
+      trays: { data: this.gTrays, count: trays, down: traysDown },
       refs: { data: this.gRefs, count: refs },
       pieces: { data: this.gi, count: this.gn },
-      seg: { still, trayed, lift, sel, hl },
+      seg: { still, trayed, trayedUp, lift, shade, sel, hl },
       selBox,
       hlBox,
       extra,
@@ -4048,7 +4109,7 @@ export class Engine {
   // of a gather (G). Landing after a drop, they shrink back to where they lie.
   liftPoses(fn) {
     const l = this.lift
-    const s = 1 + 0.045 * l.value
+    const s = l.tray ? 1 : 1 + 0.045 * l.value
     const d = this.drag && this.drag.set === l.set ? this.drag : null
     const a = d ? d.angle : l.angle
     // Growing around (cx, cy) moves the pointer's own spot by (1 - s) of the way to it, turned with

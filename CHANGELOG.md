@@ -5,6 +5,11 @@
 - The table no longer has a grid of dots on it, so it's a plain, calm background behind your pieces.
 - The buttons at the top middle are now one bar, with thin lines between the groups, instead of three separate bars.
 - You can react to notes with 👍, 👎, 👀 or 🔥. Hover a note to pick one, and click it again to take it back. Reactions show at the bottom of the note with how many people gave each; hover one to see who.
+- You can reply to notes. Hover a note and click the speech bubble, write your reply and press Enter or click anywhere else to send it (Shift+Enter for a new line, Escape to cancel). Replies show under the note's text with who wrote them, and you can delete your own.
+- Drop a note onto a tray to stick it to the tray's bottom right corner. It moves with the tray from then on, takes on the tray's colours and is outlined with it when the tray is selected; drag it off to unstick it. If the tray is deleted, the note stays where it was.
+- Moving a tray now lifts the tray itself, with a shadow under it, instead of lifting each piece in it. The pieces stay flat in the tray, and a note stuck to it lifts with it.
+- Notes now always lie on top, above trays and the pieces in them, so a tray never hides a note.
+- Notes now stay on the table when a jigsaw is finished. Trays and images are still cleared away.
 
 ## 30 October 2026
 

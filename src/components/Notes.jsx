@@ -1,11 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '../lib/api.js'
-import { Note as NoteIcon } from './icons.jsx'
+import { TRAY_COLORS } from '../lib/engine.js'
+import { Close, Note as NoteIcon, Reply } from './icons.jsx'
 import PlaceButton from './PlaceButton.jsx'
 
 // Smallest note width, in units of the jigsaw's piece size. Notes grow wider as a line gets longer,
 // and taller with each new line.
 const NOTE_W = 2.2
+
+// A note stuck to a tray has its top left corner this far (in piece sizes) left of and above the
+// tray's bottom right corner, so it sits over the corner.
+const ON_TRAY_X = 1
+const ON_TRAY_Y = 0.6
 
 // Two clicks on a note within this time (ms) start editing it.
 const DOUBLE_MS = 400
@@ -28,22 +34,38 @@ function gather(rows = []) {
   return out
 }
 
+// Replies as stored ([{ id, note, author, text, created }], oldest first) to note id -> replies.
+function gatherReplies(rows = []) {
+  const out = {}
+  for (const r of rows) (out[r.note] ||= []).push(r)
+  return out
+}
+
 // Makes the text area exactly as wide as its longest line and as tall as its text, so nothing scrolls
-// out of sight. An empty note keeps its smallest width, so the placeholder wraps inside it.
-function fitSize(el) {
-  el.style.width = ''
+// out of sight. An empty note keeps its smallest width, so the placeholder wraps inside it. With fill,
+// an empty one takes no room of its own and just fills the note (min-width: 100%), as wide as it is.
+function fitSize(el, fill = false) {
+  el.style.width = fill ? '0' : ''
   if (el.value) {
+    // Measured without its min-width, which would hold it as wide as the note: then a note never got
+    // narrower again when a long line was shortened or a long reply deleted.
+    el.style.minWidth = '0'
     el.style.width = '0'
     // A little extra room for the caret at the end of the line.
     el.style.width = `${el.scrollWidth + 2}px`
+    el.style.minWidth = ''
   }
   el.style.height = '0'
   el.style.height = `${el.scrollHeight}px`
 }
 
-function Note({ note, engine, focus, selected, mark, canEdit, author, reactions, me, nameOf, ensureName, onChange, onSave, onLive, onReact }) {
+function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, reactions, replies, me, nameOf, ensureName, onChange, onSave, onLive, onReact, onReply, onDeleteReply }) {
   const area = useRef(null)
+  const replyArea = useRef(null)
   const saveTimer = useRef(0)
+  // The reply being written, or null when not replying.
+  const [draft, setDraft] = useState(null)
+  const cancelled = useRef(false)
 
   useEffect(() => {
     if (focus) area.current?.focus()
@@ -53,12 +75,16 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, reactions,
   useLayoutEffect(() => {
     if (area.current) fitSize(area.current)
   }, [note.text, unit])
+  useLayoutEffect(() => {
+    if (replyArea.current) fitSize(replyArea.current, true)
+  }, [draft, unit])
 
   // Drag anywhere on the note to move it; a click without moving selects it, a double click edits it.
   // While editing, the text area behaves normally and the rest of the note still drags.
   const startMove = (e) => {
     if (e.button !== 0 || e.target.closest('button')) return
     if (e.target === area.current && document.activeElement === area.current) return
+    if (e.target === replyArea.current) return
     e.preventDefault()
     if (!ensureName()) return
     // Shift-click adds the note to the selection; dragging a selected note carries the whole selection.
@@ -76,6 +102,26 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, reactions,
     saveTimer.current = setTimeout(() => onSave({ ...note, text }), 400)
   }
 
+  const startReply = () => {
+    if (!ensureName()) return
+    if (draft === null) setDraft('')
+    else replyArea.current?.focus()
+  }
+  // Enter or a click anywhere else sends the reply, Shift+Enter starts a new line, Escape gives it up.
+  const replyKey = (e) => {
+    if (e.key === 'Escape') cancelled.current = true
+    else if (e.key !== 'Enter' || e.shiftKey) return
+    e.preventDefault()
+    e.currentTarget.blur()
+  }
+  const replyBlur = () => {
+    // Switching to another tab or app keeps the reply to finish later.
+    if (!cancelled.current && !document.hasFocus()) return
+    if (!cancelled.current && draft.trim()) onReply(note.id, draft.trim())
+    cancelled.current = false
+    setDraft(null)
+  }
+
   const menu = (e) => {
     const r = e.currentTarget.getBoundingClientRect()
     engine.openNoteMenu(note.id, r.left, r.bottom + 4)
@@ -84,15 +130,16 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, reactions,
   return (
     <div
       className={`note${selected ? ' sel' : mark ? ' marked' : ''}`}
-      style={{ left: note.x, top: note.y, '--mark': mark }}
+      style={{ left: at.x, top: at.y, '--mark': mark, '--edge': edge }}
       data-note={note.id}
       onContextMenu={(e) => {
         e.preventDefault()
         engine.openNoteMenu(note.id, e.clientX, e.clientY)
       }}
       onPointerMove={(e) => {
-        // Over a reaction, who gave it; over the rest of the note, who wrote it.
-        const b = e.target.closest('button')
+        // Over a reaction, who gave it; over a button, what it does; over a reply, nothing (it's signed);
+        // over the rest of the note, who wrote it.
+        const b = e.target.closest('[data-who]')
         const text = b ? b.dataset.who : author
         if (e.buttons || !text) return engine.showTip(null)
         const r = engine.canvas.getBoundingClientRect()
@@ -122,6 +169,35 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, reactions,
         maxLength={2000}
         aria-label="Note"
       />
+      {replies?.map((r) => (
+        <div key={r.id} className="note-reply" data-who="">
+          <b>{nameOf(r.author)}</b>
+          <span>{r.text}</span>
+          {r.author === me && (
+            <button type="button" className="note-reply-delete" onClick={() => onDeleteReply(note.id, r.id)} aria-label="Delete reply" data-who="Delete your reply">
+              <Close />
+            </button>
+          )}
+        </div>
+      ))}
+      {draft !== null && (
+        <div className="note-reply" data-who="">
+          <textarea
+            ref={replyArea}
+            className="note-reply-field"
+            rows={1}
+            value={draft}
+            placeholder="Reply…"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={replyKey}
+            onBlur={replyBlur}
+            autoFocus
+            spellCheck={false}
+            maxLength={2000}
+            aria-label="Reply"
+          />
+        </div>
+      )}
       {/* Reactions someone gave stay under the note; the others show while it's hovered or selected. */}
       <div className="note-reacts">
         {REACTIONS.map(({ kind, emoji, label }) => {
@@ -142,6 +218,9 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, reactions,
             </button>
           )
         })}
+        <button type="button" className="note-react note-reply-btn" onClick={startReply} aria-label="Reply" data-who="Reply">
+          <Reply />
+        </button>
       </div>
     </div>
   )
@@ -153,9 +232,21 @@ function toggled(rs, id, kind, player, on) {
   return { ...rs, [id]: { ...rs[id], [kind]: on ? [...who, player] : who } }
 }
 
-export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactions, busRef, createRef, ensureName, requireName }) {
+// The replies with r added under its note (once), or with reply id taken away.
+function withReply(rs, r) {
+  const list = rs[r.note] || []
+  return list.some((o) => o.id === r.id) ? rs : { ...rs, [r.note]: [...list, r] }
+}
+function withoutReply(rs, id) {
+  const out = {}
+  for (const [note, list] of Object.entries(rs)) out[note] = list.filter((r) => r.id !== id)
+  return out
+}
+
+export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactions, initialReplies, busRef, createRef, ensureName, requireName }) {
   const [notes, setNotes] = useState(initial)
   const [reactions, setReactions] = useState(() => gather(initialReactions))
+  const [replies, setReplies] = useState(() => gatherReplies(initialReplies))
   const [focusId, setFocusId] = useState(null)
   const [selected, setSelected] = useState(() => new Set())
   const [marked, setMarked] = useState(() => new Map())
@@ -164,6 +255,18 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
   const latest = useRef(notes)
   latest.current = notes
   const S = engine.geo.S
+
+  // Where a note stuck to a tray goes, over the tray's bottom right corner ({} if it isn't on one).
+  const onTray = (n) => {
+    const t = n.tray && engine.trays.find((x) => x.id === n.tray)
+    return t ? { x: t.x + t.w - S * ON_TRAY_X, y: t.y + t.h - S * ON_TRAY_Y } : {}
+  }
+  const where = (n) => ({ x: n.x, y: n.y, ...onTray(n) })
+  // A note stuck to a tray has the tray's colour for its border.
+  const edgeOf = (n) => {
+    const t = n.tray && engine.trays.find((x) => x.id === n.tray)
+    return t ? TRAY_COLORS[t.color] || TRAY_COLORS.gray : undefined
+  }
 
   useEffect(() => {
     engine.resetSeen('note', initial)
@@ -192,22 +295,57 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       get: () =>
         latest.current.map((n) => ({
           id: n.id,
-          x: n.x,
-          y: n.y,
+          ...where(n),
           ...size(n.id),
         })),
-      // send: null moves locally only, 'live' also relays, 'save' also stores.
+      // send: null moves locally only, 'live' also relays, 'save' also stores. Moving a note takes it
+      // off its tray, unless it's given one ({ id, x, y, tray }), whose corner it then goes to.
       move: (list, send) => {
         const at = new Map(list.map((p) => [p.id, p]))
-        setNotes((ns) => ns.map((n) => (at.has(n.id) ? { ...n, x: at.get(n.id).x, y: at.get(n.id).y } : n)))
+        const moved = (n) => {
+          const p = at.get(n.id)
+          return { ...n, x: p.x, y: p.y, tray: p.tray || null, ...onTray({ tray: p.tray }) }
+        }
+        setNotes((ns) => ns.map((n) => (at.has(n.id) ? moved(n) : n)))
         if (!send) return
         for (const n of latest.current) {
-          const p = at.get(n.id)
-          if (!p) continue
-          const moved = { ...n, x: p.x, y: p.y }
-          api.saveNote(roomId, moved, send === 'live')
-          if (send === 'save') engine.trackObj('note', n.id, moved)
+          if (!at.has(n.id)) continue
+          const m = moved(n)
+          api.saveNote(roomId, m, send === 'live')
+          if (send === 'save') engine.trackObj('note', n.id, m)
         }
+      },
+      // Each frame: notes stuck to trays follow their tray's corner as it moves or changes size, its
+      // colour, its lift while it's moved, and its outline while it's selected (data-lit, in the
+      // colour --lit).
+      follow: () => {
+        const lit = new Map()
+        let marks
+        for (const n of latest.current) {
+          const p = onTray(n)
+          const el = p.x != null && layer.current?.querySelector(`[data-note="${n.id}"]`)
+          if (!el) continue
+          if (el.style.left !== `${p.x}px`) el.style.left = `${p.x}px`
+          if (el.style.top !== `${p.y}px`) el.style.top = `${p.y}px`
+          const edge = edgeOf(n)
+          if (el.style.getPropertyValue('--edge') !== edge) el.style.setProperty('--edge', edge)
+          const up = String(engine.trayUp.get(n.tray)?.value || 0)
+          if (el.style.getPropertyValue('--up') !== up) el.style.setProperty('--up', up)
+          const color = n.tray === engine.traySel ? 'var(--sel)' : (marks ||= engine.markedBy('tray')).get(n.tray)
+          if (!color) continue
+          lit.set(n.id, color)
+          if (el.style.getPropertyValue('--lit') !== color) el.style.setProperty('--lit', color)
+          if (!('lit' in el.dataset)) el.dataset.lit = ''
+        }
+        for (const el of layer.current?.querySelectorAll('[data-lit]') || []) if (!lit.has(el.dataset.note)) delete el.dataset.lit
+      },
+      // A tray is going: the notes on it stay where they are, on no tray. save: this player removed it.
+      trayGone: (id, save) => {
+        const off = latest.current.filter((n) => n.tray === id).map((n) => ({ ...n, ...where(n), tray: null }))
+        if (!off.length) return
+        const by = new Map(off.map((n) => [n.id, n]))
+        setNotes((ns) => ns.map((n) => by.get(n.id) || n))
+        if (save) for (const n of off) api.saveNote(roomId, n)
       },
       // Puts a note back as it was (undo and redo).
       put: (note) => {
@@ -250,6 +388,8 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
   useEffect(() => {
     busRef.current = (msg) => {
       if (msg.type === 'note-react') return setReactions((rs) => toggled(rs, msg.id, msg.kind, msg.player, msg.on))
+      if (msg.type === 'note-reply') return setReplies((rs) => withReply(rs, msg.reply))
+      if (msg.type === 'note-reply-delete') return setReplies((rs) => withoutReply(rs, msg.id))
       if (msg.type === 'note-delete') {
         engine.seen('note', msg.id, null)
         return setNotes((ns) => ns.filter((n) => n.id !== msg.id))
@@ -257,6 +397,7 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       if (msg.type === 'notes-reset') {
         engine.resetSeen('note', msg.notes)
         setReactions(gather(msg.reactions))
+        setReplies(gatherReplies(msg.replies))
         // Keep the text of a note that's being edited right now.
         const editing = document.activeElement?.closest?.('[data-note]')?.dataset.note
         return setNotes((ns) =>
@@ -311,6 +452,15 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
     setReactions((rs) => toggled(rs, id, kind, me, on))
     api.reactNote(roomId, id, kind, on)
   }
+  const reply = (note, text) => {
+    const r = { id: Math.random().toString(36).slice(2, 10), note, author: me, text, created: Date.now() }
+    setReplies((rs) => withReply(rs, r))
+    api.replyNote(roomId, { id: r.id, note, text })
+  }
+  const deleteReply = (note, id) => {
+    setReplies((rs) => withoutReply(rs, id))
+    api.deleteReply(roomId, id)
+  }
 
   return (
     <div ref={layer} className="notes" style={{ '--u': `${S}px`, '--nw': NOTE_W }}>
@@ -318,6 +468,8 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
         <Note
           key={n.id}
           note={n}
+          at={where(n)}
+          edge={edgeOf(n)}
           engine={engine}
           focus={focusId === n.id}
           selected={selected.has(n.id)}
@@ -325,6 +477,7 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           canEdit={!!me}
           author={nameOf(n.author)}
           reactions={reactions[n.id]}
+          replies={replies[n.id]}
           me={me}
           nameOf={nameOf}
           ensureName={ensureName}
@@ -332,6 +485,8 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           onSave={save}
           onLive={live}
           onReact={react}
+          onReply={reply}
+          onDeleteReply={deleteReply}
         />
       ))}
     </div>

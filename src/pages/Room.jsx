@@ -229,7 +229,7 @@ export default function Room({ id }) {
         setDone(eng.isComplete())
         // Already finished before this player opened it: nothing left to celebrate.
         if (eng.isComplete()) store.set(`celebrated:${id}`, '1')
-        setData({ notes: room.notes || [], times: room.times || [], private: !!room.private, owner: room.owner })
+        setData({ notes: room.notes || [], noteReactions: room.noteReactions || [], noteReplies: room.noteReplies || [], times: room.times || [], private: !!room.private, owner: room.owner })
         setEngine(eng)
         sock = sockRef.current = api.socket(id, {
           player: () => me.current,
@@ -245,11 +245,11 @@ export default function Room({ id }) {
               setOnline(new Set(msg.online || []))
               setSeen((s) => ({ ...s, ...msg.seen }))
             } else if (msg.type === 'time') timeBus.current?.(msg)
-            else if (msg.type === 'note' || msg.type === 'note-delete' || msg.type === 'note-react') noteBus.current?.(msg)
+            else if (msg.type.startsWith('note')) noteBus.current?.(msg)
             else if (msg.type === 'react') reactBus.current?.(msg)
             else if (msg.type === 'ref') eng.remoteRef(msg.ref)
             else if (msg.type === 'ref-delete') eng.removeRef(msg.id, true)
-            else if (msg.type === 'tray') eng.remoteTray(msg.tray)
+            else if (msg.type === 'tray') eng.remoteTray(msg.tray, msg.live, msg.client)
             else if (msg.type === 'tray-delete') eng.removeTray(msg.id, true)
             else eng.remoteMessage(msg)
           },
@@ -264,7 +264,7 @@ export default function Room({ id }) {
             learn(fresh.players)
             setOnline(new Set(fresh.online || []))
             setSeen(fresh.seen || {})
-            noteBus.current?.({ type: 'notes-reset', notes: fresh.notes || [], reactions: fresh.noteReactions || [] })
+            noteBus.current?.({ type: 'notes-reset', notes: fresh.notes || [], reactions: fresh.noteReactions || [], replies: fresh.noteReplies || [] })
           },
         })
         // Pieces left out of line in their group (see Engine.repair) are put right, now that it can say so.
@@ -435,6 +435,7 @@ export default function Room({ id }) {
           nameOf={nameOf}
           initial={data.notes}
           initialReactions={data.noteReactions}
+          initialReplies={data.noteReplies}
           busRef={noteBus}
           ensureName={ensureName}
           requireName={requireName}

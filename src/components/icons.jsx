@@ -103,6 +103,13 @@ export const Note = (p) => (
   </Svg>
 )
 
+// A speech bubble, for replying to a note.
+export const Reply = (p) => (
+  <Svg {...p}>
+    <path d="M4 5h16v11H10l-6 4V5Z" />
+  </Svg>
+)
+
 export const Tray = (p) => (
   <Svg {...p}>
     <rect x="3.5" y="5" width="17" height="14" rx="2" />
