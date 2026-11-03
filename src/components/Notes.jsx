@@ -10,6 +10,24 @@ const NOTE_W = 2.2
 // Two clicks on a note within this time (ms) start editing it.
 const DOUBLE_MS = 400
 
+// The reactions a note can have, in the order they show under it (the server keeps the same list).
+const REACTIONS = [
+  { kind: 'up', emoji: '👍', label: 'Thumbs up' },
+  { kind: 'down', emoji: '👎', label: 'Thumbs down' },
+  { kind: 'eyes', emoji: '👀', label: 'Eyes' },
+  { kind: 'fire', emoji: '🔥', label: 'Fire' },
+]
+
+// Reactions as stored ([{ note, player, kind }], oldest first) to note id -> kind -> player ids.
+function gather(rows = []) {
+  const out = {}
+  for (const { note, player, kind } of rows) {
+    const by = (out[note] ||= {})
+    by[kind] = [...(by[kind] || []), player]
+  }
+  return out
+}
+
 // Makes the text area exactly as wide as its longest line and as tall as its text, so nothing scrolls
 // out of sight. An empty note keeps its smallest width, so the placeholder wraps inside it.
 function fitSize(el) {
@@ -23,7 +41,7 @@ function fitSize(el) {
   el.style.height = `${el.scrollHeight}px`
 }
 
-function Note({ note, engine, focus, selected, mark, canEdit, author, ensureName, onChange, onSave, onLive }) {
+function Note({ note, engine, focus, selected, mark, canEdit, author, reactions, me, nameOf, ensureName, onChange, onSave, onLive, onReact }) {
   const area = useRef(null)
   const saveTimer = useRef(0)
 
@@ -73,9 +91,12 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, ensureName
         engine.openNoteMenu(note.id, e.clientX, e.clientY)
       }}
       onPointerMove={(e) => {
-        if (e.buttons || e.target.closest('button')) return engine.showTip(null)
+        // Over a reaction, who gave it; over the rest of the note, who wrote it.
+        const b = e.target.closest('button')
+        const text = b ? b.dataset.who : author
+        if (e.buttons || !text) return engine.showTip(null)
         const r = engine.canvas.getBoundingClientRect()
-        engine.showTip({ text: author, sx: e.clientX - r.left, sy: e.clientY - r.top })
+        engine.showTip({ text, sx: e.clientX - r.left, sy: e.clientY - r.top })
       }}
       onPointerLeave={() => engine.showTip(null)}
       onPointerDown={startMove}
@@ -101,12 +122,40 @@ function Note({ note, engine, focus, selected, mark, canEdit, author, ensureName
         maxLength={2000}
         aria-label="Note"
       />
+      {/* Reactions someone gave stay under the note; the others show while it's hovered or selected. */}
+      <div className="note-reacts">
+        {REACTIONS.map(({ kind, emoji, label }) => {
+          const who = reactions?.[kind] || []
+          const mine = !!me && who.includes(me)
+          return (
+            <button
+              key={kind}
+              type="button"
+              className={`note-react${who.length ? ' used' : ''}${mine ? ' mine' : ''}`}
+              onClick={() => ensureName() && onReact(note.id, kind, !mine)}
+              aria-label={label}
+              aria-pressed={mine}
+              data-who={who.map(nameOf).join(', ')}
+            >
+              <span>{emoji}</span>
+              {who.length > 0 && <b>{who.length}</b>}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
-export function NotesLayer({ engine, roomId, me, nameOf, initial, busRef, createRef, ensureName, requireName }) {
+// The reactions with a player's reaction of this kind on note id put on (on) or taken off.
+function toggled(rs, id, kind, player, on) {
+  const who = (rs[id]?.[kind] || []).filter((p) => p !== player)
+  return { ...rs, [id]: { ...rs[id], [kind]: on ? [...who, player] : who } }
+}
+
+export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactions, busRef, createRef, ensureName, requireName }) {
   const [notes, setNotes] = useState(initial)
+  const [reactions, setReactions] = useState(() => gather(initialReactions))
   const [focusId, setFocusId] = useState(null)
   const [selected, setSelected] = useState(() => new Set())
   const [marked, setMarked] = useState(() => new Map())
@@ -200,12 +249,14 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, busRef, create
 
   useEffect(() => {
     busRef.current = (msg) => {
+      if (msg.type === 'note-react') return setReactions((rs) => toggled(rs, msg.id, msg.kind, msg.player, msg.on))
       if (msg.type === 'note-delete') {
         engine.seen('note', msg.id, null)
         return setNotes((ns) => ns.filter((n) => n.id !== msg.id))
       }
       if (msg.type === 'notes-reset') {
         engine.resetSeen('note', msg.notes)
+        setReactions(gather(msg.reactions))
         // Keep the text of a note that's being edited right now.
         const editing = document.activeElement?.closest?.('[data-note]')?.dataset.note
         return setNotes((ns) =>
@@ -256,6 +307,10 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, busRef, create
     engine.trackObj('note', note.id, note)
   }
   const live = (note) => api.saveNote(roomId, note, true)
+  const react = (id, kind, on) => {
+    setReactions((rs) => toggled(rs, id, kind, me, on))
+    api.reactNote(roomId, id, kind, on)
+  }
 
   return (
     <div ref={layer} className="notes" style={{ '--u': `${S}px`, '--nw': NOTE_W }}>
@@ -269,10 +324,14 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, busRef, create
           mark={marked.get(n.id)}
           canEdit={!!me}
           author={nameOf(n.author)}
+          reactions={reactions[n.id]}
+          me={me}
+          nameOf={nameOf}
           ensureName={ensureName}
           onChange={change}
           onSave={save}
           onLive={live}
+          onReact={react}
         />
       ))}
     </div>

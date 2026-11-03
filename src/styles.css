@@ -1170,19 +1170,18 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 /* ---- header stats & notes ---- */
 
-/* The play tools at the top middle: three bars side by side. */
-.tc {
-  position: absolute;
+/* The play tools at the top middle: one bar, its groups split by lines. */
+.float.tc {
   top: 16px;
   left: 50%;
-  z-index: 5;
-  display: flex;
-  gap: 8px;
+  align-items: center;
   transform: translateX(-50%);
 }
-.tc > .float {
-  position: static;
-  align-items: center;
+.bar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 6px 4px;
+  background: var(--line);
 }
 .stat {
   display: inline-flex;
@@ -1380,6 +1379,70 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   background: linear-gradient(var(--hover), var(--hover)) var(--bg);
   color: var(--fg);
 }
+/* Reactions in the note under its text (see Notes.jsx): the ones given always, all of them on hover or
+   while selected. Pulled left so the emoji line up with the text. */
+.note-reacts {
+  display: flex;
+  gap: calc(var(--u) * 0.02);
+  margin-left: calc(var(--u) * -0.06);
+}
+.note-react {
+  display: none;
+  align-items: center;
+  gap: calc(var(--u) * 0.05);
+  height: calc(var(--u) * 0.32);
+  margin-top: calc(var(--u) * 0.06);
+  padding: 0 calc(var(--u) * 0.06);
+  border: 0;
+  border-radius: calc(var(--u) * 0.1);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(var(--u) * 0.2);
+  line-height: 1;
+  cursor: pointer;
+  /* Grows in and out like the note's menu button, taking its place in the row only while shown. */
+  opacity: 0;
+  transform: scale(0.75);
+  transition:
+    opacity 0.15s,
+    transform 0.15s,
+    background 0.15s,
+    display 0.15s allow-discrete;
+}
+.note-react.used,
+.note:hover .note-react,
+.note.sel .note-react {
+  display: inline-flex;
+  opacity: 1;
+  transform: none;
+}
+@starting-style {
+  .note:hover .note-react:not(.used),
+  .note.sel .note-react:not(.used) {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+}
+.note-react:not(.used) span {
+  opacity: 0.55;
+}
+.note-react:hover {
+  background: var(--hover);
+}
+.note-react:hover span {
+  opacity: 1;
+}
+.note-react.mine {
+  background: color-mix(in srgb, var(--sel) 16%, transparent);
+}
+.note-react.mine:hover {
+  background: color-mix(in srgb, var(--sel) 24%, transparent);
+}
+.note-react b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .note textarea {
   display: block;
   width: 100%;
@@ -1445,7 +1508,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   pointer-events: none;
 }
 @media (max-width: 640px) {
-  .tc {
+  .float.tc {
     top: 68px;
   }
   .float.dev-menu {

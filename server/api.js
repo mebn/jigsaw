@@ -117,6 +117,8 @@ const cleanName = (s) => String(s || '').trim().slice(0, 32)
 const cleanEmail = (s) => String(s || '').trim().toLowerCase().slice(0, 254)
 const validEmail = (s) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
 const MIN_PASSWORD = 8
+// The reactions a note can have (see src/components/Notes.jsx).
+const NOTE_REACTIONS = new Set(['up', 'down', 'eyes', 'fire'])
 
 // Passwords are stored as "salt:hash", both hex, hashed with scrypt.
 function hashPassword(password) {
@@ -201,6 +203,10 @@ function createApi(dbFile) {
     note: db.prepare('SELECT id, x, y, text, author, created FROM notes WHERE room_id = ? AND id = ?'),
     deleteNote: db.prepare('DELETE FROM notes WHERE room_id = ? AND id = ?'),
     deleteNotes: db.prepare('DELETE FROM notes WHERE room_id = ?'),
+    noteReactions: db.prepare('SELECT note_id AS note, player_id AS player, kind FROM note_reactions WHERE room_id = ? ORDER BY created'),
+    react: db.prepare('INSERT OR IGNORE INTO note_reactions (room_id, note_id, player_id, kind, created) VALUES (?, ?, ?, ?, ?)'),
+    unreact: db.prepare('DELETE FROM note_reactions WHERE room_id = ? AND note_id = ? AND player_id = ? AND kind = ?'),
+    deleteNoteReactions: db.prepare('DELETE FROM note_reactions WHERE room_id = ?'),
     times: db.prepare('SELECT user, seconds FROM times WHERE room_id = ?'),
     addTime: db.prepare(`
       INSERT INTO times (room_id, user, seconds, seen) VALUES (?, ?, ?, ?)
@@ -529,6 +535,12 @@ function createApi(dbFile) {
         broadcast(roomId, { ...m, client }, ws)
       } else if (m.type === 'react' && isFinite(m.x) && isFinite(m.y)) {
         broadcast(roomId, { type: 'react', client, kind: String(m.kind || '').slice(0, 16), x: +m.x, y: +m.y }, ws)
+      } else if (m.type === 'note-react' && ws.player && NOTE_REACTIONS.has(m.kind)) {
+        // A reaction on a note, on or off, from the player on this socket.
+        const id = String(m.id || '').slice(0, 32)
+        if (m.on) q.react.run(roomId, id, ws.player.id, m.kind, Date.now())
+        else q.unreact.run(roomId, id, ws.player.id, m.kind)
+        broadcast(roomId, { type: 'note-react', client, id, kind: m.kind, player: ws.player.id, on: !!m.on }, ws)
       } else if (m.type === 'note' || m.type === 'ref' || m.type === 'tray') {
         const put = { note: putNote, ref: putRef, tray: putTray }[m.type]
         const item = put(roomId, m[m.type], !!m.live)
@@ -736,6 +748,7 @@ function createApi(dbFile) {
             ...room,
             pieces: q.pieces.all(id),
             notes: q.notes.all(id),
+            noteReactions: q.noteReactions.all(id),
             refs: q.refs.all(id),
             trays: q.trays.all(id).map((t) => trayOut(t, id)),
             times: q.times.all(id),
@@ -754,6 +767,7 @@ function createApi(dbFile) {
           tx(() => {
             q.deletePieces.run(id)
             q.deleteNotes.run(id)
+            q.deleteNoteReactions.run(id)
             q.deleteRefs.run(id)
             q.deleteTrays.run(id)
             q.deleteTimes.run(id)

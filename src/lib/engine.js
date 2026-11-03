@@ -3998,9 +3998,6 @@ export class Engine {
       }
     }
 
-    let sp = this.geo.S
-    while (sp * v.z < 22) sp *= 2
-    while (sp * v.z > 44) sp /= 2
     const lv = Math.max(this.lift?.value || 0, rvalue)
     const l = this.lift || rvalue > 0 ? { value: lv } : null
     this.gpu.frame({
@@ -4009,9 +4006,6 @@ export class Engine {
       cam: [v.x, v.y, z],
       sprite: [this.spriteW, this.spriteH],
       bg: rgba(this.colors.bg),
-      dot: rgba(this.colors.dot),
-      dotStep: sp,
-      dotSize: Math.max(1, 1.25 * dpr),
       trays: { data: this.gTrays, count: trays },
       refs: { data: this.gRefs, count: refs },
       pieces: { data: this.gi, count: this.gn },

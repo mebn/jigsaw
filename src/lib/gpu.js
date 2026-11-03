@@ -1,7 +1,7 @@
 // WebGPU renderer for the table. The engine works out what goes where each frame (see drawGpu() in
 // engine.js); this draws it, the whole table every frame:
 //
-// - the table and its dot grid, worked out per pixel,
+// - the table,
 // - trays (rounded boxes) and reference images,
 // - the pieces, one instance each, from their sprites in two texture atlases laid out alike (texture
 //   arrays of pages, every sprite in its own cell, with its halved copies in the mip levels): the
@@ -33,11 +33,8 @@ struct U {
   // Sprite size (pixels), sprites per row, sprites per page.
   s2: vec4f,
   bg: vec4f,
-  dot: vec4f,
-  // The world point at the middle of the screen, device pixels per world unit, dot spacing (world).
+  // The world point at the middle of the screen, device pixels per world unit.
   cam: vec4f,
-  // Dot size (device pixels).
-  misc: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
@@ -65,16 +62,8 @@ fn box(d: vec2f, hs: vec2f, r: f32) -> f32 {
 `
 
 const BG = /* wgsl */ `
-@fragment fn fsBg(@builtin(position) p: vec4f) -> @location(0) vec4f {
-  let z = u.cam.z;
-  let w = (p.xy - u.s0.xy * 0.5) / z + u.cam.xy;
-  let sp = u.cam.w;
-  // How far this pixel is from the nearest dot, in device pixels, and how much of it the dot covers.
-  let d = (w - round(w / sp) * sp) * z;
-  let s = u.misc.x;
-  let c = clamp(s * 0.5 + 0.5 - abs(d), vec2f(0.0), vec2f(min(s, 1.0)));
-  let a = c.x * c.y;
-  return vec4f(u.bg.rgb * (1.0 - u.dot.a * a) + u.dot.rgb * a, 1.0);
+@fragment fn fsBg() -> @location(0) vec4f {
+  return vec4f(u.bg.rgb, 1.0);
 }
 `
 
@@ -409,7 +398,7 @@ class Gpu {
     // Per page of the shape atlas, the rows (pixels) with shapes whose halved copies are still to be made.
     this.stale = new Map()
 
-    this.uniform = new Float32Array(28)
+    this.uniform = new Float32Array(20)
     this.ubuf = device.createBuffer({ size: this.uniform.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     // Blur (two passes), shadow and outline (selection, hover) settings.
     this.post = {}
@@ -710,7 +699,7 @@ class Gpu {
 
   // Draws a frame. f: {
   //   W, H: the screen in device pixels; cam: [x, y, device pixels per world unit]; sprite: [w, h]
-  //   in world units; bg, dot: colours [r, g, b, a]; dotStep (world units), dotSize (device pixels);
+  //   in world units; bg: colour [r, g, b, a];
   //   trays, refs: { data, count }; pieces: { data, count }, with ranges [first, count] in seg:
   //   still and lift (drawn in that order), sel and hl (outlined); selBox, hlBox: the
   //   outlined pieces' box [x0, y0, x1, y1] in device pixels; selColor, hlColor; outline: [width,
@@ -726,9 +715,7 @@ class Gpu {
     U.set([W, H, f.sprite[0], f.sprite[1], this.atlasSize[0], this.atlasSize[1], this.cell.cw, this.cell.ch])
     U.set([this.spritePx[0], this.spritePx[1], this.cell.perRow, this.cell.perPage], 8)
     U.set(premul(f.bg), 12)
-    U.set(premul(f.dot), 16)
-    U.set([f.cam[0], f.cam[1], f.cam[2], f.dotStep], 20)
-    U.set([f.dotSize, 0, 0, 0], 24)
+    U.set([f.cam[0], f.cam[1], f.cam[2], 0], 16)
     d.queue.writeBuffer(this.ubuf, 0, U)
 
     const pieces = this.fill('pieces', f.pieces.data, f.pieces.count * PIECE_FLOATS)

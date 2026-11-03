@@ -67,6 +67,8 @@ export const api = {
   // Notes, reference images and trays go over the room socket; live=true is a drag in progress (not saved).
   saveNote: (id, note, live = false) => sockets.get(id)?.send({ type: 'note', live, note }),
   deleteNote: (id, noteId) => sockets.get(id)?.send({ type: 'note-delete', id: noteId }),
+  // Puts the player's reaction of this kind on a note, or takes it off.
+  reactNote: (id, noteId, kind, on) => sockets.get(id)?.send({ type: 'note-react', id: noteId, kind, on }),
   saveRef: (id, ref, live = false) => sockets.get(id)?.send({ type: 'ref', live, ref }),
   deleteRef: (id, refId) => sockets.get(id)?.send({ type: 'ref-delete', id: refId }),
   saveTray: (id, tray, live = false) => sockets.get(id)?.send({ type: 'tray', live, tray }),

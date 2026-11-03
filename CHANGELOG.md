@@ -1,5 +1,11 @@
 # Changelog
 
+## 3 November 2026
+
+- The table no longer has a grid of dots on it, so it's a plain, calm background behind your pieces.
+- The buttons at the top middle are now one bar, with thin lines between the groups, instead of three separate bars.
+- You can react to notes with 👍, 👎, 👀 or 🔥. Hover a note to pick one, and click it again to take it back. Reactions show at the bottom of the note with how many people gave each; hover one to see who.
+
 ## 30 October 2026
 
 - Improvements to sorting: **G** and a tray's **Auto sort** now pull pieces together while keeping each one near its neighbours, and a tray shuffled with **Shift + G** stays shuffled.
