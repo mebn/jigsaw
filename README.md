@@ -1,6 +1,6 @@
 # Jigsaw
 
-A multiplayer jigsaw puzzle app. The frontend is React, built with Vite. The backend is a small JSON and WebSocket API backed by SQLite, which runs as a Vite plugin (`server/api.js`), so there is no separate backend process to start.
+A multiplayer jigsaw puzzle app, written in TypeScript. The frontend is React, built with Vite. The backend is a small JSON and WebSocket API backed by SQLite, which runs as a Vite plugin (`server/api.ts`), so there is no separate backend process to start.
 
 https://github.com/user-attachments/assets/e7aee30f-cdcd-469a-b9dd-854b7db83120
 
@@ -35,6 +35,14 @@ npm run start
 Builds the app into `dist/` and serves it with `vite preview` at http://localhost:4173, also listening on all network interfaces.
 
 To use a different port, pass it after `--`, for example `npm run dev -- --port 3000`.
+
+### Type checking
+
+```sh
+npm run typecheck
+```
+
+Vite only strips the types when it builds or serves the app, so type errors don't stop it. Run this to check them.
 
 ## Data
 

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
-    "start": "vite build && vite preview --host"
+    "start": "vite build && vite preview --host",
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "gifenc": "^1.0.3",
@@ -16,7 +17,13 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "@webgpu/types": "^0.1.74",
+    "typescript": "^7.0.2",
     "vite": "^7.0.0"
   }
 }
