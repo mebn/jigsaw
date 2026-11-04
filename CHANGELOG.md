@@ -1,5 +1,9 @@
 # Changelog
 
+## 4 November 2026
+
+- The pictures in the share window now always fit inside their square, however tall or wide the jigsaw is.
+
 ## 30 October 2026
 
 - Improvements to sorting: **G** and a tray's **Auto sort** now pull pieces together while keeping each one near its neighbours, and a tray shuffled with **Shift + G** stays shuffled.

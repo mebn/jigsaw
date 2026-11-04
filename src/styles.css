@@ -13,7 +13,7 @@
   --shadow: rgba(0, 0, 0, 0.4);
   --sel: #2f6fed;
   --radius: 10px;
-  /* A MacBook's notch in fullscreen (set in App.jsx), which the toolbars and windows keep below. */
+  /* A MacBook's notch in fullscreen (set in App.tsx), which the toolbars and windows keep below. */
   --notch: 0px;
   color-scheme: light;
 }
@@ -131,7 +131,7 @@ button {
   top: 16px;
   left: 16px;
 }
-/* The top right: the player circles (see Players.jsx). */
+/* The top right: the player circles (see Players.tsx). */
 .tr {
   position: absolute;
   top: 16px;
@@ -140,7 +140,7 @@ button {
   display: flex;
   align-items: center;
 }
-/* After a few seconds without the pointer or keyboard (see Room.jsx), the controls fade away. */
+/* After a few seconds without the pointer or keyboard (see Room.tsx), the controls fade away. */
 .room .float,
 .room .players,
 .room .podium-btn,
@@ -199,7 +199,7 @@ button {
   }
 }
 
-/* Dialogs animating out before they go (see lib/linger.js for the timing). */
+/* Dialogs animating out before they go (see lib/linger.ts for the timing). */
 .modal-bg.closing {
   pointer-events: none;
   animation: fade-out 0.16s ease forwards;
@@ -219,7 +219,7 @@ button {
   }
 }
 
-/* ---- dialogs (see Dialog.jsx) ---- */
+/* ---- dialogs (see Dialog.tsx) ---- */
 
 .modal.dialog {
   max-height: calc(100dvh - 32px - var(--notch));
@@ -504,7 +504,7 @@ button {
   }
 }
 
-/* A stand-in while the jigsaws load (see CardGhosts in Rooms.jsx): a light sweeps across its
+/* A stand-in while the jigsaws load (see CardGhosts in Rooms.tsx): a light sweeps across its
    picture and its line of numbers. */
 .card.ghost {
   pointer-events: none;
@@ -608,7 +608,7 @@ button {
   width: 100%;
 }
 
-/* Text fields (see TextField.jsx). They fill the width of a row, but keep their height in a column. */
+/* Text fields (see TextField.tsx). They fill the width of a row, but keep their height in a column. */
 .text {
   flex: 1 1 auto;
   min-width: 0;
@@ -1199,7 +1199,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   height: 16px;
   color: var(--muted);
 }
-/* In fullscreen on a MacBook with a notch, the top middle toolbar goes below it (see Room.jsx). */
+/* In fullscreen on a MacBook with a notch, the top middle toolbar goes below it (see Room.tsx). */
 .room.notch .tc {
   top: calc(8px + var(--notch));
 }
@@ -1453,7 +1453,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   }
 }
 
-/* ---- players (see Players.jsx and PlayerDialog.jsx) ---- */
+/* ---- players (see Players.tsx and PlayerDialog.tsx) ---- */
 
 /* The first few players as circles in the header, on their own without a panel behind them, then
    the players button for everyone. */
@@ -1576,7 +1576,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   filter: brightness(0.96);
 }
 
-/* Beside a row of the players list, placed in the window (see Players.jsx). */
+/* Beside a row of the players list, placed in the window (see Players.tsx). */
 .player-card.side {
   position: fixed;
   right: auto;
@@ -2019,7 +2019,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   white-space: nowrap;
 }
 
-/* ---- button hover cards (see Tooltips.jsx) ---- */
+/* ---- button hover cards (see Tooltips.tsx) ---- */
 
 .ui-tip {
   position: fixed;
@@ -2429,7 +2429,7 @@ button.link:hover {
   gap: 28px;
   animation: sticker 0.55s cubic-bezier(0.3, 1.5, 0.5, 1);
 }
-/* Turned towards the pointer by Podium.jsx, easing after it. */
+/* Turned towards the pointer by Podium.tsx, easing after it. */
 .podium-stands {
   display: flex;
   align-items: flex-end;
@@ -2695,7 +2695,7 @@ button.link:hover {
 .context-menu button:not(:disabled):hover {
   background: var(--hover);
 }
-/* An item that opens a second menu beside it (see ContextMenu.jsx). */
+/* An item that opens a second menu beside it (see ContextMenu.tsx). */
 .context-menu button.open {
   background: var(--hover);
 }
@@ -2791,7 +2791,7 @@ button.link:hover {
   height: 20px;
 }
 
-/* Sharing a finished jigsaw (see ShareDialog.jsx): the picture and the timelapse side by side,
+/* Sharing a finished jigsaw (see ShareDialog.tsx): the picture and the timelapse side by side,
    each with its own button. */
 .share-dialog {
   width: min(560px, 100%);
@@ -2813,6 +2813,9 @@ button.link:hover {
 }
 .share-preview {
   display: grid;
+  /* A fixed-size cell, so the picture's max-width and max-height fit it inside the square
+     whatever its shape, rather than a very tall one stretching the row and being cut off. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   aspect-ratio: 1;
   padding: 8px;
