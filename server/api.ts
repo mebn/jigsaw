@@ -106,7 +106,20 @@ type NoteRow = {
   x: number
   y: number
   text: string
+  tray: string | null
   author: string
+  created: number
+}
+type NoteReactionRow = {
+  note: string
+  player: string
+  kind: string
+}
+type NoteReplyRow = {
+  id: string
+  note: string
+  author: string
+  text: string
   created: number
 }
 type RefRow = {
@@ -178,6 +191,7 @@ interface ItemIn {
   text: string
   author: string
   created: number
+  tray?: string | null
   opacity: number
   trimX?: number | null
   trimY?: number | null
@@ -199,10 +213,14 @@ interface ClientMessage {
   x: number
   y: number
   live?: boolean
-  note?: ItemIn
+  // A note's fields, or for a reply ("note-reply"), the id of the note it answers.
+  note?: ItemIn | string
   ref?: ItemIn
   tray?: ItemIn
   id?: string
+  // A reaction on a note going on or off ("note-react"), and a reply's text ("note-reply").
+  on?: unknown
+  text?: string
 }
 interface Body {
   name?: string
@@ -341,6 +359,9 @@ const cleanName = (s: unknown) => String(s || '').trim().slice(0, 32)
 const cleanEmail = (s: unknown) => String(s || '').trim().toLowerCase().slice(0, 254)
 const validEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)
 const MIN_PASSWORD = 8
+// The reactions a note can have (see src/components/Notes.tsx).
+const NOTE_REACTIONS = new Set(['up', 'down', 'eyes', 'fire'])
+const isNoteReaction = (k: unknown): k is string => typeof k === 'string' && NOTE_REACTIONS.has(k)
 
 // Passwords are stored as "salt:hash", both hex, hashed with scrypt.
 function hashPassword(password: unknown) {
@@ -418,13 +439,21 @@ function createApi(dbFile: string) {
       SELECT p.id, p.name, EXISTS (SELECT 1 FROM room_players m WHERE m.room_id = ?1 AND m.player_id = p.id) AS joined
       FROM players p WHERE p.email IS NOT NULL AND p.id != ?2 ORDER BY p.name COLLATE NOCASE`) as Stmt<InvitableRow>,
     emailOf: db.prepare('SELECT id, email FROM players WHERE id = ? AND email IS NOT NULL') as Stmt<EmailRow>,
-    notes: db.prepare('SELECT id, x, y, text, author, created FROM notes WHERE room_id = ? ORDER BY created') as Stmt<NoteRow>,
+    notes: db.prepare('SELECT id, x, y, text, tray, author, created FROM notes WHERE room_id = ? ORDER BY created') as Stmt<NoteRow>,
     upsertNote: db.prepare(`
-      INSERT INTO notes (id, room_id, x, y, text, author, created) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT (room_id, id) DO UPDATE SET x = excluded.x, y = excluded.y, text = excluded.text`),
-    note: db.prepare('SELECT id, x, y, text, author, created FROM notes WHERE room_id = ? AND id = ?') as Stmt<NoteRow>,
+      INSERT INTO notes (id, room_id, x, y, text, tray, author, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (room_id, id) DO UPDATE SET x = excluded.x, y = excluded.y, text = excluded.text, tray = excluded.tray`),
+    note: db.prepare('SELECT id, x, y, text, tray, author, created FROM notes WHERE room_id = ? AND id = ?') as Stmt<NoteRow>,
     deleteNote: db.prepare('DELETE FROM notes WHERE room_id = ? AND id = ?'),
     deleteNotes: db.prepare('DELETE FROM notes WHERE room_id = ?'),
+    noteReactions: db.prepare('SELECT note_id AS note, player_id AS player, kind FROM note_reactions WHERE room_id = ? ORDER BY created') as Stmt<NoteReactionRow>,
+    react: db.prepare('INSERT OR IGNORE INTO note_reactions (room_id, note_id, player_id, kind, created) VALUES (?, ?, ?, ?, ?)'),
+    unreact: db.prepare('DELETE FROM note_reactions WHERE room_id = ? AND note_id = ? AND player_id = ? AND kind = ?'),
+    deleteNoteReactions: db.prepare('DELETE FROM note_reactions WHERE room_id = ?'),
+    noteReplies: db.prepare('SELECT id, note_id AS note, author, text, created FROM note_replies WHERE room_id = ? ORDER BY created') as Stmt<NoteReplyRow>,
+    reply: db.prepare('INSERT OR IGNORE INTO note_replies (room_id, id, note_id, author, text, created) VALUES (?, ?, ?, ?, ?, ?)'),
+    deleteReply: db.prepare('DELETE FROM note_replies WHERE room_id = ? AND id = ? AND author = ?'),
+    deleteNoteReplies: db.prepare('DELETE FROM note_replies WHERE room_id = ?'),
     times: db.prepare('SELECT user, seconds FROM times WHERE room_id = ?') as Stmt<TimeRow>,
     addTime: db.prepare(`
       INSERT INTO times (room_id, user, seconds, seen) VALUES (?, ?, ?, ?)
@@ -652,6 +681,7 @@ function createApi(dbFile: string) {
     x: +b?.x || 0,
     y: +b?.y || 0,
     text: String(b?.text || '').slice(0, 2000),
+    tray: b?.tray ? String(b.tray).slice(0, 40) : null,
     author: String(b?.author || '').slice(0, 32),
   })
   // The part of an image that shows, as fractions of the picture: the whole of it when not given.
@@ -695,7 +725,7 @@ function createApi(dbFile: string) {
     if (!n.id) return null
     if (live) return { ...n, created: +b.created || 0 }
     n.author = playerId(n.author) || ''
-    q.upsertNote.run(n.id, roomId, n.x, n.y, n.text, n.author, Date.now())
+    q.upsertNote.run(n.id, roomId, n.x, n.y, n.text, n.tray, n.author, Date.now())
     return q.note.get(roomId, n.id)
   }
   function putRef(roomId: string, b: ItemIn, live: boolean) {
@@ -753,9 +783,31 @@ function createApi(dbFile: string) {
         broadcast(roomId, { ...m, client }, ws)
       } else if (m.type === 'react' && isFinite(m.x) && isFinite(m.y)) {
         broadcast(roomId, { type: 'react', client, kind: String(m.kind || '').slice(0, 16), x: +m.x, y: +m.y }, ws)
+      } else if (m.type === 'note-react' && ws.player && isNoteReaction(m.kind)) {
+        // A reaction on a note, on or off, from the player on this socket.
+        const id = String(m.id || '').slice(0, 32)
+        if (m.on) q.react.run(roomId, id, ws.player.id, m.kind, Date.now())
+        else q.unreact.run(roomId, id, ws.player.id, m.kind)
+        broadcast(roomId, { type: 'note-react', client, id, kind: m.kind, player: ws.player.id, on: !!m.on }, ws)
+      } else if (m.type === 'note-reply' && ws.player) {
+        // A reply to a note, from the player on this socket.
+        const reply = {
+          id: String(m.id || '').slice(0, 32),
+          note: String(m.note || '').slice(0, 32),
+          author: ws.player.id,
+          text: String(m.text || '').trim().slice(0, 2000),
+          created: Date.now(),
+        }
+        if (!reply.id || !reply.note || !reply.text) return
+        q.reply.run(roomId, reply.id, reply.note, reply.author, reply.text, reply.created)
+        broadcast(roomId, { type: 'note-reply', client, reply }, ws)
+      } else if (m.type === 'note-reply-delete' && ws.player) {
+        // Players can only take back their own replies.
+        const id = String(m.id || '')
+        if (q.deleteReply.run(roomId, id, ws.player.id).changes) broadcast(roomId, { type: 'note-reply-delete', client, id }, ws)
       } else if (m.type === 'note' || m.type === 'ref' || m.type === 'tray') {
         const put = { note: putNote, ref: putRef, tray: putTray }[m.type]
-        const item = put(roomId, m[m.type]!, !!m.live)
+        const item = put(roomId, m[m.type] as ItemIn, !!m.live)
         if (item) broadcast(roomId, { type: m.type, client, live: !!m.live, [m.type]: item }, ws)
       } else if (m.type === 'note-delete' || m.type === 'ref-delete' || m.type === 'tray-delete') {
         const id = String(m.id || '')
@@ -960,6 +1012,8 @@ function createApi(dbFile: string) {
             ...room,
             pieces: q.pieces.all(id),
             notes: q.notes.all(id),
+            noteReactions: q.noteReactions.all(id),
+            noteReplies: q.noteReplies.all(id),
             refs: q.refs.all(id),
             trays: q.trays.all(id).map((t) => trayOut(t, id)),
             times: q.times.all(id),
@@ -978,6 +1032,8 @@ function createApi(dbFile: string) {
           tx(() => {
             q.deletePieces.run(id)
             q.deleteNotes.run(id)
+            q.deleteNoteReactions.run(id)
+            q.deleteNoteReplies.run(id)
             q.deleteRefs.run(id)
             q.deleteTrays.run(id)
             q.deleteTimes.run(id)

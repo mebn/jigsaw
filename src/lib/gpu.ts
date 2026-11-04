@@ -1,7 +1,7 @@
 // WebGPU renderer for the table. The engine works out what goes where each frame (see drawGpu() in
 // engine.ts); this draws it, the whole table every frame:
 //
-// - the table and its dot grid, worked out per pixel,
+// - the table,
 // - trays (rounded boxes) and reference images,
 // - the pieces, one instance each, from their sprites in two texture atlases laid out alike (texture
 //   arrays of pages, every sprite in its own cell, with its smaller copies in the mip levels): the
@@ -50,13 +50,11 @@ export interface GpuFrame {
   cam: readonly number[]
   sprite: readonly number[]
   bg: Rgba
-  dot: Rgba
-  dotStep: number
-  dotSize: number
-  trays: GpuInstances
+  // The first down trays lie on the table, the rest are lifted.
+  trays: GpuInstances & { down: number }
   refs: GpuInstances
   pieces: GpuInstances
-  seg: { still: GpuRange; trayed?: GpuRange; lift: GpuRange; sel: GpuRange; hl: GpuRange }
+  seg: { still: GpuRange; trayed: GpuRange; trayedUp: GpuRange; lift: GpuRange; shade: GpuRange; sel: GpuRange; hl: GpuRange }
   selBox: ScreenBox
   hlBox: ScreenBox
   selColor: Rgba
@@ -71,6 +69,7 @@ type PostName = 'blurX' | 'blurY' | 'shadow' | 'sel' | 'hl'
 type PipeName =
   | 'bg'
   | 'tray'
+  | 'trayMask'
   | 'ref'
   | 'piece'
   | 'maskR'
@@ -106,11 +105,8 @@ struct U {
   // Sprite size (pixels), sprites per row, sprites per page.
   s2: vec4f,
   bg: vec4f,
-  dot: vec4f,
-  // The world point at the middle of the screen, device pixels per world unit, dot spacing (world).
+  // The world point at the middle of the screen, device pixels per world unit.
   cam: vec4f,
-  // Dot size (device pixels).
-  misc: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
@@ -138,16 +134,8 @@ fn box(d: vec2f, hs: vec2f, r: f32) -> f32 {
 `
 
 const BG = /* wgsl */ `
-@fragment fn fsBg(@builtin(position) p: vec4f) -> @location(0) vec4f {
-  let z = u.cam.z;
-  let w = (p.xy - u.s0.xy * 0.5) / z + u.cam.xy;
-  let sp = u.cam.w;
-  // How far this pixel is from the nearest dot, in device pixels, and how much of it the dot covers.
-  let d = (w - round(w / sp) * sp) * z;
-  let s = u.misc.x;
-  let c = clamp(s * 0.5 + 0.5 - abs(d), vec2f(0.0), vec2f(min(s, 1.0)));
-  let a = c.x * c.y;
-  return vec4f(u.bg.rgb * (1.0 - u.dot.a * a) + u.dot.rgb * a, 1.0);
+@fragment fn fsBg() -> @location(0) vec4f {
+  return vec4f(u.bg.rgb, 1.0);
 }
 `
 
@@ -178,6 +166,10 @@ struct O {
   let f = clamp(0.5 - s, 0.0, 1.0);
   let k = clamp(i.prm.y * 0.5 + 0.5 - abs(s), 0.0, 1.0);
   return i.stroke * k + i.fill * f * (1.0 - i.stroke.a * k);
+}
+// A lifted tray's shape in the shadow mask, as strong as it's lifted (prm.z).
+@fragment fn fsMask(i: O) -> @location(0) vec4f {
+  return vec4f(clamp(0.5 - box(i.d, i.hs, i.prm.x), 0.0, 1.0) * i.prm.z);
 }
 `
 
@@ -527,7 +519,7 @@ class Gpu {
     this.corners = device.createBuffer({ size: Math.max(1, cells) * 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     this.has = new Uint8Array(cells)
 
-    this.uniform = new Float32Array(28)
+    this.uniform = new Float32Array(20)
     this.ubuf = device.createBuffer({ size: this.uniform.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     // Blur (two passes), shadow and outline (selection, hover) settings.
     this.post = {} as Record<PostName, GPUBuffer>
@@ -613,9 +605,11 @@ class Gpu {
         primitive: { topology: 'triangle-list' },
       })
     const screen: GPUColorTargetState = { format: this.format, blend: over }
-    const [bg, tray, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline] = await Promise.all([
+    const trayBuffers: GPUVertexBufferLayout[] = [{ arrayStride: TRAY_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }]
+    const [bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline] = await Promise.all([
       pipe(mBg, 'vsFull', 'fsBg', [], { format: this.format }, []),
-      pipe(mTray, 'vs', 'fs', [{ arrayStride: TRAY_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, []),
+      pipe(mTray, 'vs', 'fs', trayBuffers, screen, []),
+      pipe(mTray, 'vs', 'fsMask', trayBuffers, { format: 'r8unorm', blend: over }, []),
       pipe(mRef, 'vs', 'fs', [{ arrayStride: REF_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, [lTex]),
       pipe(mPiece, 'vs', 'fs', pieceBuffers, screen, [lAtlas]),
       pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.RED }, [lAtlas]),
@@ -625,7 +619,7 @@ class Gpu {
       pipe(mPost, 'vsFull', 'fsShadow', [], screen, [lPost]),
       pipe(mPost, 'vsFull', 'fsOutline', [], screen, [lPost]),
     ])
-    this.pipes = { bg, tray, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline } as Record<PipeName, GPURenderPipeline>
+    this.pipes = { bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline } as Record<PipeName, GPURenderPipeline>
     const mPicture = d.createShaderModule({ code: PICTURE })
     const mHalve = d.createShaderModule({ code: HALVE })
     const halve = (format: GPUTextureFormat) =>
@@ -828,9 +822,11 @@ class Gpu {
 
   // Draws a frame. f: {
   //   W, H: the screen in device pixels; cam: [x, y, device pixels per world unit]; sprite: [w, h]
-  //   in world units; bg, dot: colours [r, g, b, a]; dotStep (world units), dotSize (device pixels);
-  //   trays, refs: { data, count }; pieces: { data, count }, with ranges [first, count] in seg:
-  //   still and lift (drawn in that order), sel and hl (outlined); selBox, hlBox: the
+  //   in world units; bg: colour [r, g, b, a];
+  //   trays: { data, count, down }, the first down lying on the table, the rest lifted (prm.z: how
+  //   far); refs: { data, count }; pieces: { data, count }, with ranges [first, count] in seg: still,
+  //   trayed, trayedUp (in lifted trays) and lift (drawn in that order), shade (the part of lift
+  //   that casts a shadow), sel and hl (outlined); selBox, hlBox: the
   //   outlined pieces' box [x0, y0, x1, y1] in device pixels; selColor, hlColor; outline: [width,
   //   cut]; extra: more outlines, [{ range: [first, count], box, color, over }], over the lifted pieces when over; selUnder: the selection outline goes under the lifted pieces; hlOver: the hover outline (the
   //   carried pieces' then) goes over them; shadow:
@@ -844,9 +840,7 @@ class Gpu {
     U.set([W, H, f.sprite[0], f.sprite[1], this.atlasSize[0], this.atlasSize[1], this.cell.cw, this.cell.ch])
     U.set([this.spritePx[0], this.spritePx[1], this.cell.perRow, this.cell.perPage], 8)
     U.set(premul(f.bg), 12)
-    U.set(premul(f.dot), 16)
-    U.set([f.cam[0], f.cam[1], f.cam[2], f.dotStep], 20)
-    U.set([f.dotSize, 0, 0, 0], 24)
+    U.set([f.cam[0], f.cam[1], f.cam[2], 0], 16)
     d.queue.writeBuffer(this.ubuf, 0, U)
 
     const pieces = this.fill('pieces', f.pieces.data, f.pieces.count * PIECE_FLOATS)
@@ -898,8 +892,10 @@ class Gpu {
       return x
     })
 
-    // The lifted pieces' silhouettes at a third of the resolution, blurred one way, then the other.
-    const sh = f.shadow && seg.lift[1] > 0 ? f.shadow : null
+    // The lifted pieces' silhouettes and lifted trays' shapes at a third of the resolution, blurred one
+    // way, then the other.
+    const traysUp = f.trays.count - f.trays.down
+    const sh = f.shadow && (seg.shade[1] > 0 || traysUp > 0) ? f.shadow : null
     if (sh) {
       const [sw, shh] = this.shSize
       const sigma = sh.blur / 2 / SHADOW_K
@@ -909,11 +905,18 @@ class Gpu {
       d.queue.writeBuffer(this.post.shadow, 0, new Float32Array([...premul(sh.color), sh.ox, sh.oy, sw * SHADOW_K, shh * SHADOW_K]))
       const target = (tex: GPUTexture): GPURenderPassDescriptor => ({ colorAttachments: [{ view: tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
       let pass = enc.beginRenderPass(target(this.shA))
-      pass.setPipeline(this.pipes.shadowMask)
       pass.setBindGroup(0, this.g0)
-      pass.setBindGroup(1, this.gAtlas)
-      pass.setVertexBuffer(0, pieces)
-      draw(pass, seg.lift)
+      if (traysUp > 0) {
+        pass.setPipeline(this.pipes.trayMask)
+        pass.setVertexBuffer(0, trays)
+        pass.draw(6, traysUp, 0, f.trays.down)
+      }
+      if (seg.shade[1]) {
+        pass.setPipeline(this.pipes.shadowMask)
+        pass.setBindGroup(1, this.gAtlas)
+        pass.setVertexBuffer(0, pieces)
+        draw(pass, seg.shade)
+      }
       pass.end()
       for (const [tex, group] of [
         [this.shB, this.gBlurX],
@@ -928,9 +931,9 @@ class Gpu {
       }
     }
 
-    // Two layers, with the notes (page elements) between them: the table (background, images, the
-    // pieces lying on it) under, and over them the trays, the pieces in them, the pieces being
-    // carried and the outlines.
+    // Two layers, with the notes (page elements) over both: the table (background, images, the pieces
+    // lying on it) under, and over them the trays, the pieces in them, the pieces being carried and
+    // the outlines. Lifted trays go over the shadow, with the pieces in them.
     let pass = enc.beginRenderPass({
       colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
     })
@@ -970,12 +973,12 @@ class Gpu {
       colorAttachments: [{ view: this.ctxTop.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }],
     })
     pass.setBindGroup(0, this.g0)
-    if (f.trays.count) {
+    if (f.trays.down) {
       pass.setPipeline(this.pipes.tray)
       pass.setVertexBuffer(0, trays)
-      pass.draw(6, f.trays.count)
+      pass.draw(6, f.trays.down)
     }
-    if (seg.trayed) piecesOf(seg.trayed)
+    piecesOf(seg.trayed)
     if (sel && f.selUnder) outline(this.gSel, f.selBox)
     if (hl && !f.hlOver) outline(this.gHl, f.hlBox)
     extras.forEach((e, k) => !e.over && outline(masks[k].group, e.box))
@@ -984,6 +987,12 @@ class Gpu {
       pass.setBindGroup(1, this.gShadow)
       pass.draw(3)
     }
+    if (traysUp > 0) {
+      pass.setPipeline(this.pipes.tray)
+      pass.setVertexBuffer(0, trays)
+      pass.draw(6, traysUp, 0, f.trays.down)
+    }
+    piecesOf(seg.trayedUp)
     piecesOf(seg.lift)
     if (sel && !f.selUnder) outline(this.gSel, f.selBox)
     if (hl && f.hlOver) outline(this.gHl, f.hlBox)

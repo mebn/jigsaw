@@ -85,7 +85,26 @@ export interface NoteRow {
   x: number
   y: number
   text: string
+  // The tray it's stuck to, if any.
+  tray: string | null
   author: string
+  created: number
+}
+
+// The kinds of reaction a note can have.
+export type NoteReactionKind = 'up' | 'down' | 'eyes' | 'fire'
+// One player's reaction of one kind on a note.
+export interface NoteReaction {
+  note: string
+  player: string
+  kind: NoteReactionKind
+}
+// A reply to a note.
+export interface NoteReply {
+  id: string
+  note: string
+  author: string
+  text: string
   created: number
 }
 
@@ -153,6 +172,8 @@ export interface RoomDetails {
   private: number
   pieces: PieceRow[]
   notes: NoteRow[]
+  noteReactions: NoteReaction[]
+  noteReplies: NoteReply[]
   refs: RefRow[]
   trays: TrayRow[]
   times: TimeRow[]
@@ -213,6 +234,9 @@ export type RoomMessage =
   | { type: 'ref'; client: string; live: boolean; ref: RefRow }
   | { type: 'tray'; client: string; live: boolean; tray: TrayUpdate }
   | { type: 'note-delete'; client: string; id: string }
+  | { type: 'note-react'; client: string; id: string; kind: NoteReactionKind; player: string; on: boolean }
+  | { type: 'note-reply'; client: string; reply: NoteReply }
+  | { type: 'note-reply-delete'; client: string; id: string }
   | { type: 'ref-delete'; client: string; id: string }
   | { type: 'tray-delete'; client: string; id: string }
   | { type: 'react'; client: string; kind: string; x: number; y: number }
@@ -314,6 +338,11 @@ export const api = {
   // Notes, reference images and trays go over the room socket; live=true is a drag in progress (not saved).
   saveNote: (id: string, note: NoteInput, live = false) => sockets.get(id)?.send({ type: 'note', live, note }),
   deleteNote: (id: string, noteId: string) => sockets.get(id)?.send({ type: 'note-delete', id: noteId }),
+  // Puts the player's reaction of this kind on a note, or takes it off.
+  reactNote: (id: string, noteId: string, kind: NoteReactionKind, on: boolean) => sockets.get(id)?.send({ type: 'note-react', id: noteId, kind, on }),
+  // A reply to a note ({ id, note, text }), and taking one of the player's own replies back.
+  replyNote: (id: string, reply: Pick<NoteReply, 'id' | 'note' | 'text'>) => sockets.get(id)?.send({ type: 'note-reply', ...reply }),
+  deleteReply: (id: string, replyId: string) => sockets.get(id)?.send({ type: 'note-reply-delete', id: replyId }),
   saveRef: (id: string, ref: RefInput, live = false) => sockets.get(id)?.send({ type: 'ref', live, ref }),
   deleteRef: (id: string, refId: string) => sockets.get(id)?.send({ type: 'ref-delete', id: refId }),
   saveTray: (id: string, tray: TrayInput, live = false) => sockets.get(id)?.send({ type: 'tray', live, tray }),

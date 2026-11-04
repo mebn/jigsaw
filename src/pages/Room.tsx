@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api.ts'
-import type { NoteRow, RoomSocket, TimeRow } from '../lib/api.ts'
+import type { NoteReaction, NoteReply, NoteRow, RoomSocket, TimeRow } from '../lib/api.ts'
 import { Engine, warmSprites } from '../lib/engine.ts'
 import { navigate, store, useApp } from '../App.tsx'
 import {
@@ -105,6 +105,8 @@ function takeLocalRefs(id: string) {
 // What the room needs once the jigsaw is loaded, besides the engine.
 interface RoomData {
   notes: NoteRow[]
+  noteReactions: NoteReaction[]
+  noteReplies: NoteReply[]
   times: TimeRow[]
   private: boolean
   owner: string | null
@@ -251,7 +253,7 @@ export default function Room({ id }: RoomProps) {
         setDone(eng.isComplete())
         // Already finished before this player opened it: nothing left to celebrate.
         if (eng.isComplete()) store.set(`celebrated:${id}`, '1')
-        setData({ notes: room.notes || [], times: room.times || [], private: !!room.private, owner: room.owner })
+        setData({ notes: room.notes || [], noteReactions: room.noteReactions || [], noteReplies: room.noteReplies || [], times: room.times || [], private: !!room.private, owner: room.owner })
         setEngine(eng)
         sock = sockRef.current = api.socket(id, {
           player: () => me.current,
@@ -267,11 +269,11 @@ export default function Room({ id }: RoomProps) {
               setOnline(new Set(msg.online || []))
               setSeen((s) => ({ ...s, ...msg.seen }))
             } else if (msg.type === 'time') timeBus.current?.(msg)
-            else if (msg.type === 'note' || msg.type === 'note-delete') noteBus.current?.(msg)
+            else if (msg.type === 'note' || msg.type === 'note-delete' || msg.type === 'note-react' || msg.type === 'note-reply' || msg.type === 'note-reply-delete') noteBus.current?.(msg)
             else if (msg.type === 'react') reactBus.current?.(msg)
             else if (msg.type === 'ref') eng!.remoteRef(msg.ref)
             else if (msg.type === 'ref-delete') eng!.removeRef(msg.id, true)
-            else if (msg.type === 'tray') eng!.remoteTray(msg.tray)
+            else if (msg.type === 'tray') eng!.remoteTray(msg.tray, msg.live, msg.client)
             else if (msg.type === 'tray-delete') eng!.removeTray(msg.id, true)
             else eng!.remoteMessage(msg)
           },
@@ -286,7 +288,7 @@ export default function Room({ id }: RoomProps) {
             learn(fresh.players)
             setOnline(new Set(fresh.online || []))
             setSeen(fresh.seen || {})
-            noteBus.current?.({ type: 'notes-reset', notes: fresh.notes || [] })
+            noteBus.current?.({ type: 'notes-reset', notes: fresh.notes || [], reactions: fresh.noteReactions || [], replies: fresh.noteReplies || [] })
           },
         })
         // Pieces left out of line in their group (see Engine.repair) are put right, now that it can say so.
@@ -382,8 +384,8 @@ export default function Room({ id }: RoomProps) {
     return () => window.removeEventListener('keydown', key)
   }, [engine])
 
-  // The toolbar: all jigsaws and settings on the top left, the play tools at the top middle in three
-  // bars side by side, and the players on the top right.
+  // The toolbar: all jigsaws and settings on the top left, the play tools at the top middle in one
+  // bar, in three groups split by lines, and the players on the top right.
   const nav = (
     <>
       <button className="icon-btn" onClick={() => setDialog('rooms')} aria-label="All jigsaws" data-tip="All jigsaws">
@@ -395,44 +397,40 @@ export default function Room({ id }: RoomProps) {
   )
   const play = engine && (
     <>
-      <div className="float">
-        <button className="icon-btn" onClick={() => engine.undo()} disabled={!hist.undo} aria-label="Undo" aria-keyshortcuts="Control+Z Meta+Z" data-tip="Undo" data-key={`${MOD}Z`}>
-          <Undo />
-        </button>
-        <button className="icon-btn" onClick={() => engine.redo()} disabled={!hist.redo} aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" data-tip="Redo" data-key={`${MOD}${REDO_KEY}`}>
-          <Redo />
-        </button>
-      </div>
-      <div className="float">
-        <button
-          className={`icon-btn view-btn${panMode ? ' on' : ''}`}
-          onClick={() => setPanMode((v) => !v)}
-          aria-pressed={panMode}
-          aria-label="View mode"
-          aria-keyshortcuts="V"
-          data-tip={panMode ? 'View mode on: dragging moves the table' : 'View mode: drag to move the table'}
-          data-key="V"
-        >
-          <Hand />
-          <KeyHint k="V" />
-        </button>
-        <Reactions engine={engine} busRef={reactBus} hint={<KeyHint k="R" />} />
-      </div>
-      <div className="float">
-        <TrayButton engine={engine} hint={<KeyHint k="T" />} />
-        <button
-          className="icon-btn"
-          onClick={() => engine.addRef()}
-          aria-label="Reference image"
-          aria-keyshortcuts="I"
-          data-tip="Add the reference image to the board"
-          data-key="I"
-        >
-          <Picture />
-          <KeyHint k="I" />
-        </button>
-        <NoteButton createRef={createNote} hint={<KeyHint k="N" />} />
-      </div>
+      <button className="icon-btn" onClick={() => engine.undo()} disabled={!hist.undo} aria-label="Undo" aria-keyshortcuts="Control+Z Meta+Z" data-tip="Undo" data-key={`${MOD}Z`}>
+        <Undo />
+      </button>
+      <button className="icon-btn" onClick={() => engine.redo()} disabled={!hist.redo} aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" data-tip="Redo" data-key={`${MOD}${REDO_KEY}`}>
+        <Redo />
+      </button>
+      <span className="bar-sep" />
+      <button
+        className={`icon-btn view-btn${panMode ? ' on' : ''}`}
+        onClick={() => setPanMode((v) => !v)}
+        aria-pressed={panMode}
+        aria-label="View mode"
+        aria-keyshortcuts="V"
+        data-tip={panMode ? 'View mode on: dragging moves the table' : 'View mode: drag to move the table'}
+        data-key="V"
+      >
+        <Hand />
+        <KeyHint k="V" />
+      </button>
+      <Reactions engine={engine} busRef={reactBus} hint={<KeyHint k="R" />} />
+      <span className="bar-sep" />
+      <TrayButton engine={engine} hint={<KeyHint k="T" />} />
+      <button
+        className="icon-btn"
+        onClick={() => engine.addRef()}
+        aria-label="Reference image"
+        aria-keyshortcuts="I"
+        data-tip="Add the reference image to the board"
+        data-key="I"
+      >
+        <Picture />
+        <KeyHint k="I" />
+      </button>
+      <NoteButton createRef={createNote} hint={<KeyHint k="N" />} />
     </>
   )
   return (
@@ -460,6 +458,8 @@ export default function Room({ id }: RoomProps) {
           me={playerId}
           nameOf={nameOf}
           initial={data!.notes}
+          initialReactions={data!.noteReactions}
+          initialReplies={data!.noteReplies}
           busRef={noteBus}
           ensureName={ensureName}
           requireName={requireName}
@@ -468,7 +468,7 @@ export default function Room({ id }: RoomProps) {
       )}
       <canvas ref={cursors} className="cursors" />
       <div className="float tl">{nav}</div>
-      {play && <div className="play-tools tc">{play}</div>}
+      {play && <div className="float play-tools tc">{play}</div>}
       {engine && (
         <div className="tr">
           <Players stats={stats} times={times} me={playerId} owner={data?.owner} nameOf={nameOf} online={online} seen={seen} openRef={openPlayers} onAccount={openAccount} />

@@ -1108,7 +1108,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   padding: 0 16px;
   text-align: center;
 }
-/* Trays and what lies in them, drawn above the notes. */
+/* Trays and what lies in them, under the notes (see .notes). */
 .room canvas.gpu.top {
   z-index: 4;
 }
@@ -1170,19 +1170,18 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 /* ---- header stats & notes ---- */
 
-/* The play tools at the top middle: three bars side by side. */
-.tc {
-  position: absolute;
+/* The play tools at the top middle: one bar, its groups split by lines. */
+.float.tc {
   top: 16px;
   left: 50%;
-  z-index: 5;
-  display: flex;
-  gap: 8px;
+  align-items: center;
   transform: translateX(-50%);
 }
-.tc > .float {
-  position: static;
-  align-items: center;
+.bar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 6px 4px;
+  background: var(--line);
 }
 .stat {
   display: inline-flex;
@@ -1304,7 +1303,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 3;
+  /* Over the trays and the pieces in them (canvas.gpu.top, which comes before this in the page). */
+  z-index: 4;
   width: 0;
   height: 0;
   transform-origin: 0 0;
@@ -1323,12 +1323,18 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
-  border: calc(var(--u) * 0.02) solid var(--line);
+  /* --edge: the colour of the tray the note is stuck to, if it is. */
+  border: calc(var(--u) * 0.02) solid var(--edge, var(--line));
   border-radius: calc(var(--u) * 0.16);
-  background: var(--bg);
+  /* On a tray, the tray's see-through fill over the table, like the tray itself. */
+  background: color-mix(in srgb, var(--edge, var(--bg)) 16%, var(--bg));
   color: var(--fg);
   font-size: calc(var(--u) * 0.26);
-  box-shadow: 0 calc(var(--u) * 0.06) calc(var(--u) * 0.24) rgba(0, 0, 0, 0.18);
+  /* --up: how far the tray the note is stuck to is lifted while it's moved (0 to 1), which deepens the
+     note's shadow with it (see follow() in Notes.tsx). */
+  --drop: 0 calc(var(--u) * (0.06 + 0.3 * var(--up, 0))) calc(var(--u) * (0.24 + 0.5 * var(--up, 0)))
+    rgba(0, 0, 0, calc(0.18 + 0.12 * var(--up, 0)));
+  box-shadow: var(--drop);
   pointer-events: auto;
 }
 .note.sel,
@@ -1336,10 +1342,17 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   border-color: var(--sel);
   box-shadow:
     0 0 0 calc(var(--u) * 0.03) var(--sel),
-    0 calc(var(--u) * 0.06) calc(var(--u) * 0.24) rgba(0, 0, 0, 0.18);
+    var(--drop);
 }
 .note.marked {
   --sel: var(--mark);
+}
+/* Stuck to a tray that's selected: outlined with it (see follow() in Notes.tsx). */
+.note[data-lit]:not(.sel, .marked) {
+  border-color: var(--lit);
+  box-shadow:
+    0 0 0 calc(var(--u) * 0.03) var(--lit),
+    var(--drop);
 }
 /* Three dots that open the note's menu, shown on hover or while the note is selected, like a tray's. */
 .note-menu {
@@ -1380,6 +1393,132 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   background: linear-gradient(var(--hover), var(--hover)) var(--bg);
   color: var(--fg);
 }
+/* Reactions in the note under its text (see Notes.tsx): the ones given always, all of them on hover or
+   while selected. Pulled left so the emoji line up with the text. */
+.note-reacts {
+  display: flex;
+  gap: calc(var(--u) * 0.02);
+  margin-left: calc(var(--u) * -0.06);
+}
+.note-react {
+  display: none;
+  align-items: center;
+  gap: calc(var(--u) * 0.05);
+  height: calc(var(--u) * 0.32);
+  margin-top: calc(var(--u) * 0.06);
+  padding: 0 calc(var(--u) * 0.06);
+  border: 0;
+  border-radius: calc(var(--u) * 0.1);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: calc(var(--u) * 0.2);
+  line-height: 1;
+  cursor: pointer;
+  /* Grows in and out like the note's menu button, taking its place in the row only while shown. */
+  opacity: 0;
+  transform: scale(0.75);
+  transition:
+    opacity 0.15s,
+    transform 0.15s,
+    background 0.15s,
+    display 0.15s allow-discrete;
+}
+.note-react.used,
+.note:hover .note-react,
+.note.sel .note-react {
+  display: inline-flex;
+  opacity: 1;
+  transform: none;
+}
+@starting-style {
+  .note:hover .note-react:not(.used),
+  .note.sel .note-react:not(.used) {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+}
+.note-react:not(.used) span {
+  opacity: 0.55;
+}
+.note-react:hover {
+  background: var(--hover);
+}
+.note-react:hover span {
+  opacity: 1;
+}
+.note-react.mine {
+  background: color-mix(in srgb, var(--sel) 16%, transparent);
+}
+.note-react.mine:hover {
+  background: color-mix(in srgb, var(--sel) 24%, transparent);
+}
+.note-react b {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.note-react svg {
+  width: calc(var(--u) * 0.22);
+  height: calc(var(--u) * 0.22);
+  color: var(--muted);
+}
+.note-react:hover svg {
+  color: var(--fg);
+}
+/* Replies under the note's text, each signed, with a line above (see Notes.tsx). */
+.note-reply {
+  position: relative;
+  margin-top: calc(var(--u) * 0.08);
+  padding-top: calc(var(--u) * 0.08);
+  border-top: calc(var(--u) * 0.02) solid var(--line);
+}
+.note-reply b {
+  display: block;
+  margin-bottom: calc(var(--u) * 0.02);
+  color: var(--muted);
+  font-size: calc(var(--u) * 0.18);
+  font-weight: 600;
+}
+.note-reply span {
+  display: block;
+  padding-right: calc(var(--u) * 0.3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.4;
+  /* Lines never wrap, like the note's own text: the note grows wider instead. */
+  white-space: pre;
+}
+/* Takes back your own reply, shown while it's hovered. */
+.note-reply-delete {
+  position: absolute;
+  top: calc(var(--u) * 0.08);
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--u) * 0.26);
+  height: calc(var(--u) * 0.26);
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--u) * 0.08);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.note-reply:hover .note-reply-delete {
+  opacity: 1;
+}
+.note-reply-delete:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+.note-reply-delete svg {
+  width: calc(var(--u) * 0.18);
+  height: calc(var(--u) * 0.18);
+}
 .note textarea {
   display: block;
   width: 100%;
@@ -1415,6 +1554,13 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   -webkit-user-select: text;
   user-select: text;
 }
+/* The reply being written: always takes clicks, unlike the note's text, which waits for a double click. */
+.note textarea.note-reply-field {
+  cursor: text;
+  pointer-events: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
 .note-ghost {
   position: fixed;
   top: -20px;
@@ -1445,7 +1591,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   pointer-events: none;
 }
 @media (max-width: 640px) {
-  .tc {
+  .float.tc {
     top: 68px;
   }
   .float.dev-menu {
