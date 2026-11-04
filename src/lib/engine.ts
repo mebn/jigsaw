@@ -1,6 +1,6 @@
 // Imperative canvas engine: rendering (with WebGPU, see gpu.ts), camera, dragging, rotation and snapping.
 import { buildPuzzle, outlinePath, pack, packExtent, scatter, unitCells } from './geometry.ts'
-import { MIPS, shapeOutline, spriteShape, spriteSize } from './sprites.ts'
+import { mipLevels, shapeOutline, spriteShape, spriteSize } from './sprites.ts'
 import { createGpu, PIECE_FLOATS, REF_FLOATS, TRAY_FLOATS } from './gpu.ts'
 import type { Box, PuzzleGeometry, PuzzleSpec } from './geometry.ts'
 import type { ShapePixels, SpriteJob, SpriteReply } from './sprites.ts'
@@ -1020,7 +1020,7 @@ export class Engine {
   // later go there as they come, see setSprite().
   async startGpu(): Promise<void> {
     const [spw, sph] = spriteSize(this.geo, this.margin, this.spriteScale)
-    const gpu = await createGpu(this.gpuEl, this.gpuTop, { cells: this.n, spw, sph, levels: MIPS + 1 })
+    const gpu = await createGpu(this.gpuEl, this.gpuTop, { cells: this.n, spw, sph, levels: mipLevels([spw, sph]) })
     if (this.raf === -1) return gpu.destroy()
     this.gpu = gpu
     // Per frame: the pieces' instances (still, active, lifted, then the outlined ones again), trays and images.
@@ -1076,7 +1076,7 @@ export class Engine {
     return out
   }
 
-  // A piece's shape ({ w, h, data }), sent to the GPU, or kept until it's there.
+  // A piece's shape (every mip level of it, see spriteShape()), sent to the GPU, or kept until it's there.
   setSprite(i: number, lv: ShapePixels) {
     if (!this.sprites[i]) this.built++
     this.sprites[i] = lv
@@ -1627,7 +1627,7 @@ export class Engine {
         items.push({ i, ...o })
         transfer.push(o.pts.buffer, o.codes.buffer)
       }
-      worker.postMessage({ job, size, sc: this.spriteScale, items }, transfer)
+      worker.postMessage({ job, size, sc: this.spriteScale, levels: mipLevels(size), items }, transfer)
     })
   }
 
@@ -1646,8 +1646,8 @@ export class Engine {
     while (this.buildAt < this.n && performance.now() < until) {
       const i = this.buildAt++
       if (this.sprites[i]) continue
-      const data = spriteShape(this.shapeCtx!, this.spriteScale, shapeOutline(this.geo.pieces[i], this.geo))
-      this.setSprite(i, { w: this.shapeCtx!.canvas.width, h: this.shapeCtx!.canvas.height, data })
+      const { width, height } = this.shapeCtx!.canvas
+      this.setSprite(i, spriteShape(this.shapeCtx!, this.spriteScale, shapeOutline(this.geo.pieces[i], this.geo), mipLevels([width, height])))
     }
   }
 

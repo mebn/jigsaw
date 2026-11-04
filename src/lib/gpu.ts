@@ -4,7 +4,7 @@
 // - the table and its dot grid, worked out per pixel,
 // - trays (rounded boxes) and reference images,
 // - the pieces, one instance each, from their sprites in two texture atlases laid out alike (texture
-//   arrays of pages, every sprite in its own cell, with its halved copies in the mip levels): the
+//   arrays of pages, every sprite in its own cell, with its smaller copies in the mip levels): the
 //   picture around each piece, and its shape, which cuts the piece out with a sharp edge at any zoom
 //   (see sprites.ts),
 // - the selection and hover outlines: the pieces' silhouettes go into a mask, which is grown by the
@@ -81,7 +81,6 @@ type PipeName =
   | 'outline'
   | 'picture'
   | 'halveColor'
-  | 'halveShape'
 // Another player's outline's mask, settings and bind group (see extraMask()).
 interface ExtraMask {
   tex: GPUTexture
@@ -249,12 +248,16 @@ struct O {
   o.cell = cell;
   return o;
 }
-// How far inside the piece this pixel is, in sprite pixels (negative outside). Blending the
-// shape's distance between sprite pixels rounds the piece's corners off, by up to half a sprite
-// pixel, which shows zoomed far in as a gap where corners meet. So near a corner the distance is
-// worked out from the corner itself.
+// How far inside the piece this pixel is, in pixels of the mip level being read (negative outside;
+// each level has its own distance, see sprites.ts). Blending the shape's distance between sprite
+// pixels rounds the piece's corners off, by up to half a sprite pixel, which shows zoomed far in as
+// a gap where corners meet. So near a corner the distance is worked out from the corner itself.
 fn inside(i: O, r: f32) -> f32 {
   var d = (r - 0.5) * 2.0 * SDF_R;
+  // Full size sprite pixels per pixel of the level being read, near enough.
+  let px = max(length(dpdx(i.sp)), length(dpdy(i.sp)));
+  let lod = clamp(log2(max(px, 1e-4)), 0.0, f32(textureNumLevels(shapes) - 1u));
+  let unit = exp2(lod);
   for (var n = 0u; n < 4u; n++) {
     let a = corners[i.cell * 8u + n * 2u];
     let b = corners[i.cell * 8u + n * 2u + 1u];
@@ -263,7 +266,7 @@ fn inside(i: O, r: f32) -> f32 {
     if (b.z > 0.5 && far < 2.5) {
       let h = vec2f(dot(q, a.zw), dot(q, b.xy));
       let out = length(max(h, vec2f(0.0))) + min(max(h.x, h.y), 0.0);
-      d = mix(d, -out, clamp(2.5 - far, 0.0, 1.0));
+      d = mix(d, -out / unit, clamp(2.5 - far, 0.0, 1.0));
     }
   }
   return d;
@@ -457,7 +460,6 @@ class Gpu {
   declare corners: GPUBuffer
   // Which cells have their shape on the GPU (1).
   declare has: Uint8Array
-  declare stale: Map<number, [number, number]>
   declare uniform: Float32Array
   declare ubuf: GPUBuffer
   declare post: Record<PostName, GPUBuffer>
@@ -524,8 +526,6 @@ class Gpu {
     // Each piece's corners (see PIECE above), set with setCorners().
     this.corners = device.createBuffer({ size: Math.max(1, cells) * 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     this.has = new Uint8Array(cells)
-    // Per page of the shape atlas, the rows (pixels) with shapes whose halved copies are still to be made.
-    this.stale = new Map()
 
     this.uniform = new Float32Array(28)
     this.ubuf = device.createBuffer({ size: this.uniform.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
@@ -635,7 +635,7 @@ class Gpu {
         fragment: { module: mHalve, entryPoint: 'fs', targets: [{ format }] },
         primitive: { topology: 'triangle-list' },
       })
-    ;[this.pipes.picture, this.pipes.halveColor, this.pipes.halveShape] = await Promise.all([
+    ;[this.pipes.picture, this.pipes.halveColor] = await Promise.all([
       d.createRenderPipelineAsync({
         layout: 'auto',
         vertex: { module: mPicture, entryPoint: 'vs', buffers: [{ arrayStride: 8, stepMode: 'instance', attributes: [{ format: 'float32x2', offset: 0, shaderLocation: 0 }] }] },
@@ -643,7 +643,6 @@ class Gpu {
         primitive: { topology: 'triangle-list' },
       }),
       halve('rgba8unorm'),
-      halve('rg8unorm'),
     ])
     // Until an image is set, images draw from a single clear pixel.
     this.setRefImage(null)
@@ -656,14 +655,15 @@ class Gpu {
     return [(k % perRow) * cw, Math.floor(k / perRow) * ch, Math.floor(cell / perPage)]
   }
 
-  // Puts a piece's shape ({ w, h, data }, two bytes a pixel, see sprites.ts) in its cell of the shape
-  // atlas. Its halved copies are made before the next frame.
-  upload(cell: number, { w, h, data }: ShapePixels) {
+  // Puts a piece's shape (every mip level of it, two bytes a pixel, see sprites.ts) in its cell of
+  // the shape atlas.
+  upload(cell: number, shape: ShapePixels) {
     if (cell >= this.has.length) return
     const [x, y, z] = this.cellAt(cell)
-    this.device.queue.writeTexture({ texture: this.shapes, origin: { x, y, z } }, data, { bytesPerRow: w * 2 }, { width: w, height: h })
-    const r = this.stale.get(z)
-    this.stale.set(z, r ? [Math.min(r[0], y), Math.max(r[1], y + h)] : [y, y + h])
+    shape.forEach(({ w, h, data }, l) => {
+      if (l >= this.cell.levels) return
+      this.device.queue.writeTexture({ texture: this.shapes, mipLevel: l, origin: { x: x >> l, y: y >> l, z } }, data, { bytesPerRow: w * 2 }, { width: w, height: h })
+    })
     this.has[cell] = 1
   }
 
@@ -854,8 +854,6 @@ class Gpu {
     const refs = this.fill('refs', f.refs.data, f.refs.count * REF_FLOATS)
     const { seg } = f
     const enc = d.createCommandEncoder()
-    for (const [z, [y0, y1]] of this.stale) this.halve(enc, this.shapes, this.pipes.halveShape, z, y0, y1)
-    this.stale.clear()
     const draw = (pass: GPURenderPassEncoder, range: GpuRange) => {
       if (range[1]) pass.draw(6, range[1], 0, range[0])
     }

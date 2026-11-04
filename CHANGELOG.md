@@ -3,6 +3,7 @@
 ## 4 November 2026
 
 - The pictures in the share window now always fit inside their square, however tall or wide the jigsaw is.
+- Zoomed far out on a jigsaw with few pieces, the pieces' edges and corners now stay smooth instead of turning jagged.
 
 ## 30 October 2026
 
