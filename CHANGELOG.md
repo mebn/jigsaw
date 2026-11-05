@@ -1,5 +1,9 @@
 # Changelog
 
+## 5 November 2026
+
+- New trays now have auto sort on from the start, so pieces put in them sort themselves. Click the switch on the tray to turn it off.
+
 ## 4 November 2026
 
 - The pictures in the share window now always fit inside their square, however tall or wide the jigsaw is.

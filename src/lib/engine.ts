@@ -3876,7 +3876,7 @@ export class Engine {
       name: '',
       color,
       num,
-      auto: false,
+      auto: true,
       pieces: [],
       author: this.user || '',
     }
@@ -3891,6 +3891,8 @@ export class Engine {
     this.onTray?.(tray, false)
     // The pieces say which tray they're in now, after the tray itself.
     if (this.trayChanged.size) this.commit(new Set())
+    // New trays sort themselves, so the pieces it was made from are laid out in a grid at once.
+    this.autoSort({ into: tray })
   }
 
   selectTray(id: string | null) {
