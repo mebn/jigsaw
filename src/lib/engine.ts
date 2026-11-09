@@ -713,6 +713,9 @@ export class Engine {
   lastMarks: number
   rlift: Map<string, RemoteLift>
   trayUp: Map<string, TrayLift>
+  // The see-through picture shown while Q is held: how far it has faded in, towards what, and its
+  // centre in world units (under the pointer when Q went down).
+  ghost: { value: number; target: number; x: number; y: number } | null = null
   order: number[]
   margin: number
   radius: number
@@ -1121,9 +1124,13 @@ export class Engine {
       },
       keyup: (e) => {
         this.setShift(e)
+        if (e.key.toLowerCase() === 'q') this.showGhost(false)
         if (this.panKeys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key)) this.invalidate()
       },
-      stopPan: () => this.panKeys.clear(),
+      stopPan: () => {
+        this.panKeys.clear()
+        this.showGhost(false)
+      },
       leave: () => {
         this.showTip(null)
         this.setHighlight(null)
@@ -2167,6 +2174,11 @@ export class Engine {
       return key === 'y' || e.shiftKey ? this.redo() : this.undo()
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return
+    // Holding Q shows the whole picture faintly on the table, also while carrying pieces.
+    if (key === 'q') {
+      e.preventDefault()
+      return this.showGhost(true)
+    }
     // Arrow keys and WASD move around the table while held, also while carrying pieces.
     if (PAN_KEYS[key]) {
       e.preventDefault()
@@ -2200,6 +2212,19 @@ export class Engine {
       e.preventDefault()
       if (!e.repeat) key === 'g' ? this.sortSelection(e.shiftKey) : this.rotateSelection(1, e.shiftKey)
     }
+  }
+
+  showGhost(on: boolean) {
+    if (on && this.done) return
+    if (!on && !this.ghost) return
+    // Each press puts it under the pointer (or in the middle of the view), where it stays until let go.
+    if (on && this.ghost?.target !== 1) {
+      const [x, y] = this.pointerAt ? this.toWorld(...this.pointerAt) : [this.cam.x, this.cam.y]
+      this.ghost = { value: this.ghost?.value || 0, target: 1, x, y }
+    }
+    if (!this.ghost) return
+    this.ghost.target = on ? 1 : 0
+    this.invalidate()
   }
 
   // Groups only form through grid neighbours, so a piece is connected iff a neighbour shares its
@@ -4505,6 +4530,15 @@ export class Engine {
       } else again = true
     }
 
+    if (this.ghost) {
+      const gh = this.ghost
+      gh.value += (gh.target - gh.value) * ease(dt, gh.target ? 60 : 90)
+      if (Math.abs(gh.target - gh.value) < 0.005) {
+        gh.value = gh.target
+        if (!gh.target) this.ghost = null
+      } else again = true
+    }
+
     if (this.pops.length) again = true
 
     this.draw()
@@ -4581,7 +4615,7 @@ export class Engine {
     const traysDown = trays
     for (const t of this.trays) if (trayUp(t)) trayInto(t, trayUp(t))
 
-    this.gRefs = grow(this.gRefs, this.refs.length * REF_FLOATS)
+    this.gRefs = grow(this.gRefs, (this.refs.length + 1) * REF_FLOATS)
     let refs = 0
     for (const ref of this.refs) {
       const [w, h] = this.refSize(ref)
@@ -4590,6 +4624,16 @@ export class Engine {
       const mark = !on && markedRefs.get(ref.id)
       const rect = [sx(ref.x - w / 2), sy(ref.y - h / 2), sx(ref.x + w / 2), sy(ref.y + h / 2)]
       this.gRefs.set([...rect, ...pm(rgba(on ? this.colors.sel : mark || this.colors.dot)), (on || mark ? 3 : 1) * dpr, ref.opacity ?? 1, 0, 0, ...this.refTrim(ref)], refs++ * REF_FLOATS)
+    }
+    // The ghost picture, over the images and under the pieces, with a faint edge.
+    if (this.ghost?.value) {
+      const { x: gx, y: gy } = this.ghost
+      const [hw, hh] = [this.room.width / 2, this.room.height / 2]
+      if (gx + hw >= wx0 && gx - hw <= wx1 && gy + hh >= wy0 && gy - hh <= wy1) {
+        const a = this.ghost.value
+        const rect = [sx(gx - hw), sy(gy - hh), sx(gx + hw), sy(gy + hh)]
+        this.gRefs.set([...rect, ...pm(rgba(this.colors.dot), 0.5 * a), dpr, 0.35 * a, 0, 0, 0, 0, 1, 1], refs++ * REF_FLOATS)
+      }
     }
 
     const R = this.radius
