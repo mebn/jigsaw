@@ -1,9 +1,5 @@
 # Changelog
 
-## 9 November 2026
-
-- Hold **Q** to see the whole picture faintly on the table, centred where your pointer is when you press it and always the right way up, so you can check what a piece shows against the picture. It stays put while you hold Q; let go to hide it. It works while carrying pieces too.
-
 ## 5 November 2026
 
 - New trays now have auto sort on from the start, so pieces put in them sort themselves. Click the switch on the tray to turn it off.

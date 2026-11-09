@@ -74,7 +74,6 @@ const SECTIONS = [
       [<Combo key="ss" keys={['Shift', 'Space']} />, 'Rotate together'],
       [<Key key="g">G</Key>, 'Sort into a grid'],
       [<Combo key="sg" keys={['Shift', 'G']} />, 'Shuffle into a grid'],
-      [<Key key="gh">Hold Q</Key>, 'See the whole picture faintly'],
       [<Range key="tn" from="1" to="9" />, 'Send to tray'],
       [<Key key="rn">R</Key>, 'Rename the selected tray'],
       [<Combo key="sa" keys={[MOD, 'A']} />, 'Select all'],
