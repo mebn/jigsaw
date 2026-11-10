@@ -77,7 +77,7 @@ export default function Settings({ privateRoom = false, help = false, escTaken, 
     const key = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
       if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable]')) return
-      if (document.querySelector('.modal-bg, .context-menu, .players-menu:not(.closing), .podium, .react-pick [aria-pressed="true"]')) return
+      if (document.querySelector('.modal-bg, .context-menu, .players-menu:not(.closing), .podium, .react-pick [aria-pressed="true"], .draw-btn[aria-pressed="true"]')) return
       if (escTaken?.()) return
       // The dialog starts listening for Escape while this press is still on its way, so it ends
       // here, or the dialog would close again at once.

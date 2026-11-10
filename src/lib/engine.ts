@@ -5,6 +5,7 @@ import { createGpu, PIECE_FLOATS, REF_FLOATS, TRAY_FLOATS } from './gpu.ts'
 import type { Box, PuzzleGeometry, PuzzleSpec } from './geometry.ts'
 import type { ShapePixels, SpriteJob, SpriteReply } from './sprites.ts'
 import type { GpuOutline } from './gpu.ts'
+import { clientId } from './api.ts'
 
 // ---- types ------------------------------------------------------------------
 
@@ -193,6 +194,7 @@ export type OutMessage =
   | { type: 'cursor'; hide: true }
   | { type: 'cursor'; x: number; y: number; name: string; player: string; box?: number[] }
   | { type: 'react'; kind: string; x: number; y: number }
+  | { type: 'ink'; id: string; pts: number[]; end?: boolean }
 // The same, from another client, as they arrive: anything that isn't checked may be missing.
 export type RemoteMessage =
   | { type: 'grab'; client: string; ids?: number[]; ox?: number[]; oy?: number[]; r0?: number[]; px: number; py: number; k?: number; tray?: boolean }
@@ -200,6 +202,7 @@ export type RemoteMessage =
   | { type: 'moves'; client: string; pieces?: PieceState[]; turns?: unknown; fix?: boolean }
   | { type: 'marks'; client: string; sel?: unknown; hl?: unknown; refs?: unknown; notes?: unknown; tray?: unknown; player?: unknown }
   | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: unknown; box?: unknown; player?: unknown }
+  | { type: 'ink'; client: string; id?: unknown; pts?: unknown; end?: unknown }
   | { type: 'gone'; client: string }
 
 export interface EngineOptions {
@@ -320,6 +323,22 @@ export interface Carry {
   at?: Vec2
 }
 // The selection box being dragged out.
+// A stroke drawn in draw mode, by this player or another: its points (x, y, x, y, ... in world units),
+// colour, and when it was finished (ms, 0 while still being drawn), after which it fades away.
+export interface Stroke {
+  pts: number[]
+  color: string
+  done: number
+  // When it last grew, so one whose end never arrives (the player left) fades all the same.
+  t: number
+}
+// This player's stroke being drawn: its key in strokes, the pointer, and the points not sent yet.
+interface Inking {
+  id: string
+  pointer: number
+  unsent: number[]
+}
+
 export interface Marquee {
   pointer: number
   wx0: number
@@ -569,6 +588,14 @@ const HANDLE = 7
 const BTN_OUT = 0.44
 // A button of size tag on the top right corner (x, y) of something, standing out over its edges.
 const cornerButton = (x: number, y: number, tag: number): Rect4 => [x - tag * (1 - BTN_OUT), y - tag * BTN_OUT, x + tag * BTN_OUT, y + tag * (1 - BTN_OUT)]
+// Strokes in draw mode stay this long once finished (ms), then fade out over INK_FADE; one that
+// stops growing without being finished (its player left) counts as finished after INK_STALE.
+const INK_HOLD = 1000
+const INK_FADE = 300
+const INK_STALE = 4000
+// Points closer than this to the last one (screen pixels) are skipped.
+const INK_STEP = 2
+
 // Cursor updates are throttled to this interval (ms); idle cursors vanish after CURSOR_IDLE.
 const CURSOR_MS = 50
 // How many moves of each player can be undone.
@@ -780,6 +807,12 @@ export class Engine {
   panSince: number
   panV?: number[]
   panMode: boolean
+  // Draw mode: the left button (and a finger) draws strokes that fade away, seen by everyone.
+  drawMode: boolean
+  strokes: Map<string, Stroke>
+  ink: Inking | null
+  lastInk?: number
+  inkTimer?: number
   held: Map<number, number>
   moving: Map<number, Vec2>
   toCheck: Set<number>
@@ -1034,6 +1067,10 @@ export class Engine {
     this.panSince = 0
     // View mode: the left button (and a finger) moves the table instead of pieces or selecting.
     this.panMode = false
+    this.drawMode = false
+    // Strokes by '<client>:<id>' ('me:<id>' for this player's).
+    this.strokes = new Map()
+    this.ink = null
     this.held = new Map()
     this.moving = new Map()
     // Groups waiting to be checked for pieces out of line, see checkGroups().
@@ -1310,7 +1347,7 @@ export class Engine {
   // follows the pointer into the other.
   followPane(e: { clientX: number; pointerId?: number }) {
     if (!this.split) return
-    const held = this.drag || this.carry || this.refDrag
+    const held = this.drag || this.carry || this.refDrag || this.ink
     const own = held && e.pointerId === held.pointer
     if (this.pointers.size && !(own && this.pointers.size === 1)) return
     this.usePane(this.paneAt(e.clientX - this.rect.left))
@@ -1865,6 +1902,8 @@ export class Engine {
       }
       this.endTrim()
     }
+    // Draw mode: the left button draws.
+    if (e.button === 0 && this.drawMode && !this.panMode) return this.startInk(e.pointerId, sx, sy)
     // A tray's buttons: its auto sort switch, and its menu, opened below the button.
     if (e.button === 0 && !this.panMode) {
       const b = this.trayButtonAt(sx, sy)
@@ -2064,6 +2103,7 @@ export class Engine {
         return
       }
     }
+    if (this.ink && e.pointerId === this.ink.pointer) return this.moveInk(sx, sy)
     if (this.drag && e.pointerId === this.drag.pointer) {
       const d = this.drag
       d.sx = sx
@@ -2142,6 +2182,7 @@ export class Engine {
   onUp(e: PointerEvent) {
     this.pointers.delete(e.pointerId)
     this.touches.delete(e.pointerId)
+    if (this.ink && e.pointerId === this.ink.pointer) this.endInk()
     if (this.drag && e.pointerId === this.drag.pointer) {
       const d = this.drag
       this.drop()
@@ -2331,6 +2372,12 @@ export class Engine {
       this.canvas.style.cursor = 'crosshair'
       this.setHighlight(null)
       return this.showTip(this.trim.box ? null : { text: 'Drag over the image to pick the part to keep', sx, sy })
+    }
+    if (this.drawMode && !this.panMode) {
+      this.canvas.style.cursor = 'crosshair'
+      this.setHighlight(null)
+      this.setHovered(null)
+      return this.showTip(null)
     }
     if (this.panMode) {
       this.canvas.style.cursor = 'grab'
@@ -3404,8 +3451,119 @@ export class Engine {
 
   // ---- remote -------------------------------------------------------------
 
+  // ---- draw mode ----------------------------------------------------------
+
+  // Draw mode on or off (see drawMode).
+  setDrawMode(on: boolean) {
+    if (on === this.drawMode) return
+    this.drawMode = on
+    if (!on && this.ink) this.endInk()
+    this.canvas.style.cursor = on && !this.panMode ? 'crosshair' : this.panMode ? 'grab' : ''
+    this.setHighlight(null)
+    this.setHovered(null)
+    this.showTip(null)
+  }
+
+  startInk(pointer: number, sx: number, sy: number) {
+    const id = Math.random().toString(36).slice(2, 10)
+    const [x, y] = this.toWorld(sx, sy)
+    this.strokes.set(`me:${id}`, { pts: [x, y], color: cursorColor(this.user || clientId), done: 0, t: performance.now() })
+    this.ink = { id, pointer, unsent: [r2(x), r2(y)] }
+    this.sendInk()
+    this.invalidate()
+  }
+
+  moveInk(sx: number, sy: number) {
+    const k = this.ink!
+    const s = this.strokes.get(`me:${k.id}`)
+    if (!s) return
+    const [x, y] = this.toWorld(sx, sy)
+    const n = s.pts.length
+    if (Math.hypot(x - s.pts[n - 2], y - s.pts[n - 1]) * this.cam.z < INK_STEP) return
+    s.pts.push(x, y)
+    s.t = performance.now()
+    k.unsent.push(r2(x), r2(y))
+    this.sendInk()
+    this.invalidate()
+  }
+
+  endInk() {
+    const k = this.ink!
+    this.ink = null
+    const s = this.strokes.get(`me:${k.id}`)
+    if (s) s.done = performance.now()
+    this.sendInk(k, true)
+    this.invalidate()
+  }
+
+  // Sends the new points of this player's stroke, at most every LIVE_MS while drawing, and at the end.
+  sendInk(k = this.ink, end = false) {
+    if (!k) return
+    clearTimeout(this.inkTimer)
+    const now = performance.now()
+    if (!end && this.lastInk && now - this.lastInk < LIVE_MS) {
+      this.inkTimer = setTimeout(() => this.sendInk(), LIVE_MS - (now - this.lastInk))
+      return
+    }
+    if (!k.unsent.length && !end) return
+    this.lastInk = now
+    this.send({ type: 'ink', id: k.id, pts: k.unsent, end: end || undefined })
+    k.unsent = []
+  }
+
+  // Another player's stroke grew or was finished.
+  remoteInk(msg: Extract<RemoteMessage, { type: 'ink' }>, now: number) {
+    if (typeof msg.id !== 'string' || !msg.id) return
+    const key = `${msg.client}:${msg.id.slice(0, 16)}`
+    const pts = Array.isArray(msg.pts) ? msg.pts.filter((v): v is number => typeof v === 'number' && isFinite(v)) : []
+    let s = this.strokes.get(key)
+    if (!s) {
+      if (!pts.length) return
+      s = { pts: [], color: this.colorOf(msg.client), done: 0, t: now }
+      this.strokes.set(key, s)
+    }
+    for (let k = 0; k + 1 < pts.length && s.pts.length < 20000; k += 2) s.pts.push(pts[k], pts[k + 1])
+    s.t = now
+    if (msg.end) s.done = now
+    this.invalidate()
+  }
+
+  // How strongly a stroke shows now, 1 down to 0 as it fades.
+  inkAlpha(s: Stroke, now: number) {
+    const done = s.done || (now - s.t > INK_STALE ? s.t + INK_STALE - INK_HOLD : 0)
+    if (!done) return 1
+    return Math.max(0, Math.min(1, 1 - (now - done - INK_HOLD) / INK_FADE))
+  }
+
+  // Draws the strokes on ctx for a view of vw by vh with camera cam, as wide at any zoom.
+  paintInk(ctx: CanvasRenderingContext2D, cam: Cam, vw: number, vh: number) {
+    const now = performance.now()
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, 0)
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = 4
+    for (const s of this.strokes.values()) {
+      const a = this.inkAlpha(s, now)
+      if (a <= 0) continue
+      ctx.globalAlpha = a
+      ctx.strokeStyle = s.color
+      ctx.beginPath()
+      for (let k = 0; k < s.pts.length; k += 2) {
+        const x = (s.pts[k] - cam.x) * cam.z + vw / 2
+        const y = (s.pts[k + 1] - cam.y) * cam.z + vh / 2
+        if (k) ctx.lineTo(x, y)
+        else ctx.moveTo(x, y)
+      }
+      // A single point shows as a dot.
+      if (s.pts.length === 2) ctx.lineTo((s.pts[0] - cam.x) * cam.z + vw / 2 + 0.01, (s.pts[1] - cam.y) * cam.z + vh / 2)
+      ctx.stroke()
+    }
+    ctx.globalAlpha = 1
+  }
+
   remoteMessage(msg: RemoteMessage) {
     const now = performance.now()
+    if (msg.type === 'ink') return this.remoteInk(msg, now)
     if (msg.type === 'grab') {
       const n = msg.ids?.length
       if (!n || msg.ox?.length !== n || msg.oy?.length !== n || msg.r0?.length !== n) return
@@ -4623,6 +4781,10 @@ export class Engine {
     }
 
     if (this.pops.length) again = true
+    for (const [key, s] of this.strokes) {
+      if (this.inkAlpha(s, now) <= 0) this.strokes.delete(key)
+      else again = true
+    }
 
     this.draw()
     if (again) this.invalidate()
@@ -5243,13 +5405,14 @@ export class Engine {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.clearRect(0, 0, this.overlay!.width, this.overlay!.height)
     }
-    this.cursorsDrawn = this.cursors.size > 0 || this.trays.length > 0 || this.refs.length > 0
+    this.cursorsDrawn = this.cursors.size > 0 || this.trays.length > 0 || this.refs.length > 0 || this.strokes.size > 0
     this.stepButtons()
   }
 
   drawCursors(mine: boolean) {
     const ctx = this.octx
     if (!ctx) return
+    if (this.strokes.size) this.paintInk(ctx, this.cam, this.vw, this.vh)
     this.drawRefButtons()
     this.drawTrayTags(mine)
     if (!this.cursors.size) return

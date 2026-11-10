@@ -240,6 +240,13 @@ export const Split = (p: IconProps) => (
   </Svg>
 )
 
+export const Pencil = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5Z" />
+    <path d="M13.5 7l3 3" />
+  </Svg>
+)
+
 export const Wrench = (p: IconProps) => (
   <Svg {...p}>
     <path d="M14.7 6.3a4 4 0 0 0 5 5L21 10a5.5 5.5 0 0 1-7.4 6.6L7.5 22.7a2.1 2.1 0 0 1-3-3l6.1-6.1A5.5 5.5 0 0 1 17.2 6l-2.5 2.5z" />

@@ -5,6 +5,7 @@ import { Engine, warmSprites } from '../lib/engine.ts'
 import { navigate, store, useApp } from '../App.tsx'
 import {
   Hand,
+  Pencil,
   Split,
   Picture,
   Redo,
@@ -173,6 +174,8 @@ export default function Room({ id }: RoomProps) {
   // Split screen: the table twice, side by side, to carry pieces between two far apart places.
   const [split, setSplit] = useState(() => store.get('split') === '1')
   const splitSet = useRef(false)
+  // Draw mode: dragging draws strokes that fade away after a few seconds, for everyone to see.
+  const [drawMode, setDrawMode] = useState(false)
   const [hist, setHist] = useState({ undo: false, redo: false })
   const [menu, setMenu] = useState<MenuAt | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
@@ -345,6 +348,18 @@ export default function Room({ id }: RoomProps) {
   }, [engine, panMode])
 
   useEffect(() => {
+    engine?.setDrawMode(drawMode)
+  }, [engine, drawMode])
+
+  // Escape stops drawing.
+  useEffect(() => {
+    if (!drawMode) return
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setDrawMode(false)
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [drawMode])
+
+  useEffect(() => {
     store.set('split', split ? '1' : '0')
     if (!engine) return
     // On loading, the right pane's view comes back as it was.
@@ -382,6 +397,7 @@ export default function Room({ id }: RoomProps) {
       if (k === 'h') openSettings.current?.('help')
       else if (k === 'v') setPanMode((v) => !v)
       else if (k === 'x') setSplit((v) => !v)
+      else if (k === 'e') setDrawMode((v) => !v)
       else if (k === 'n') createNote.current?.(over ? over[0] + engine.ox + r.left : null, over ? over[1] + r.top : null)
       else if (k === 't') (over ? engine.addTray(...over) : engine.addTray())
       else if (k === 'i') (over ? engine.addRef(...over) : engine.addRef())
@@ -440,6 +456,18 @@ export default function Room({ id }: RoomProps) {
       >
         <Split />
         <KeyHint k="X" />
+      </button>
+      <button
+        className={`icon-btn draw-btn${drawMode ? ' on' : ''}`}
+        onClick={() => setDrawMode((v) => !v)}
+        aria-pressed={drawMode}
+        aria-label="Draw"
+        aria-keyshortcuts="E"
+        data-tip={drawMode ? 'Draw on: drag to draw, it fades away after a few seconds' : 'Draw: lines that fade away'}
+        data-key="E"
+      >
+        <Pencil />
+        <KeyHint k="E" />
       </button>
       <Reactions engine={engine} busRef={reactBus} hint={<KeyHint k="R" />} />
       <span className="bar-sep" />

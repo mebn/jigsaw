@@ -240,6 +240,7 @@ export type RoomMessage =
   | { type: 'ref-delete'; client: string; id: string }
   | { type: 'tray-delete'; client: string; id: string }
   | { type: 'react'; client: string; kind: string; x: number; y: number }
+  | { type: 'ink'; client: string; id?: unknown; pts?: unknown; end?: unknown }
   | { type: 'deleted'; client?: undefined }
   | { type: 'gone'; client: string }
   | { type: 'moves'; client: string; pieces: PieceMove[]; turns?: Turn[]; fix?: true }

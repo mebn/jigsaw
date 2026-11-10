@@ -92,6 +92,7 @@ const SECTIONS = [
       [<Key key="p">P</Key>, 'All players'],
       [<Key key="v">V</Key>, 'View mode'],
       [<Key key="x">X</Key>, 'Split screen'],
+      [<Key key="e">E</Key>, 'Draw (fades away)'],
       [<Key key="h">H</Key>, 'How to play'],
       [<Either key="z" keys={['+', '-']} />, 'Zoom'],
       [<Key key="c">C</Key>, 'Fit to screen'],

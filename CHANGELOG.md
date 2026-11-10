@@ -2,6 +2,7 @@
 
 ## 10 November 2026
 
+- **Draw**: press `E` or the pencil in the toolbar, then drag on the table to draw in your colour, to point something out to the others. Each line fades away moments after you draw it. Press `E` or `Esc` to stop drawing.
 - **Split screen**: press `X` or the split button in the toolbar to see the table twice, side by side. Move and zoom each half on its own, then drag pieces straight from one half into the other to carry them across the table. Notes show in the left half only.
 
 ## 5 November 2026

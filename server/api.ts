@@ -221,6 +221,9 @@ interface ClientMessage {
   // A reaction on a note going on or off ("note-react"), and a reply's text ("note-reply").
   on?: unknown
   text?: string
+  // A stroke in draw mode ("ink"): its new points, and whether it's finished.
+  pts?: unknown
+  end?: unknown
 }
 interface Body {
   name?: string
@@ -781,6 +784,10 @@ function createApi(dbFile: string) {
         broadcast(roomId, { type: 'moves', client, pieces: m.pieces, turns, fix: m.fix ? true : undefined }, ws)
       } else if (m.type === 'grab' || m.type === 'live' || m.type === 'cursor' || m.type === 'marks') {
         broadcast(roomId, { ...m, client }, ws)
+      } else if (m.type === 'ink') {
+        // A stroke in draw mode, growing or finished. Not stored: it fades away on every screen.
+        const pts = Array.isArray(m.pts) ? m.pts.slice(0, 2000).filter((v) => typeof v === 'number' && isFinite(v)) : []
+        broadcast(roomId, { type: 'ink', client, id: String(m.id || '').slice(0, 16), pts, end: m.end ? true : undefined }, ws)
       } else if (m.type === 'react' && isFinite(m.x) && isFinite(m.y)) {
         broadcast(roomId, { type: 'react', client, kind: String(m.kind || '').slice(0, 16), x: +m.x, y: +m.y }, ws)
       } else if (m.type === 'note-react' && ws.player && isNoteReaction(m.kind)) {
