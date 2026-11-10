@@ -809,11 +809,14 @@ export class Engine {
   // pointer is over is the active one: this.cam is its camera, this.vw and this.vh its size and
   // (this.ox, this.oy) its top left corner on the canvas (CSS pixels), and screen positions (sx, sy)
   // are within it. cams holds every pane's camera (the active one's as of the last switch, see
-  // usePane()). A carried piece follows the pointer across.
+  // usePane()). A carried piece follows the pointer across. kept: the other panes' cameras by pane
+  // number as they were when last shown, so they come back when split screen is turned on again or
+  // the layout changes.
   layout: SplitLayout
   panes: PaneRect[]
   pane: number
   cams: Cam[]
+  kept: Cam[]
   ox: number
   oy: number
   // The active pane's size in device pixels.
@@ -1077,6 +1080,7 @@ export class Engine {
     this.panes = [{ x: 0, y: 0, w: 1, h: 1, dx: 0, dy: 0, dw: 1, dh: 1 }]
     this.pane = 0
     this.cams = [this.cam]
+    this.kept = []
     this.ox = 0
     this.oy = 0
     this.pw = 1
@@ -1332,19 +1336,25 @@ export class Engine {
     return this.layout > 1
   }
 
-  // Sets how the screen is cut into panes (1: not at all, see PANE_LAYOUTS). Each pane then shows
-  // what was at its top left corner before, at the same zoom, so the view stays in place where it
-  // can; restore: (when the page loads) the other panes' cameras as they were last time, if saved.
-  setLayout(layout: SplitLayout, restore = false) {
+  // Sets how the screen is cut into panes (1: not at all, see PANE_LAYOUTS). The first pane then
+  // shows what was at its top left corner before, at the same zoom. The others show where they were
+  // when last shown (see kept, also from the last visit), centred there; failing that, like the first.
+  setLayout(layout: SplitLayout) {
     if (layout === this.layout) return
     this.camAnim = null
     this.usePane(0)
     this.cams[0] = this.cam
+    for (let k = 1; k < this.panes.length; k++) {
+      this.kept[k] = this.cams[k]
+      try {
+        localStorage.setItem(this.camKey(k), JSON.stringify(this.cams[k]))
+      } catch {}
+    }
     const old = this.panes.map((p, k) => ({ ...p, cam: this.cams[k] }))
     this.layout = layout
     this.resize()
     this.cams = this.panes.map((p, k) => {
-      const saved = restore && k > 0 && this.loadCam(k)
+      const saved = k > 0 && (this.kept[k] || this.loadCam(k))
       if (saved) return saved
       const o = old.find((q) => p.x >= q.x - 0.5 && p.x < q.x + q.w && p.y >= q.y - 0.5 && p.y < q.y + q.h) || old[0]
       const { z } = o.cam

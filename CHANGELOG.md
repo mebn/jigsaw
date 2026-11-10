@@ -3,7 +3,7 @@
 ## 10 November 2026
 
 - **Draw**: press `E` or the pencil in the toolbar, then drag on the table to draw in your colour, to point something out to the others. Each line fades away moments after you draw it. Press `E` or `Esc` to stop drawing.
-- **Split screen**: press `X` or the split button in the toolbar to see the table twice, side by side. Move and zoom each view on its own, then drag pieces straight from one view into another to carry them across the table. Click the little arrow beside the split button (or right click it) to pick a layout: two halves, a half and two quarters, or four quarters. Notes show in the top left view only.
+- **Split screen**: press `X` or the split button in the toolbar to see the table twice, side by side. Move and zoom each view on its own, then drag pieces straight from one view into another to carry them across the table. Click the little arrow beside the split button (or right click it) to pick a layout: two halves, a half and two quarters, or four quarters. Notes show in the top left view only. The other views remember where they were, so turning split screen off and on again, or changing the layout, brings them back to the same places.
 - Right clicking the bar along the top no longer opens the browser's menu.
 - The toolbar buttons no longer show their shortcut keys in the corner. Hover a button to see its key, or find them all under How to play.
 

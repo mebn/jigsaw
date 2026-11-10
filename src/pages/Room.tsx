@@ -178,7 +178,6 @@ export default function Room({ id }: RoomProps) {
     const n = Number(store.get('splitPanes'))
     return n === 3 || n === 4 ? n : 2
   })
-  const splitSet = useRef(false)
   // Draw mode: dragging draws strokes that fade away after a few seconds, for everyone to see.
   const [drawMode, setDrawMode] = useState(false)
   const [hist, setHist] = useState({ undo: false, redo: false })
@@ -368,9 +367,7 @@ export default function Room({ id }: RoomProps) {
     store.set('split', split ? '1' : '0')
     store.set('splitPanes', String(splitPanes))
     if (!engine) return
-    // On loading, the other panes' views come back as they were.
-    engine.setLayout(split ? splitPanes : 1, !splitSet.current)
-    splitSet.current = true
+    engine.setLayout(split ? splitPanes : 1)
   }, [engine, split, splitPanes])
 
   useEffect(() => {
