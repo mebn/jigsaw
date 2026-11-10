@@ -1112,7 +1112,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .room canvas.gpu.top {
   z-index: 4;
 }
-/* Split screen: notes show in the left pane only, see the engine. */
+/* Split screen: notes show in the first pane only (top left), see the engine. */
 .notes-clip {
   display: contents;
 }
@@ -1123,6 +1123,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   display: block;
   overflow: hidden;
   pointer-events: none;
+}
+.room.split-4 .notes-clip {
+  bottom: 50%;
 }
 /* The line between the two panes, over everything on the table. */
 .split-line {
@@ -1135,6 +1138,19 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   margin-left: -1px;
   background: var(--line-strong);
   pointer-events: none;
+}
+/* The line across: under the right half with a half and two quarters, all the way with quarters. */
+.split-line.across {
+  top: 50%;
+  bottom: auto;
+  left: 50%;
+  right: 0;
+  width: auto;
+  height: 2px;
+  margin: -1px 0 0;
+}
+.room.split-4 .split-line.across {
+  left: 0;
 }
 /* Other players' cursors: above the notes and trays, below the panels. */
 .room canvas.cursors {
@@ -2224,28 +2240,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   text-align: center;
 }
 
-/* ---- shortcut hints ---- */
-
-.kbd-hint {
-  position: absolute;
-  right: 3px;
-  bottom: 2px;
-  color: var(--muted);
-  font: 600 9px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
-  pointer-events: none;
-}
-.icon-btn.on .kbd-hint,
-.stats-btn.on .kbd-hint {
-  color: inherit;
-  opacity: 0.6;
-}
-/* No keyboard to speak of on touch screens. */
-@media (hover: none) {
-  .kbd-hint {
-    display: none;
-  }
-}
-
 /* ---- settings ---- */
 
 .settings {
@@ -2896,6 +2890,48 @@ button.link:hover {
 .context-menu kbd {
   color: var(--muted);
   font: 600 11px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+/* The split screen button, with a narrow arrow beside it that opens its menu of layouts. */
+.split-btn {
+  display: inline-flex;
+}
+.icon-btn.split-arrow {
+  width: 14px;
+  margin-left: -1px;
+  color: var(--muted);
+}
+.icon-btn.split-arrow svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 0.15s;
+}
+.icon-btn.split-arrow.open {
+  background: var(--hover);
+  color: inherit;
+}
+.icon-btn.split-arrow.open svg {
+  transform: rotate(180deg);
+}
+/* The split screen button's menu of layouts, each with a picture of it. */
+.context-menu.split-menu {
+  min-width: 0;
+}
+.context-menu.split-menu button {
+  justify-content: flex-start;
+  gap: 10px;
+  white-space: nowrap;
+}
+.split-menu-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: var(--muted);
+}
+.split-menu-check {
+  width: 1em;
+  margin-left: auto;
+  padding-left: 14px;
+  color: var(--muted);
 }
 /* A tray's name and colour, or an image's opacity, at the top of its menu. */
 .context-menu .menu-look {

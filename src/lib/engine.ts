@@ -126,6 +126,27 @@ export interface View extends Cam {
   w: number
   h: number
 }
+// How the screen is cut into panes for split screen: 1, not at all; 2, in halves side by side; 3,
+// a half on the left and two quarters on the right; 4, in quarters. Each pane's [x0, y0, x1, y1] as
+// fractions of the screen, in the order they're numbered.
+export type SplitLayout = 1 | 2 | 3 | 4
+const PANE_LAYOUTS: Record<SplitLayout, [number, number, number, number][]> = {
+  1: [[0, 0, 1, 1]],
+  2: [[0, 0, 0.5, 1], [0.5, 0, 1, 1]],
+  3: [[0, 0, 0.5, 1], [0.5, 0, 1, 0.5], [0.5, 0.5, 1, 1]],
+  4: [[0, 0, 0.5, 0.5], [0.5, 0, 1, 0.5], [0, 0.5, 0.5, 1], [0.5, 0.5, 1, 1]],
+}
+// A pane on the canvas, in CSS pixels and (dx, dy, dw, dh) device pixels.
+export interface PaneRect {
+  x: number
+  y: number
+  w: number
+  h: number
+  dx: number
+  dy: number
+  dw: number
+  dh: number
+}
 // Called with the camera and view size whenever the view changes, see addView().
 export type ViewFn = (cam: Cam, vw: number, vh: number) => void
 interface CamAnim {
@@ -783,18 +804,21 @@ export class Engine {
   vw: number
   vh: number
   cam: Cam
-  // Split screen: the table shown twice side by side, each half (pane) with a camera of its own, so
-  // pieces can be carried from one part of the table to another far away. The pane the pointer is
-  // over is the active one: this.cam is its camera, this.vw its width and this.ox its left edge on the
-  // canvas (CSS pixels), and screen positions (sx, sy) are within it. cams holds both cameras (the
-  // active one's as of the last switch, see usePane()). A carried piece follows the pointer across.
-  split: boolean
+  // Split screen: the table shown two to four times (panes, see PANE_LAYOUTS), each with a camera of
+  // its own, so pieces can be carried from one part of the table to another far away. The pane the
+  // pointer is over is the active one: this.cam is its camera, this.vw and this.vh its size and
+  // (this.ox, this.oy) its top left corner on the canvas (CSS pixels), and screen positions (sx, sy)
+  // are within it. cams holds every pane's camera (the active one's as of the last switch, see
+  // usePane()). A carried piece follows the pointer across.
+  layout: SplitLayout
+  panes: PaneRect[]
   pane: number
   cams: Cam[]
   ox: number
-  // The right pane's left edge (CSS pixels), and a pane's width in device pixels.
-  ox1: number
+  oy: number
+  // The active pane's size in device pixels.
   pw: number
+  ph: number
   camAnim: CamAnim | null
   drag: Drag | null
   lift: Lift | null
@@ -1049,12 +1073,14 @@ export class Engine {
     this.vw = 1
     this.vh = 1
     this.cam = { x: mx, y: my, z: 1 }
-    this.split = false
+    this.layout = 1
+    this.panes = [{ x: 0, y: 0, w: 1, h: 1, dx: 0, dy: 0, dw: 1, dh: 1 }]
     this.pane = 0
-    this.cams = [this.cam, this.cam]
+    this.cams = [this.cam]
     this.ox = 0
-    this.ox1 = 0
+    this.oy = 0
     this.pw = 1
+    this.ph = 1
     this.camAnim = null
     this.drag = null
     this.lift = null
@@ -1267,19 +1293,25 @@ export class Engine {
   resize() {
     const rect = (this.rect = this.canvas.getBoundingClientRect())
     this.dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1)
-    const fw = Math.max(1, rect.width)
-    this.vh = Math.max(1, rect.height)
-    const cw = Math.round(fw * this.dpr)
+    const cw = Math.round(Math.max(1, rect.width) * this.dpr)
+    const ch = Math.round(Math.max(1, rect.height) * this.dpr)
     for (const c of [this.canvas, this.gpuEl, this.gpuTop, this.overlay]) {
       if (!c) continue
       c.width = cw
-      c.height = Math.round(this.vh * this.dpr)
+      c.height = ch
     }
-    // Both panes are as wide, to the device pixel, so the GPU's screen sized textures fit both.
-    this.pw = this.split ? Math.max(1, Math.floor(cw / 2)) : cw
-    this.vw = this.split ? this.pw / this.dpr : fw
-    this.ox1 = this.split ? (cw - this.pw) / this.dpr : 0
-    this.ox = this.pane ? this.ox1 : 0
+    // The panes, cut on whole device pixels.
+    const mx = Math.max(1, Math.round(cw / 2))
+    const my = Math.max(1, Math.round(ch / 2))
+    const d = this.dpr
+    this.panes = PANE_LAYOUTS[this.layout].map(([x0, y0, x1, y1]) => {
+      const dx = x0 ? mx : 0
+      const dy = y0 ? my : 0
+      const dw = Math.max(1, (x1 < 1 ? mx : cw) - dx)
+      const dh = Math.max(1, (y1 < 1 ? my : ch) - dy)
+      return { x: dx / d, y: dy / d, w: dw / d, h: dh / d, dx, dy, dw, dh }
+    })
+    this.placePane()
     this.dirty = true
     this.invalidate()
   }
@@ -1296,30 +1328,34 @@ export class Engine {
 
   // ---- camera -------------------------------------------------------------
 
-  // Turns split screen on or off. Turned on, the view is cut in two down the middle, each half
-  // showing what it showed before; restore: (when the page loads) the right pane's camera as it was
-  // last time, if saved. Turned off, the left pane's camera widens to the whole screen, keeping it in
-  // place on the left.
-  setSplit(on: boolean, restore = false) {
-    if (on === this.split) return
+  get split() {
+    return this.layout > 1
+  }
+
+  // Sets how the screen is cut into panes (1: not at all, see PANE_LAYOUTS). Each pane then shows
+  // what was at its top left corner before, at the same zoom, so the view stays in place where it
+  // can; restore: (when the page loads) the other panes' cameras as they were last time, if saved.
+  setLayout(layout: SplitLayout, restore = false) {
+    if (layout === this.layout) return
     this.camAnim = null
     this.usePane(0)
-    const z = this.cam.z
-    if (on) {
-      const shift = this.vw / 4 / z
-      const saved = restore && this.loadCam(1)
-      this.cams[1] = saved || { x: this.cam.x + shift, y: this.cam.y, z }
-      if (!saved) this.cam = this.cams[0] = { x: this.cam.x - shift, y: this.cam.y, z }
-    }
-    this.split = on
-    const half = this.vw
+    this.cams[0] = this.cam
+    const old = this.panes.map((p, k) => ({ ...p, cam: this.cams[k] }))
+    this.layout = layout
     this.resize()
-    if (!on) this.cam = this.cams[0] = { x: this.cam.x + (this.vw - half) / 2 / z, y: this.cam.y, z }
-    this.clampCam()
-    if (on) {
-      this.usePane(1)
+    this.cams = this.panes.map((p, k) => {
+      const saved = restore && k > 0 && this.loadCam(k)
+      if (saved) return saved
+      const o = old.find((q) => p.x >= q.x - 0.5 && p.x < q.x + q.w && p.y >= q.y - 0.5 && p.y < q.y + q.h) || old[0]
+      const { z } = o.cam
+      const wx = (p.x - o.x - o.w / 2) / z + o.cam.x
+      const wy = (p.y - o.y - o.h / 2) / z + o.cam.y
+      return { x: wx + p.w / 2 / z, y: wy + p.h / 2 / z, z }
+    })
+    this.pane = -1
+    for (let k = this.panes.length - 1; k >= 0; k--) {
+      this.usePane(k)
       this.clampCam()
-      this.usePane(0)
     }
     this.showTip(null)
     this.setHighlight(null)
@@ -1327,48 +1363,64 @@ export class Engine {
     this.invalidate()
   }
 
-  // Makes pane k (0: left, 1: right) the active one, see split.
+  // Makes pane k the active one, see split.
   usePane(k: number) {
-    if (!this.split) k = 0
+    if (k >= this.panes.length) k = 0
     if (k === this.pane) return
-    this.cams[this.pane] = this.cam
+    if (this.pane >= 0) this.cams[this.pane] = this.cam
     this.pane = k
     this.cam = this.cams[k]
-    this.ox = k ? this.ox1 : 0
+    this.placePane()
   }
 
-  // The pane at x on the canvas (CSS pixels).
-  paneAt(x: number) {
-    return this.split && x >= this.ox1 ? 1 : 0
+  // The active pane's place and size, see split.
+  placePane() {
+    const p = this.panes[this.pane] || this.panes[0]
+    this.ox = p.x
+    this.oy = p.y
+    this.vw = p.w
+    this.vh = p.h
+    this.pw = p.dw
+    this.ph = p.dh
+  }
+
+  // The pane at (x, y) on the canvas (CSS pixels).
+  paneAt(x: number, y: number) {
+    for (let k = this.panes.length - 1; k > 0; k--) {
+      const p = this.panes[k]
+      if (x >= p.x && y >= p.y) return k
+    }
+    return 0
   }
 
   // The pane under the pointer becomes the active one, unless it's busy elsewhere: moving the table,
   // drawing a selection box, and the like stay in the pane they started in, while what's carried
   // follows the pointer into the other.
-  followPane(e: { clientX: number; pointerId?: number }) {
+  followPane(e: { clientX: number; clientY: number; pointerId?: number }) {
     if (!this.split) return
     const held = this.drag || this.carry || this.refDrag || this.ink
     const own = held && e.pointerId === held.pointer
     if (this.pointers.size && !(own && this.pointers.size === 1)) return
-    this.usePane(this.paneAt(e.clientX - this.rect.left))
+    this.usePane(this.paneAt(e.clientX - this.rect.left, e.clientY - this.rect.top))
   }
 
   // The world point at (x, y) on the canvas (CSS pixels), in whichever pane that is.
   worldAt(x: number, y: number): Vec2 {
-    const k = this.paneAt(x)
+    const k = this.paneAt(x, y)
+    const p = this.panes[k]
     const cam = k === this.pane ? this.cam : this.cams[k]
-    return [(x - (k ? this.ox1 : 0) - this.vw / 2) / cam.z + cam.x, (y - this.vh / 2) / cam.z + cam.y]
+    return [(x - p.x - p.w / 2) / cam.z + cam.x, (y - p.y - p.h / 2) / cam.z + cam.y]
   }
 
   // Where the world point (wx, wy) shows on the canvas (CSS pixels): once per pane it's in.
   spotsOf(wx: number, wy: number): Vec2[] {
     const out: Vec2[] = []
-    for (let k = 0; k < (this.split ? 2 : 1); k++) {
+    this.panes.forEach((p, k) => {
       const cam = k === this.pane ? this.cam : this.cams[k]
-      const x = (wx - cam.x) * cam.z + this.vw / 2
-      const y = (wy - cam.y) * cam.z + this.vh / 2
-      if (x >= 0 && x <= this.vw && y >= 0 && y <= this.vh) out.push([x + (k ? this.ox1 : 0), y])
-    }
+      const x = (wx - cam.x) * cam.z + p.w / 2
+      const y = (wy - cam.y) * cam.z + p.h / 2
+      if (x >= 0 && x <= p.w && y >= 0 && y <= p.h) out.push([x + p.x, y + p.y])
+    })
     return out
   }
 
@@ -1468,13 +1520,13 @@ export class Engine {
     clearTimeout(this.camTimer)
     this.camTimer = setTimeout(() => {
       try {
-        for (let k = 0; k < (this.split ? 2 : 1); k++) localStorage.setItem(this.camKey(k), JSON.stringify(k === this.pane ? this.cam : this.cams[k]))
+        for (let k = 0; k < this.panes.length; k++) localStorage.setItem(this.camKey(k), JSON.stringify(k === this.pane ? this.cam : this.cams[k]))
       } catch {}
     }, 300)
   }
 
   camKey(k: number) {
-    return `${k ? 'cam2' : 'cam'}:${this.room.id}`
+    return `${k ? `cam${k + 1}` : 'cam'}:${this.room.id}`
   }
 
   loadCam(k = 0): Cam | null {
@@ -1860,7 +1912,7 @@ export class Engine {
   // Within the active pane (see split).
   pos(e: { clientX: number; clientY: number }): Vec2 {
     const r = this.rect
-    return [e.clientX - r.left - this.ox, e.clientY - r.top]
+    return [e.clientX - r.left - this.ox, e.clientY - r.top - this.oy]
   }
 
   onDown(e: PointerEvent) {
@@ -2053,13 +2105,13 @@ export class Engine {
       if (m.kind === 'ref') this.selectRef(m.id!)
       if (m.kind === 'tray') this.selectTray(m.id!)
     }
-    this.onMenu(m.sx + this.ox, m.sy, m.kind, m.id, { rename: !!m.rename })
+    this.onMenu(m.sx + this.ox, m.sy + this.oy, m.kind, m.id, { rename: !!m.rename })
   }
 
   // The same for a note, which is not part of the canvas: at a window position.
   openNoteMenu(id: string, x: number, y: number) {
     const r = this.canvas.getBoundingClientRect()
-    this.openMenu({ kind: 'note', id, sx: x - r.left - this.ox, sy: y - r.top })
+    this.openMenu({ kind: 'note', id, sx: x - r.left - this.ox, sy: y - r.top - this.oy })
   }
 
   onMove(e: PointerEvent) {
@@ -2458,7 +2510,7 @@ export class Engine {
       return
     }
     if (el.textContent !== t.text) el.textContent = t.text
-    el.style.transform = `translate(${Math.round(t.sx + this.ox + 14)}px, ${Math.round(t.sy + 16)}px)`
+    el.style.transform = `translate(${Math.round(t.sx + this.ox + 14)}px, ${Math.round(t.sy + this.oy + 16)}px)`
     el.style.opacity = '1'
   }
 
@@ -3538,7 +3590,7 @@ export class Engine {
   // Draws the strokes on ctx for a view of vw by vh with camera cam, as wide at any zoom.
   paintInk(ctx: CanvasRenderingContext2D, cam: Cam, vw: number, vh: number) {
     const now = performance.now()
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, 0)
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, this.oy * this.dpr)
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     ctx.lineWidth = 4
@@ -4579,8 +4631,11 @@ export class Engine {
     const [sx, sy] = p
     const dir = (v: number, size: number) => (v < EDGE_PX ? -1 : v > size - EDGE_PX ? 1 : 0)
     const x = dir(sx, this.vw)
-    // Not at the line between the panes, where carried pieces cross into the other one.
-    return [this.split && x === (this.pane ? -1 : 1) ? 0 : x, dir(sy, this.vh)]
+    const y = dir(sy, this.vh)
+    // Not at the lines between the panes, where carried pieces cross into another one.
+    const inner = (v: number, o: number, size: number, full: number) => (v < 0 ? o > 0.5 : v > 0 && o + size < full - 0.5)
+    const { width, height } = this.rect
+    return [inner(x, this.ox, this.vw, width) ? 0 : x, inner(y, this.oy, this.vh, height) ? 0 : y]
   }
 
   // After the table moves under the pointer, what it holds keeps up with it.
@@ -4801,7 +4856,7 @@ export class Engine {
       this.dirty = false
     }
     this.clearOverlay()
-    for (let k = 0; k < (this.split ? 2 : 1); k++) {
+    for (let k = 0; k < this.panes.length; k++) {
       this.usePane(k)
       const { cam, vw, vh } = this
       if (k === 0) {
@@ -4822,13 +4877,13 @@ export class Engine {
         continue
       }
       // Each pane's 2D drawing stays in it.
-      const x = Math.round(this.ox * this.dpr)
+      const p = this.panes[k]
       for (const c of [ctx, this.octx]) {
         if (!c) continue
         c.save()
         c.setTransform(1, 0, 0, 1, 0, 0)
         c.beginPath()
-        c.rect(x, 0, this.pw, this.canvas.height)
+        c.rect(p.dx, p.dy, p.dw, p.dh)
         c.clip()
       }
       this.drawChrome(k === active)
@@ -5020,8 +5075,8 @@ export class Engine {
     const l = lv > 0 ? { value: lv } : null
     this.gpu!.frame({
       W: this.pw,
-      pane: this.split ? { x: pane ? this.gpuEl.width - this.pw : 0, clear: !pane } : undefined,
-      H: this.gpuEl.height,
+      H: this.ph,
+      pane: this.split ? { x: this.panes[pane].dx, y: this.panes[pane].dy, clear: !pane } : undefined,
       cam: [v.x, v.y, z],
       sprite: [this.spriteW, this.spriteH],
       bg: rgba(this.colors.bg),
@@ -5104,7 +5159,7 @@ export class Engine {
     if (sel) {
       this.dirty = true
       const [x0, y0, x1, y1] = this.refRect(sel)
-      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
       ctx.lineWidth = 1.5
       ctx.strokeStyle = this.colors.sel
       ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
@@ -5127,7 +5182,7 @@ export class Engine {
     const tb = mine && sel && this.trim?.id === sel.id && this.trimRect()
     if (tb) {
       const [x0, y0, x1, y1] = this.refRect(sel)
-      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
       ctx.beginPath()
       ctx.rect(x0, y0, x1 - x0, y1 - y0)
       ctx.rect(tb[0], tb[1], tb[2] - tb[0], tb[3] - tb[1])
@@ -5148,7 +5203,7 @@ export class Engine {
       const w = Math.abs(m.sx - m.sx0)
       const h = Math.abs(m.sy - m.sy0)
       this.dirty = true
-      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
       ctx.globalAlpha = 0.1
       ctx.fillStyle = this.colors.sel
       ctx.fillRect(x, y, w, h)
@@ -5177,7 +5232,7 @@ export class Engine {
   // Paints bursts on ctx for a view of vw by vh with camera cam.
   paintPops(ctx: CanvasRenderingContext2D, cam: Cam, vw: number, vh: number, pops: Pop[], dpr = this.dpr, scale = 1) {
     const now = performance.now()
-    ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+    ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
     ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'
     ctx.shadowBlur = 4
     ctx.strokeStyle = '#fff'
@@ -5255,7 +5310,7 @@ export class Engine {
   // Sets octx to draw at scale s around the screen point (cx, cy).
   scaleAbout(octx: CanvasRenderingContext2D, s: number, cx: number, cy: number) {
     const d = this.dpr
-    octx.setTransform(d * s, 0, 0, d * s, d * (cx * (1 - s) + this.ox), d * cy * (1 - s))
+    octx.setTransform(d * s, 0, 0, d * s, d * (cx * (1 - s) + this.ox), d * (cy * (1 - s) + this.oy))
   }
 
   // Each image's menu button: three dots on a chip in the table's colour, so it reads on any image.
@@ -5270,7 +5325,7 @@ export class Engine {
       this.drawMenuButton(b, look)
     }
     octx.globalAlpha = 1
-    octx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, 0)
+    octx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, this.oy * this.dpr)
   }
 
   // A menu button, the same on trays and images as on notes (.note-menu): three dots on a card.
@@ -5315,7 +5370,7 @@ export class Engine {
       const y = (t.y - cam.y) * cam.z + vh / 2
       if (x > vw || y > vh || x + t.w * cam.z < 0 || y + t.h * cam.z < 0) continue
       const color = TRAY_COLORS[t.color] || TRAY_COLORS.gray
-      octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+      octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
       octx.textBaseline = 'middle'
       // The number and the name, each in a tag in the tray's colour on its top left corner, standing
       // out over the edges a little like the buttons on the right.
@@ -5394,7 +5449,7 @@ export class Engine {
       this.drawMenuButton(b.menu, look)
     }
     octx.globalAlpha = 1
-    octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+    octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
   }
 
   // Once a frame, before the panes are drawn: clears the overlay, and moves the buttons along.
@@ -5421,7 +5476,7 @@ export class Engine {
 
   // Paints other players' pointers and selection boxes on ctx for a view of vw by vh with camera cam.
   paintCursors(ctx: CanvasRenderingContext2D, cam: Cam, vw: number, vh: number, dpr = this.dpr) {
-    ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
+    ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
     ctx.font = '600 11px system-ui, -apple-system, sans-serif'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'

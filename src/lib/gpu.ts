@@ -64,9 +64,10 @@ export interface GpuFrame {
   selUnder?: boolean
   hlOver?: boolean
   shadow: { color: Rgba; blur: number; ox: number; oy: number } | null
-  // Where on the canvas this frame goes, for split screen: its left edge (device pixels), and whether
-  // it clears the canvas first (the first pane does, the second draws beside it). Default: all of it.
-  pane?: { x: number; clear: boolean }
+  // Where on the canvas this frame goes, for split screen: its top left corner (device pixels), and
+  // whether it clears the canvas first (the first pane does, the others draw beside it). W and H are
+  // then the pane's size. Default: all of it.
+  pane?: { x: number; y: number; clear: boolean }
 }
 type PostName = 'blurX' | 'blurY' | 'shadow' | 'sel' | 'hl'
 type PipeName =
@@ -108,9 +109,11 @@ struct U {
   // Sprite size (pixels), sprites per row, sprites per page.
   s2: vec4f,
   bg: vec4f,
-  // The world point at the middle of the screen, device pixels per world unit, and the screen's left
-  // edge on the canvas (device pixels; not 0 for the right pane of a split screen).
+  // The world point at the middle of the screen, device pixels per world unit.
   cam: vec4f,
+  // The screen's top left corner on the canvas (device pixels; not 0 for most panes of a split
+  // screen), and the size of the screen sized textures (the mask), which hold it from their corner.
+  pane: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
@@ -326,7 +329,7 @@ struct P { a: vec4f, b: vec4f, c: vec4f }
 }
 
 fn mask(p: vec2f) -> f32 {
-  return dot(textureSampleLevel(src, samp, (p - vec2f(u.cam.w, 0.0)) / u.s0.xy, 0.0), pu.b);
+  return dot(textureSampleLevel(src, samp, (p - u.pane.xy) / u.pane.zw, 0.0), pu.b);
 }
 
 // a: colour; b: which channel of the mask; c: outline width and the cut out's growth (device pixels).
@@ -523,7 +526,7 @@ class Gpu {
     this.corners = device.createBuffer({ size: Math.max(1, cells) * 8 * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
     this.has = new Uint8Array(cells)
 
-    this.uniform = new Float32Array(20)
+    this.uniform = new Float32Array(24)
     this.ubuf = device.createBuffer({ size: this.uniform.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     // Blur (two passes), shadow and outline (selection, hover) settings.
     this.post = {} as Record<PostName, GPUBuffer>
@@ -772,7 +775,8 @@ class Gpu {
     return b
   }
 
-  // The mask and shadow textures, sized to the screen.
+  // The mask and shadow textures, sized to the canvas, so every pane of a split screen fits in them
+  // (in their top left corner).
   targets(W: number, H: number) {
     if (this.size[0] === W && this.size[1] === H) return
     this.size = [W, H]
@@ -839,14 +843,18 @@ class Gpu {
     const d = this.device
     const { W, H } = f
     if (!W || !H) return
-    this.targets(W, H)
+    const cv = this.ctx.canvas
+    const [TW, TH] = f.pane ? [Math.max(W, cv.width), Math.max(H, cv.height)] : [W, H]
+    this.targets(TW, TH)
     const U = this.uniform
     U.set([W, H, f.sprite[0], f.sprite[1], this.atlasSize[0], this.atlasSize[1], this.cell.cw, this.cell.ch])
     U.set([this.spritePx[0], this.spritePx[1], this.cell.perRow, this.cell.perPage], 8)
     U.set(premul(f.bg), 12)
     const px = f.pane?.x || 0
+    const py = f.pane?.y || 0
     const load: GPULoadOp = f.pane && !f.pane.clear ? 'load' : 'clear'
-    U.set([f.cam[0], f.cam[1], f.cam[2], px], 16)
+    U.set([f.cam[0], f.cam[1], f.cam[2], 0], 16)
+    U.set([px, py, TW, TH], 20)
     d.queue.writeBuffer(this.ubuf, 0, U)
 
     const pieces = this.fill('pieces', f.pieces.data, f.pieces.count * PIECE_FLOATS)
@@ -857,12 +865,17 @@ class Gpu {
     const draw = (pass: GPURenderPassEncoder, range: GpuRange) => {
       if (range[1]) pass.draw(6, range[1], 0, range[0])
     }
+    // A pane is drawn into the top left corner of the textures sized to the canvas, k times smaller.
+    const corner = (pass: GPURenderPassEncoder, k = 1) => {
+      if (f.pane) pass.setViewport(0, 0, W / k, H / k, 0, 1)
+    }
 
     // Silhouettes of the outlined pieces: the selection in red, the hovered piece in green.
     const sel = seg.sel[1] > 0
     const hl = seg.hl[1] > 0
     if (sel || hl) {
       const pass = enc.beginRenderPass({ colorAttachments: [{ view: this.mask.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
+      corner(pass)
       pass.setBindGroup(0, this.g0)
       pass.setBindGroup(1, this.gAtlas)
       pass.setVertexBuffer(0, pieces)
@@ -888,6 +901,7 @@ class Gpu {
     const masks = extras.map((e, k) => {
       const x = this.extraMask(k)
       const pass = enc.beginRenderPass({ colorAttachments: [{ view: x.tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
+      corner(pass)
       pass.setPipeline(this.pipes.maskR)
       pass.setBindGroup(0, this.g0)
       pass.setBindGroup(1, this.gAtlas)
@@ -908,9 +922,10 @@ class Gpu {
       const reach = Math.min(48, Math.ceil(sigma * 3))
       d.queue.writeBuffer(this.post.blurX, 0, new Float32Array([1, 0, sigma, reach, sw, shh, 0, 0]))
       d.queue.writeBuffer(this.post.blurY, 0, new Float32Array([0, 1, sigma, reach, sw, shh, 0, 0]))
-      d.queue.writeBuffer(this.post.shadow, 0, new Float32Array([...premul(sh.color), sh.ox + px, sh.oy, sw * SHADOW_K, shh * SHADOW_K]))
+      d.queue.writeBuffer(this.post.shadow, 0, new Float32Array([...premul(sh.color), sh.ox + px, sh.oy + py, sw * SHADOW_K, shh * SHADOW_K]))
       const target = (tex: GPUTexture): GPURenderPassDescriptor => ({ colorAttachments: [{ view: tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
       let pass = enc.beginRenderPass(target(this.shA))
+      corner(pass, SHADOW_K)
       pass.setBindGroup(0, this.g0)
       if (traysUp > 0) {
         pass.setPipeline(this.pipes.trayMask)
@@ -946,8 +961,8 @@ class Gpu {
     // Only this frame's part of the canvas.
     const clip = () => {
       if (!f.pane) return
-      pass.setViewport(px, 0, W, H, 0, 1)
-      pass.setScissorRect(px, 0, W, H)
+      pass.setViewport(px, py, W, H, 0, 1)
+      pass.setScissorRect(px, py, W, H)
     }
     clip()
     pass.setBindGroup(0, this.g0)
@@ -974,11 +989,11 @@ class Gpu {
       const x1 = Math.min(W, Math.ceil(box[2] + r + 2))
       const y1 = Math.min(H, Math.ceil(box[3] + r + 2))
       if (x1 <= x0 || y1 <= y0) return
-      pass.setScissorRect(px + x0, y0, x1 - x0, y1 - y0)
+      pass.setScissorRect(px + x0, py + y0, x1 - x0, y1 - y0)
       pass.setPipeline(this.pipes.outline)
       pass.setBindGroup(1, group)
       pass.draw(3)
-      pass.setScissorRect(px, 0, W, H)
+      pass.setScissorRect(px, py, W, H)
     }
     piecesOf(seg.still)
     pass.end()

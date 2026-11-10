@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { MouseEvent } from 'react'
 import { api } from '../lib/api.ts'
 import type { NoteReaction, NoteReply, NoteRow, RoomSocket, TimeRow } from '../lib/api.ts'
 import { Engine, warmSprites } from '../lib/engine.ts'
@@ -6,7 +7,6 @@ import { navigate, store, useApp } from '../App.tsx'
 import {
   Hand,
   Pencil,
-  Split,
   Picture,
   Redo,
   Rooms,
@@ -30,16 +30,16 @@ import type { CreateNote, NoteMessage } from '../components/Notes.tsx'
 import ContextMenu from '../components/ContextMenu.tsx'
 import type { MenuAt } from '../components/ContextMenu.tsx'
 import { TrayButton } from '../components/Trays.tsx'
+import SplitButton from '../components/SplitButton.tsx'
+import type { SplitPanes } from '../components/SplitButton.tsx'
 import ShareDialog from '../components/ShareDialog.tsx'
 import { playSnap } from '../lib/sound.ts'
 import { canFullscreen, toggleFullscreen, useNotch } from '../lib/fullscreen.ts'
 
-// A shortcut key shown in the corner of the button it belongs to.
-const KeyHint = ({ k }: { k: string }) => (
-  <span className="kbd-hint" aria-hidden="true">
-    {k}
-  </span>
-)
+// No browser menu on a right click in the bar along the top, except in a text field.
+const noMenu = (e: MouseEvent) => {
+  if (!(e.target as Element).closest('input, textarea, [contenteditable="true"]')) e.preventDefault()
+}
 
 // Undo and redo shortcuts as the platform writes them.
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform)
@@ -171,8 +171,13 @@ export default function Room({ id }: RoomProps) {
   const [gpuError, setGpuError] = useState<string | null>(null)
   // View mode: dragging with the left button (or a finger) moves the table, never pieces or notes.
   const [panMode, setPanMode] = useState(() => store.get('panMode') === '1')
-  // Split screen: the table twice, side by side, to carry pieces between two far apart places.
+  // Split screen: the table two to four times, to carry pieces between far apart places, cut up as
+  // splitPanes says (see SplitButton).
   const [split, setSplit] = useState(() => store.get('split') === '1')
+  const [splitPanes, setSplitPanes] = useState<SplitPanes>(() => {
+    const n = Number(store.get('splitPanes'))
+    return n === 3 || n === 4 ? n : 2
+  })
   const splitSet = useRef(false)
   // Draw mode: dragging draws strokes that fade away after a few seconds, for everyone to see.
   const [drawMode, setDrawMode] = useState(false)
@@ -361,11 +366,12 @@ export default function Room({ id }: RoomProps) {
 
   useEffect(() => {
     store.set('split', split ? '1' : '0')
+    store.set('splitPanes', String(splitPanes))
     if (!engine) return
-    // On loading, the right pane's view comes back as it was.
-    engine.setSplit(split, !splitSet.current)
+    // On loading, the other panes' views come back as they were.
+    engine.setLayout(split ? splitPanes : 1, !splitSet.current)
     splitSet.current = true
-  }, [engine, split])
+  }, [engine, split, splitPanes])
 
   useEffect(() => {
     if (error) navigate('/rooms')
@@ -391,14 +397,14 @@ export default function Room({ id }: RoomProps) {
       if (engine.drag || document.querySelector('.modal-bg')) return
       const r = engine.canvas.getBoundingClientRect()
       const p = engine.pointerAt
-      const el = p && document.elementFromPoint(p[0] + engine.ox + r.left, p[1] + r.top)
+      const el = p && document.elementFromPoint(p[0] + engine.ox + r.left, p[1] + engine.oy + r.top)
       const over = el && !el.closest('.float, .players') ? p : null
       const k = e.key.toLowerCase()
       if (k === 'h') openSettings.current?.('help')
       else if (k === 'v') setPanMode((v) => !v)
       else if (k === 'x') setSplit((v) => !v)
       else if (k === 'e') setDrawMode((v) => !v)
-      else if (k === 'n') createNote.current?.(over ? over[0] + engine.ox + r.left : null, over ? over[1] + r.top : null)
+      else if (k === 'n') createNote.current?.(over ? over[0] + engine.ox + r.left : null, over ? over[1] + engine.oy + r.top : null)
       else if (k === 't') (over ? engine.addTray(...over) : engine.addTray())
       else if (k === 'i') (over ? engine.addRef(...over) : engine.addRef())
       else if (k === '+' || k === '=') engine.zoomBy(1.4)
@@ -443,20 +449,17 @@ export default function Room({ id }: RoomProps) {
         data-key="V"
       >
         <Hand />
-        <KeyHint k="V" />
       </button>
-      <button
-        className={`icon-btn${split ? ' on' : ''}`}
-        onClick={() => setSplit((v) => !v)}
-        aria-pressed={split}
-        aria-label="Split screen"
-        aria-keyshortcuts="X"
-        data-tip={split ? 'Split screen on: drag pieces from one half to the other' : 'Split screen: two views of the table side by side'}
-        data-key="X"
-      >
-        <Split />
-        <KeyHint k="X" />
-      </button>
+      <SplitButton
+        on={split}
+        panes={splitPanes}
+        onToggle={() => setSplit((v) => !v)}
+        onPanes={(n) => {
+          setSplitPanes(n)
+          setSplit(true)
+        }}
+       
+      />
       <button
         className={`icon-btn draw-btn${drawMode ? ' on' : ''}`}
         onClick={() => setDrawMode((v) => !v)}
@@ -467,11 +470,10 @@ export default function Room({ id }: RoomProps) {
         data-key="E"
       >
         <Pencil />
-        <KeyHint k="E" />
       </button>
-      <Reactions engine={engine} busRef={reactBus} hint={<KeyHint k="R" />} />
+      <Reactions engine={engine} busRef={reactBus} />
       <span className="bar-sep" />
-      <TrayButton engine={engine} hint={<KeyHint k="T" />} />
+      <TrayButton engine={engine} />
       <button
         className="icon-btn"
         onClick={() => engine.addRef()}
@@ -481,14 +483,13 @@ export default function Room({ id }: RoomProps) {
         data-key="I"
       >
         <Picture />
-        <KeyHint k="I" />
       </button>
-      <NoteButton createRef={createNote} hint={<KeyHint k="N" />} />
+      <NoteButton createRef={createNote} />
     </>
   )
   return (
     <div
-      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ' split' : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}`}
+      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}`}
     >
       <canvas ref={canvas} className="board" tabIndex={0} />
       <div ref={tip} className="tip" />
@@ -505,6 +506,7 @@ export default function Room({ id }: RoomProps) {
         </div>
       )}
       {engine && split && <div className="split-line" />}
+      {engine && split && splitPanes > 2 && <div className="split-line across" />}
       {engine && (
         <div className="notes-clip">
           <NotesLayer
@@ -523,10 +525,16 @@ export default function Room({ id }: RoomProps) {
         </div>
       )}
       <canvas ref={cursors} className="cursors" />
-      <div className="float tl">{nav}</div>
-      {play && <div className="float play-tools tc">{play}</div>}
+      <div className="float tl" onContextMenu={noMenu}>
+        {nav}
+      </div>
+      {play && (
+        <div className="float play-tools tc" onContextMenu={noMenu}>
+          {play}
+        </div>
+      )}
       {engine && (
-        <div className="tr">
+        <div className="tr" onContextMenu={noMenu}>
           <Players stats={stats} times={times} me={playerId} owner={data?.owner} nameOf={nameOf} online={online} seen={seen} openRef={openPlayers} onAccount={openAccount} />
         </div>
       )}

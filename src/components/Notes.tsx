@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, ReactNode, RefObject } from 'react'
+import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, RefObject } from 'react'
 import { api } from '../lib/api.ts'
 import type { NoteReaction, NoteReactionKind, NoteReply, NoteRow, RoomMessage } from '../lib/api.ts'
 import { TRAY_COLORS } from '../lib/engine.ts'
@@ -483,9 +483,10 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
   useEffect(() => {
     createRef.current = async (clientX, clientY) => {
       const rect = engine.canvas.getBoundingClientRect()
-      // Notes show in the left pane of a split screen, so one without a place goes in its middle.
-      const sx = clientX == null ? engine.vw / 2 : clientX - rect.left
-      const sy = clientY == null ? rect.height / 2 : clientY - rect.top
+      // Notes show in the first pane of a split screen (top left), so one without a place goes in its middle.
+      const first = engine.panes[0]
+      const sx = clientX == null ? first.w / 2 : clientX - rect.left
+      const sy = clientY == null ? first.h / 2 : clientY - rect.top
       const [wx, wy] = engine.worldAt(sx, sy)
       const author = await requireName()
       if (!author) return
@@ -562,10 +563,9 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
 // Header button: drag it onto the board to drop a note there, or click to drop one in the centre.
 interface NoteButtonProps {
   createRef: RefObject<CreateNote | null>
-  hint?: ReactNode
 }
 
-export function NoteButton({ createRef, hint }: NoteButtonProps) {
+export function NoteButton({ createRef }: NoteButtonProps) {
   return (
     <PlaceButton
       onPlace={(x, y) => createRef.current?.(x, y)}
@@ -575,7 +575,6 @@ export function NoteButton({ createRef, hint }: NoteButtonProps) {
       title="Drag a note onto the board"
     >
       <NoteIcon />
-      {hint}
     </PlaceButton>
   )
 }

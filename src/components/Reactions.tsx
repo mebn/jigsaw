@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { Engine } from '../lib/engine.ts'
 import type { RoomMessage } from '../lib/api.ts'
@@ -49,10 +49,9 @@ export type ReactMessage = Extract<RoomMessage, { type: 'react' }>
 interface ReactionsProps {
   engine: Engine
   busRef: RefObject<((msg: ReactMessage) => void) | null>
-  hint?: ReactNode
 }
 
-export default function Reactions({ engine, busRef, hint }: ReactionsProps) {
+export default function Reactions({ engine, busRef }: ReactionsProps) {
   const [on, setOn] = useState(false)
   const layer = useRef<HTMLDivElement>(null)
   const host = engine.canvas.parentElement!
@@ -94,7 +93,7 @@ export default function Reactions({ engine, busRef, hint }: ReactionsProps) {
       if (e.target !== c || e.button !== 0 || !e.isPrimary || stop) return
       e.stopPropagation()
       e.preventDefault()
-      // On the canvas, across both panes of a split screen.
+      // On the canvas, across all the panes of a split screen.
       const at = (ev: PointerEvent) => [ev.clientX - engine.rect.left, ev.clientY - engine.rect.top]
       let [sx, sy] = at(e)
       const move = (ev: PointerEvent) => {
@@ -141,7 +140,6 @@ export default function Reactions({ engine, busRef, hint }: ReactionsProps) {
         data-key="R"
       >
         <span className="react-emoji">{EMOJI}</span>
-        {hint}
       </button>
       {createPortal(<div ref={layer} className="reactions" />, host)}
     </span>

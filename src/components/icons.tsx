@@ -240,6 +240,22 @@ export const Split = (p: IconProps) => (
   </Svg>
 )
 
+// Split screen as a half on the left and two quarters on the right.
+export const Split3 = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M12 5v14M12 12h9" />
+  </Svg>
+)
+
+// Split screen in quarters.
+export const Split4 = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="M12 5v14M3 12h18" />
+  </Svg>
+)
+
 export const Pencil = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 0 1 3 3L8 18.5Z" />
