@@ -2,6 +2,7 @@
 
 ## 10 November 2026
 
+- **A new jigsaws page**: all jigsaws now have a page of their own, like a gallery. Jigsaws still in progress come first, each shown by its biggest group of connected pieces, and finished ones hang on the wall below as pictures, each with how long it took under it. Clicking all jigsaws zooms out of the table into the page, and clicking a jigsaw takes you straight to its table, zooming in. Private jigsaws in progress show a small lock.
 - **Draw**: press `E` or the pencil in the toolbar, then drag on the table to draw in your colour, to point something out to the others. Each line fades away moments after you draw it. Press `E` or `Esc` to stop drawing.
 - **Split screen**: press `X` or the split button in the toolbar to see the table twice, side by side. Move and zoom each view on its own, then drag pieces straight from one view into another to carry them across the table. Click the little arrow beside the split button (or right click it) to pick a layout: two halves, a half and two quarters, or four quarters. Notes show in the top left view only. The other views remember where they were, so turning split screen off and on again, or changing the layout, brings them back to the same places.
 - Right clicking the bar along the top no longer opens the browser's menu.

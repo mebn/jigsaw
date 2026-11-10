@@ -1,8 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import type { Dispatch, SetStateAction } from 'react'
-import RoomsDialog from './pages/Rooms.tsx'
+import Gallery, { GALLERY_OUT_MS } from './pages/Rooms.tsx'
 import Room from './pages/Room.tsx'
-import Settings from './components/Settings.tsx'
 import Tooltips from './components/Tooltips.tsx'
 import AccountPrompt from './components/Account.tsx'
 import { api } from './lib/api.ts'
@@ -32,8 +30,6 @@ export { store }
 export type Player = PlayerLogin
 
 export type Theme = 'light' | 'dark'
-// What the jigsaws window shows.
-export type RoomsView = 'rooms' | 'new'
 // What the sign up or log in prompt shows (see Account.tsx).
 export type AccountMode = 'name' | 'login' | 'email' | 'show' | 'returning'
 
@@ -62,7 +58,6 @@ export interface AppContext {
   logout: () => void
   switchToEmail: (email: string, password: string) => Promise<void>
   roomId: string | null
-  setDialog: Dispatch<SetStateAction<RoomsView | null>>
   openRoom: (id: string) => void
 }
 
@@ -138,11 +133,44 @@ function useTheme() {
   return [theme, toggle] as const
 }
 
+// The jigsaw a path opens, and whether it is the jigsaws page (/rooms, or /new with the new jigsaw form).
+const roomOf = (path: string) => (path.startsWith('/r/') ? path.slice(3) : null)
+const isGallery = (path: string) => path === '/rooms' || path === '/new'
+
+// How long a jigsaw stays on the screen, zooming out, as the jigsaws page comes over it (ms).
+const LEAVE_MS = 900
+// The longest the jigsaws page waits over a jigsaw that is opening, for it to be ready (ms).
+const ARRIVE_MAX_MS = 10000
+
 export default function App() {
   const path = usePath()
-  // The jigsaws window over the board: null, or which view it shows ('rooms' or 'new').
-  const [dialog, setDialog] = useState<RoomsView | null>(null)
-  const [shownDialog, dialogClosing] = useLinger(dialog)
+  const roomId = roomOf(path)
+  const onGallery = isGallery(path)
+  // Going from a jigsaw to the jigsaws page, the jigsaw stays a moment, zooming out, under it
+  // (leaving). Going from the page to a jigsaw, the page stays over it until it is ready to zoom
+  // in (arriving). Worked out as the path changes, so the jigsaw isn't unmounted in between.
+  const [leaving, setLeaving] = useState<string | null>(null)
+  const [arriving, setArriving] = useState<string | null>(null)
+  const [prevPath, setPrevPath] = useState(path)
+  if (path !== prevPath) {
+    setPrevPath(path)
+    const from = roomOf(prevPath)
+    setLeaving(onGallery && from ? from : null)
+    setArriving(roomId && isGallery(prevPath) ? roomId : null)
+  }
+  useEffect(() => {
+    if (!leaving) return
+    const t = setTimeout(() => setLeaving(null), LEAVE_MS)
+    return () => clearTimeout(t)
+  }, [leaving])
+  useEffect(() => {
+    if (!arriving) return
+    const t = setTimeout(() => setArriving(null), ARRIVE_MAX_MS)
+    return () => clearTimeout(t)
+  }, [arriving])
+  const arrived = useCallback(() => setArriving(null), [])
+  const [galleryShown, galleryClosing] = useLinger(onGallery || !!arriving, GALLERY_OUT_MS)
+  const shownRoom = roomId || leaving
   const [theme, toggleTheme] = useTheme()
   // Windows over the board keep below a MacBook's notch in fullscreen, like the room's toolbars.
   const notch = useNotch()
@@ -253,22 +281,15 @@ export default function App() {
     return false
   }, [requireName])
 
-  const roomId = path.startsWith('/r/') ? path.slice(3) : null
-
-  // /rooms and /new open the jigsaws window over the last jigsaw; any other path goes to the last jigsaw.
-  // With no jigsaw to show, the list stays open over an empty table.
+  // /rooms is the jigsaws page and /new the same with the new jigsaw form open. Any other path
+  // goes to the last jigsaw, or the jigsaws page when there isn't one.
   useEffect(() => {
-    if (roomId) return
-    if (path === '/new') setDialog('new')
-    else if (path === '/rooms' || !store.get('lastRoom')) setDialog((d) => d || 'rooms')
+    if (roomId || onGallery) return
     const last = store.get('lastRoom')
-    navigate(last ? `/r/${last}` : '/', true)
-  }, [path, roomId])
+    navigate(last ? `/r/${last}` : '/rooms', true)
+  }, [path, roomId, onGallery])
 
-  const openRoom = useCallback((id: string) => {
-    setDialog(null)
-    navigate(`/r/${id}`)
-  }, [])
+  const openRoom = useCallback((id: string) => navigate(`/r/${id}`), [])
 
   const ctx: AppContext = {
     theme,
@@ -289,30 +310,16 @@ export default function App() {
     logout,
     switchToEmail,
     roomId,
-    setDialog,
     openRoom,
   }
 
   return (
     <Ctx.Provider value={ctx}>
       <Tooltips />
-      {roomId ? (
-        <Room key={roomId} id={roomId} />
-      ) : (
-        <div className="room">
-          <div className="float tl">
-            <Settings />
-          </div>
-        </div>
+      {shownRoom && (
+        <Room key={shownRoom} id={shownRoom} leaving={!roomId} arriving={arriving === shownRoom} onArrived={arrived} />
       )}
-      {shownDialog && (
-        <RoomsDialog
-          view={shownDialog}
-          setView={setDialog}
-          closing={dialogClosing}
-          onClose={roomId ? () => setDialog(null) : null}
-        />
-      )}
+      {galleryShown && <Gallery here={onGallery} closing={galleryClosing} newOpen={path === '/new'} />}
       {prompt && (
         <AccountPrompt
           key={prompt.mode}

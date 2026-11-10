@@ -9,6 +9,9 @@
   --hover: rgba(10, 10, 10, 0.05);
   --panel: rgba(250, 250, 250, 0.96);
   --canvas: #f0f0f0;
+  /* The jigsaws page: the wall the finished pictures hang on. */
+  --wall: #f6f5f2;
+  --art-shadow: rgba(40, 30, 20, 0.28);
   --dot: rgba(0, 0, 0, 0.13);
   --shadow: rgba(0, 0, 0, 0.4);
   --sel: #2f6fed;
@@ -27,6 +30,8 @@
     --hover: rgba(245, 245, 245, 0.07);
     --panel: rgba(18, 18, 18, 0.96);
     --canvas: #131313;
+    --wall: #0c0c0c;
+    --art-shadow: rgba(0, 0, 0, 0.9);
     --dot: rgba(255, 255, 255, 0.09);
     --shadow: rgba(0, 0, 0, 0.85);
     --sel: #5b8cff;
@@ -48,6 +53,8 @@
   --hover: rgba(245, 245, 245, 0.07);
   --panel: rgba(18, 18, 18, 0.96);
   --canvas: #131313;
+  --wall: #0c0c0c;
+  --art-shadow: rgba(0, 0, 0, 0.9);
   --dot: rgba(255, 255, 255, 0.09);
   --shadow: rgba(0, 0, 0, 0.85);
   --sel: #5b8cff;
@@ -322,9 +329,6 @@ button {
   grid-area: new;
   justify-self: end;
 }
-.rooms-bar .tabs {
-  grid-area: tabs;
-}
 @media (max-width: 480px) {
   .sheet .new-btn span {
     display: none;
@@ -366,25 +370,366 @@ button {
   background: var(--hover);
   color: var(--fg);
 }
-.rooms-section + .rooms-section {
-  margin-top: 16px;
-}
-.rooms-section .label {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.rooms-section .label .n {
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
-  opacity: 0.7;
-}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 16px;
   padding: 2px;
+}
+
+/* ---- the jigsaws page (see Rooms.tsx) ---- */
+
+.gallery {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: calc(16px + var(--notch)) 0 96px;
+  background: var(--wall);
+  scrollbar-width: thin;
+  animation: gallery-in 0.55s ease 0.12s both;
+}
+@keyframes gallery-in {
+  from {
+    opacity: 0;
+  }
+}
+/* A jigsaw was clicked: the jigsaws go, and once its table is ready the page fades over it. */
+.gallery.going {
+  pointer-events: none;
+}
+.gallery.going .gallery-head,
+.gallery.going .gallery-label,
+.gallery.going .tile {
+  opacity: 0;
+  transition: opacity 0.22s ease;
+}
+.gallery.going .tile {
+  animation: none;
+}
+.gallery.closing {
+  animation: fade-out 0.45s ease forwards;
+}
+
+.gallery-head {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: 0 16px;
+  transition: opacity 0.2s;
+}
+.gallery-head .float {
+  position: static;
+  justify-self: start;
+}
+.gallery-head h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* All, public or private, under the title. */
+.gallery-tabs {
+  display: flex;
+  justify-content: center;
+  margin: 20px 16px 0;
+  transition: opacity 0.2s;
+}
+.gallery.going .gallery-tabs {
+  opacity: 0;
+}
+.gallery-actions {
+  display: flex;
+  justify-self: end;
+  align-items: center;
+  gap: 8px;
+}
+@media (max-width: 600px) {
+  .gallery-head h1 {
+    display: none;
+  }
+  .gallery-head {
+    grid-template-columns: 1fr 1fr;
+  }
+  .gallery-actions .new-btn span {
+    display: none;
+  }
+  .gallery-actions .new-btn {
+    padding: 0 10px;
+  }
+}
+
+.gallery-label {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 28px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: opacity 0.2s;
+}
+.gallery-label .n {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+
+/* In progress: each jigsaw's biggest group, straight on the wall, set out like the finished ones. */
+.gallery-table {
+  max-width: 1400px;
+  margin: 48px auto 0;
+  padding: 0 clamp(16px, 5vw, 72px);
+}
+.gallery-table .gallery-label {
+  margin-bottom: 16px;
+}
+.groups {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 28px;
+}
+@media (max-width: 600px) {
+  .groups {
+    gap: 4px 12px;
+  }
+}
+
+/* The finished pictures, on the wall. */
+.gallery-wall {
+  max-width: 1400px;
+  margin: 72px auto 0;
+  padding: 0 clamp(16px, 5vw, 72px);
+}
+.wall {
+  display: flex;
+  flex-direction: column;
+}
+.wall-row {
+  display: flex;
+  justify-content: center;
+}
+
+/* A jigsaw on the page: rises into place as the page comes in, the later ones a little later. */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--fg);
+  text-decoration: none;
+  outline: 0;
+  -webkit-tap-highlight-color: transparent;
+  animation: tile-in 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  animation-delay: calc(0.22s + var(--i, 0) * 40ms);
+}
+@keyframes tile-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px) scale(0.96);
+  }
+}
+.tile .pic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.tile:hover .pic {
+  transform: translateY(-4px);
+}
+.tile:focus-visible .pic {
+  outline: 2px solid var(--sel);
+  outline-offset: 6px;
+  border-radius: 4px;
+}
+/* A finished picture: no frame, a soft shadow on the wall, and how long it
+   took in a quiet line under it, left aligned like a label in a gallery. */
+.art-pic {
+  position: relative;
+  display: block;
+  box-shadow:
+    0 1px 2px var(--art-shadow),
+    0 22px 40px -18px var(--art-shadow);
+  transition: box-shadow 0.35s;
+}
+.tile.art:hover .art-pic {
+  box-shadow:
+    0 2px 4px var(--art-shadow),
+    0 34px 54px -20px var(--art-shadow);
+}
+.tile.art {
+  align-items: stretch;
+}
+.art-info {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s;
+}
+.tile.art:hover .art-info {
+  color: var(--fg);
+}
+.art-pic img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.art-pic img.full {
+  opacity: 0;
+  transition: opacity 0.4s;
+}
+.art-pic img.full.on {
+  opacity: 1;
+}
+
+/* A jigsaw in progress: its biggest group, cut out, with a shadow like a piece on the table, in
+   the bottom left of its box so the line under it lines up with it. */
+.tile.group {
+  align-items: stretch;
+}
+.group-pic {
+  display: grid;
+  place-items: end start;
+}
+.group-pic canvas {
+  display: block;
+  opacity: 0;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.18)) drop-shadow(0 10px 14px rgba(0, 0, 0, 0.16));
+  transition:
+    opacity 0.4s,
+    filter 0.35s;
+}
+.group-pic.drawn canvas {
+  opacity: 1;
+}
+.tile.group:hover .group-pic canvas {
+  filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.2)) drop-shadow(0 18px 22px rgba(0, 0, 0, 0.2));
+}
+.group-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.2s;
+}
+.group-info svg {
+  width: 12px;
+  height: 12px;
+}
+.tile.group:hover .group-info {
+  color: var(--fg);
+}
+.group-ghost {
+  display: block;
+  border-radius: 14px;
+  background: linear-gradient(100deg, var(--hover) 30%, color-mix(in srgb, var(--hover) 40%, var(--wall)) 50%, var(--hover) 70%) var(--hover);
+  background-size: 300% 100%;
+  animation: ghost 1.4s ease-in-out infinite;
+  animation-delay: calc(var(--i) * 0.12s);
+}
+
+/* The owner's delete button, on hover. */
+.tile .del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  opacity: 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--fg);
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+.tile.art .del {
+  top: 10px;
+  right: 10px;
+}
+.tile:hover .del,
+.tile:focus-visible .del {
+  opacity: 1;
+}
+.tile .del:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+.tile .del svg {
+  width: 16px;
+  height: 16px;
+}
+@media (hover: none) {
+  .tile .del {
+    opacity: 1;
+  }
+}
+
+.gallery-empty {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  margin-top: 22vh;
+  color: var(--muted);
+}
+.gallery-empty p {
+  margin: 0;
+  font-size: 15px;
+}
+
+/* A jigsaw going away under the jigsaws page: its controls go at once, and the table zooms out
+   (see Engine.zoomAway) and fades. */
+.room.leaving {
+  pointer-events: none;
+  animation: room-away 0.8s ease-in forwards;
+}
+.room.leaving .float,
+.room.leaving .tr,
+.room.leaving .notes-clip,
+.room.leaving .podium-btn,
+.room.leaving .share-btn {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+@keyframes room-away {
+  to {
+    opacity: 0.4;
+    transform: scale(0.94);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery,
+  .tile,
+  .room.leaving {
+    animation-duration: 0.01s;
+    animation-delay: 0s;
+  }
 }
 
 /* A jigsaw card: the picture in a frame, with a thin progress line and the numbers under it, quiet

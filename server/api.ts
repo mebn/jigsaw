@@ -64,6 +64,10 @@ type ListRow = {
   cols: number
   rows: number
   shape: string
+  seed: number
+  width: number
+  height: number
+  longPieces: number
   thumb: string
   owner: string | null
   private: number
@@ -406,7 +410,8 @@ function createApi(dbFile: string) {
 
   const q = {
     list: db.prepare(`
-      SELECT r.id, r.name, r.created, r.cols, r.rows, r.shape, r.thumb, r.owner, r.private,
+      SELECT r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
+             r.thumb, r.owner, r.private,
              CASE WHEN r.units > 0 THEN r.units ELSE COUNT(p.idx) END AS n, COUNT(DISTINCT p.g) AS groups,
              (SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_id = r.id) AS seconds
       FROM rooms r LEFT JOIN pieces p ON p.room_id = r.id
@@ -677,6 +682,16 @@ function createApi(dbFile: string) {
     for (const { idx } of cells) bits[idx >> 3] |= 1 << (idx & 7)
     q.insertSnapshot.run(roomId, now, big.size, bits)
     snapped.set(roomId, big.size)
+  }
+
+  // The cells of the room's biggest group, one bit each (bit i % 8 of byte i / 8), base64.
+  function biggestBits(roomId: string) {
+    const big = q.biggest.get(roomId)
+    if (!big) return undefined
+    const cells = q.groupCells.all(roomId, big.g)
+    const bits = Buffer.alloc(Math.ceil((Math.max(...cells.map((c) => c.idx)) + 1) / 8))
+    for (const { idx } of cells) bits[idx >> 3] |= 1 << (idx & 7)
+    return bits.toString('base64')
   }
 
   const cleanNote = (b: ItemIn) => ({
@@ -959,11 +974,16 @@ function createApi(dbFile: string) {
           // Private jigsaws are listed only for players who have opened them. Player ids are seen by
           // everyone, so the list is asked for with the passphrase.
           const who = req.headers['x-passphrase'] ? q.playerBySecret.get(hashSecret(req.headers['x-passphrase'])) : null
-          const rows = q.list.all(who?.id || '').map((r) => ({
-            ...r,
-            progress: r.n > 1 ? (r.n - r.groups) / (r.n - 1) : 0,
-            done: r.n > 0 && r.groups === 1,
-          }))
+          const rows = q.list.all(who?.id || '').map((r) => {
+            const done = r.n > 0 && r.groups === 1
+            return {
+              ...r,
+              progress: r.n > 1 ? (r.n - r.groups) / (r.n - 1) : 0,
+              done,
+              // The biggest group as a base64 bitset (as for snapshots), shown for a jigsaw in progress.
+              biggest: done ? undefined : biggestBits(r.id),
+            }
+          })
           return send(res, 200, rows)
         }
         if (req.method === 'POST') {

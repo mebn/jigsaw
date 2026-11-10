@@ -117,12 +117,17 @@ interface RoomData {
 // A player as the room learns their name: from the room, the socket or this browser.
 type Named = { id?: string | null; name?: string | null } | null | undefined
 
+// leaving: the jigsaws page is coming over it, so it zooms out. arriving: it was opened from the
+// jigsaws page, which waits over it until it is ready (onArrived), and then it zooms in.
 interface RoomProps {
   id: string
+  leaving?: boolean
+  arriving?: boolean
+  onArrived?: () => void
 }
 
-export default function Room({ id }: RoomProps) {
-  const { name, player, playerId, theme, ensureName, requireName, setDialog, devMenu } = useApp()
+export default function Room({ id, leaving = false, arriving = false, onArrived }: RoomProps) {
+  const { name, player, playerId, theme, ensureName, requireName, devMenu } = useApp()
   const me = useRef(playerId)
   me.current = playerId
   const sockRef = useRef<RoomSocket | null>(null)
@@ -157,12 +162,12 @@ export default function Room({ id }: RoomProps) {
   const [seen, setSeen] = useState<Record<string, number>>({})
   const openSettings = useRef<OpenSettings | null>(null)
   const openAccount = useCallback(() => openSettings.current?.('account'), [])
-  // How to play opens by itself the first time this player opens each jigsaw.
+  // How to play opens by itself the first time this player opens each jigsaw, once it has arrived.
   useEffect(() => {
-    if (store.get(`help:${id}`)) return
+    if (arriving || store.get(`help:${id}`)) return
     store.set(`help:${id}`, '1')
     openSettings.current?.('help')
-  }, [id])
+  }, [id, arriving])
   const onTimes = useCallback((t: Times) => setTimes(t), [])
   const notch = useNotch()
   const idle = useIdle()
@@ -374,6 +379,27 @@ export default function Room({ id }: RoomProps) {
     if (error) navigate('/rooms')
   }, [error])
 
+  // Off to the jigsaws page: the table zooms out under it.
+  useEffect(() => {
+    if (!engine || !leaving) return
+    engine.zoomAway()
+  }, [engine, leaving])
+  // Opened from the jigsaws page: once the table is ready it says so, and as the page then fades
+  // (arriving goes false) the table zooms in to all of it, centred.
+  const zoomPending = useRef(false)
+  useEffect(() => {
+    if (arriving) {
+      if (engine) {
+        zoomPending.current = true
+        onArrived?.()
+      } else if (gpuError) onArrived?.()
+      return
+    }
+    if (!engine || !zoomPending.current) return
+    zoomPending.current = false
+    engine.arrive()
+  }, [arriving, engine, gpuError, onArrived])
+
   // Other players only see our cursor while we're playing, not while a dialog is open.
   useEffect(() => {
     if (!engine) return
@@ -420,7 +446,7 @@ export default function Room({ id }: RoomProps) {
   // bar, in three groups split by lines, and the players on the top right.
   const nav = (
     <>
-      <button className="icon-btn" onClick={() => setDialog('rooms')} aria-label="All jigsaws" data-tip="All jigsaws">
+      <button className="icon-btn" onClick={() => navigate('/rooms')} aria-label="All jigsaws" data-tip="All jigsaws">
         <Rooms />
       </button>
       {engine && <Timers roomId={id} me={playerId} initial={data!.times} busRef={timeBus} stopped={done} onTimes={onTimes} />}
@@ -486,7 +512,7 @@ export default function Room({ id }: RoomProps) {
   )
   return (
     <div
-      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}`}
+      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}${leaving ? ' leaving' : ''}`}
     >
       <canvas ref={canvas} className="board" tabIndex={0} />
       <div ref={tip} className="tip" />

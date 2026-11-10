@@ -155,6 +155,8 @@ interface CamAnim {
   t0: number
   ms: number
   zoom?: boolean
+  // Leaving for the jigsaws page (see zoomAway()): the camera isn't kept in bounds or saved after.
+  away?: boolean
   // The pane whose camera moves, see split.
   pane: number
 }
@@ -1482,6 +1484,13 @@ export class Engine {
     this.invalidate()
   }
 
+  // Zooms far out, around the middle of the view, as the table goes away for the jigsaws page. The
+  // camera isn't saved, so the jigsaw opens where it was the next time.
+  zoomAway(f = 0.15, ms = 700) {
+    this.camAnim = { from: { ...this.cam }, to: { ...this.cam, z: this.cam.z * f }, t0: performance.now(), ms, pane: this.pane, away: true }
+    this.invalidate()
+  }
+
   bbox(ids: Iterable<number>, e = Math.max(this.geo.w, this.geo.h) / 2 + this.geo.pad) {
     let x0 = Infinity
     let y0 = Infinity
@@ -1496,12 +1505,17 @@ export class Engine {
     return { x0, y0, x1, y1 }
   }
 
-  frame(b: Box, fill = 0.85, animate = true) {
+  // The camera that shows box b in the middle of the view, filling fill of it.
+  framed(b: Box, fill = 0.85): Cam {
     const z = Math.min(
       this.zmax,
       Math.max(this.zmin, Math.min((this.vw * fill) / (b.x1 - b.x0), (this.vh * fill) / (b.y1 - b.y0))),
     )
-    const to = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z }
+    return { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z }
+  }
+
+  frame(b: Box, fill = 0.85, animate = true) {
+    const to = this.framed(b, fill)
     if (animate) this.camAnim = { from: { ...this.cam }, to, t0: performance.now(), ms: 550, pane: this.pane }
     else this.cam = to
     this.invalidate()
@@ -1509,6 +1523,18 @@ export class Engine {
 
   // C: frames everything on the table: pieces, trays, images and notes.
   fit(animate = true) {
+    this.frame(this.everything(), 0.82, animate)
+  }
+
+  // Arriving from the jigsaws page: zooms in from far out to everything on the table, centred.
+  arrive(f = 0.3, ms = 700) {
+    const to = this.framed(this.everything(), 0.82)
+    this.camAnim = { from: { ...to, z: to.z * f }, to, t0: performance.now(), ms, pane: this.pane }
+    this.invalidate()
+  }
+
+  // The box round everything on the table: pieces, trays, images and notes.
+  everything() {
     const b = this.bbox(this.order)
     const add = (x0: number, y0: number, x1: number, y1: number) => {
       b.x0 = Math.min(b.x0, x0)
@@ -1522,7 +1548,7 @@ export class Engine {
       add(r.x - w / 2, r.y - h / 2, r.x + w / 2, r.y + h / 2)
     }
     for (const n of this.notes?.get() || []) add(n.x, n.y, n.x + n.w, n.y + n.h)
-    this.frame(b, 0.82, animate)
+    return b
   }
 
   // Each pane's camera is saved, the right one's under a key of its own.
@@ -4693,7 +4719,7 @@ export class Engine {
       }
       if (t >= 1) {
         this.camAnim = null
-        this.clampCam()
+        if (!a.away) this.clampCam()
       } else again = true
       this.usePane(was)
       if (this.marquee) this.updateMarquee()
