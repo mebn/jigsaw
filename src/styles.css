@@ -303,40 +303,6 @@ button {
   margin: -12px -16px -20px -22px;
   padding: 12px 16px 32px 22px;
 }
-/* The image across the whole window, the settings under it. */
-.sheet .create {
-  width: 100%;
-  margin-top: 0;
-  padding-bottom: 0;
-  gap: 28px;
-  max-width: none;
-}
-@media (max-width: 760px) {
-  .sheet .create {
-    gap: 20px;
-  }
-}
-/* Under the title: the tabs in the middle, New jigsaw (or Create jigsaw) on the right. */
-.rooms-bar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  grid-template-areas: '. tabs new';
-  align-items: center;
-  gap: 12px;
-  min-height: 36px;
-}
-.rooms-bar .new-btn {
-  grid-area: new;
-  justify-self: end;
-}
-@media (max-width: 480px) {
-  .sheet .new-btn span {
-    display: none;
-  }
-  .sheet .new-btn {
-    padding: 0 10px;
-  }
-}
 .new-btn {
   height: 36px;
   padding: 0 10px 0 14px;
@@ -392,11 +358,13 @@ button {
     opacity: 0;
   }
 }
-/* A jigsaw was clicked: the jigsaws go, and once its table is ready the page fades over it. */
+/* A jigsaw was clicked: the jigsaws go, and once its table is ready the page fades over it. The
+   bar in the top left stays until then, so it fades straight into the jigsaw's own in its place. */
 .gallery.going {
   pointer-events: none;
 }
-.gallery.going .gallery-head,
+.gallery.going .gallery-actions,
+.gallery.going .gallery-head h1,
 .gallery.going .gallery-tabs,
 .gallery.going .canvas-where,
 .gallery.going .tile {
@@ -405,6 +373,11 @@ button {
 }
 .gallery.going .tile {
   animation: none;
+}
+/* Pictures and links can't be dragged off the page. */
+.gallery .tile,
+.gallery .tile img {
+  -webkit-user-drag: none;
 }
 .gallery.closing {
   animation: fade-out 0.45s ease forwards;
@@ -476,20 +449,16 @@ button {
   }
 }
 
-/* The canvas the jigsaws lie on (see Canvas in Rooms.tsx): dragged, scrolled or moved with the
-   arrow keys, up and down. */
+/* The canvas the jigsaws lie on (see Canvas in Rooms.tsx): scrolled, moved with the arrow keys or
+   dragged with a finger, up and down. */
 .canvas {
   position: absolute;
   inset: 0;
   z-index: 1;
   overflow: hidden;
-  cursor: grab;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
-}
-.canvas.dragging {
-  cursor: grabbing;
 }
 .canvas.dragging .tile {
   pointer-events: none;
@@ -615,6 +584,9 @@ button {
   text-overflow: ellipsis;
   transition: color 0.2s;
 }
+.art-info .dot {
+  opacity: 0.6;
+}
 .art-info svg {
   flex: none;
   width: 12px;
@@ -706,13 +678,14 @@ button {
   font-size: 15px;
 }
 
-/* A jigsaw going away under the jigsaws page: its controls go at once, and the table zooms out
-   (see Engine.zoomAway) and fades. */
+/* A jigsaw going away under the jigsaws page: its controls go at once, except the bar in the top
+   left, which the page's own bar fades in over in the same place, and the table zooms out (see
+   Engine.zoomAway) and fades. */
 .room.leaving {
   pointer-events: none;
   animation: room-away 0.8s ease-in forwards;
 }
-.room.leaving .float,
+.room.leaving .float:not(.tl),
 .room.leaving .tr,
 .room.leaving .notes-clip,
 .room.leaving .podium-btn,
@@ -723,7 +696,6 @@ button {
 @keyframes room-away {
   to {
     opacity: 0.4;
-    transform: scale(0.94);
   }
 }
 
@@ -914,28 +886,6 @@ button {
 
 /* ---- form controls (name + new jigsaw pages) ---- */
 
-.create {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  max-width: 600px;
-  margin: 8px auto 0;
-  padding-bottom: 48px;
-}
-.create-media,
-.create-settings {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  min-width: 0;
-}
-.create-media {
-  gap: 8px;
-}
-/* Same space under the label as in the other sections. */
-.create-media > .label {
-  margin-bottom: 2px;
-}
 .field {
   display: flex;
   flex-direction: column;
@@ -1034,8 +984,7 @@ button {
   transform: scale(0.98);
 }
 .primary:focus-visible,
-.secondary:focus-visible,
-.drop:focus-visible {
+.secondary:focus-visible {
   outline: 0;
   box-shadow: 0 0 0 4px var(--ring);
 }
@@ -1063,117 +1012,6 @@ button {
 .secondary .spin {
   width: 16px;
   height: 16px;
-}
-
-.drop {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 100%;
-  min-height: 220px;
-  overflow: hidden;
-  border: 1px dashed var(--line-strong);
-  border-radius: 12px;
-  background: var(--field);
-  color: var(--muted);
-  cursor: pointer;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
-}
-.drop:hover,
-.drop.over {
-  border-color: var(--fg);
-  color: var(--fg);
-}
-.drop.over {
-  background: var(--hover);
-}
-.drop.has {
-  min-height: 0;
-  border: 1px solid var(--line);
-  background: transparent;
-}
-.drop.has:hover {
-  border-color: var(--line-strong);
-}
-.drop-empty {
-  display: grid;
-  justify-items: center;
-  gap: 12px;
-  padding: 16px;
-  text-align: center;
-}
-.drop-hint {
-  color: var(--muted);
-  font-size: 13px;
-}
-.drop-icon {
-  display: grid;
-  place-items: center;
-  width: 56px;
-  height: 56px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--bg);
-  transition: border-color 0.15s;
-}
-.drop:hover .drop-icon {
-  border-color: var(--fg);
-}
-.drop svg.big {
-  width: 24px;
-  height: 24px;
-}
-.drop canvas {
-  display: block;
-  max-width: 100%;
-}
-.drop input {
-  display: none;
-}
-/* The remove button over the image's top right corner. */
-.drop-wrap {
-  position: relative;
-}
-.drop-clear {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #fff;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-.drop-clear:hover {
-  background: rgba(0, 0, 0, 0.7);
-}
-
-.slider {
-  gap: 16px;
-  height: 44px;
-  padding: 0 6px 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--field);
-}
-.num {
-  width: 64px;
-  min-width: 56px;
-  padding: 4px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  outline: 0;
-  background: var(--hover);
-  font-size: 13px;
-  font-weight: 500;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-input.num:hover {
-  border-color: var(--line-strong);
-}
-input.num:focus {
-  border-color: var(--fg);
-  background: transparent;
 }
 
 input[type='range'] {
@@ -1229,137 +1067,6 @@ input[type='range']:active::-webkit-slider-thumb {
 }
 input[type='range']:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 0 0 1px var(--fg), 0 0 0 5px var(--ring);
-}
-
-.pieces-row {
-  align-items: flex-end;
-  gap: 10px;
-}
-.pieces-row > .field {
-  flex: none;
-  width: auto;
-}
-.pieces-row > .field.grow {
-  flex: 1;
-  min-width: 0;
-}
-
-.pieces-row input[type='range'] {
-  min-width: 0;
-}
-/* On a phone the shape button is just the outline, so the slider keeps its room. */
-@media (max-width: 480px) {
-  .shape-btn > span {
-    display: none;
-  }
-}
-
-/* The shape dropdown next to the pieces slider. */
-.shape-picker {
-  position: relative;
-}
-.shape-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 44px;
-  padding: 0 10px 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--field);
-  color: var(--fg);
-  font: inherit;
-  font-size: 14px;
-  white-space: nowrap;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-.shape-btn:hover,
-.shape-btn.on {
-  border-color: var(--line-strong);
-}
-.shape-btn:focus-visible,
-.shape-option:focus-visible {
-  outline: 0;
-  box-shadow: 0 0 0 4px var(--ring);
-}
-.shape-btn svg,
-.shape-option svg {
-  flex: none;
-  width: 22px;
-  height: 22px;
-}
-.shape-btn svg.shape-chevron {
-  width: 16px;
-  height: 16px;
-  color: var(--muted);
-}
-.shape-menu {
-  position: fixed;
-  z-index: 5;
-  margin: 0;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px var(--shadow);
-  list-style: none;
-  animation: pop 0.14s ease;
-}
-.shape-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  height: 36px;
-  padding: 0 10px 0 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  white-space: nowrap;
-}
-.shape-option:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-.shape-option.on {
-  color: var(--fg);
-  font-weight: 500;
-}
-
-/* The options as rows in one box. */
-.options {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--field);
-}
-.options .toggle {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-.options .toggle + .toggle,
-.options > * + * {
-  border-top: 1px solid var(--line);
-}
-.options .toggle:hover {
-  background: var(--hover);
-}
-.options .toggle:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ring);
-}
-.options-invite {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px 14px;
-}
-.options-invite .invite-list {
-  background: var(--bg);
 }
 
 .toggle {
@@ -1419,6 +1126,215 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .toggle.on .toggle-knob {
   transform: translateX(16px);
+}
+
+/* ---- new jigsaw (see NewRoom.tsx) ---- */
+
+/* One column: the picture large at the top, the settings under it, Create at the bottom. */
+.modal.sheet.new-sheet {
+  width: min(820px, 100%);
+  height: auto;
+  max-height: calc(100dvh - 32px - var(--notch));
+}
+.create {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+/* The picture, or before there is one a place to drop it. Clicking it picks another. */
+.stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: 12px;
+  overflow: hidden;
+  border: 1px dashed var(--line-strong);
+  border-radius: 16px;
+  background: var(--field);
+  color: var(--muted);
+  cursor: pointer;
+  outline: 0;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.stage:hover,
+.stage.over {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.stage.over {
+  background: var(--hover);
+}
+.stage:focus-visible {
+  box-shadow: 0 0 0 4px var(--ring);
+}
+.stage {
+  height: min(66dvh, 640px);
+}
+.stage.has {
+  border: 0;
+  background: var(--canvas);
+}
+.stage-pic {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.stage-pic canvas {
+  display: block;
+  border-radius: 4px;
+  box-shadow: 0 1px 2px var(--art-shadow), 0 18px 40px -18px var(--art-shadow);
+}
+.stage-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+.stage-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--bg);
+  transition: border-color 0.15s, transform 0.2s;
+}
+.stage:hover .stage-icon {
+  border-color: var(--fg);
+  transform: translateY(-2px);
+}
+.stage-icon svg {
+  width: 24px;
+  height: 24px;
+}
+.stage-title {
+  color: var(--fg);
+  font-size: 16px;
+  font-weight: 500;
+}
+.stage-hint {
+  font-size: 13px;
+}
+.stage input {
+  display: none;
+}
+.stage-clear {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.stage-clear:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+
+/* The settings, with Create at the bottom. */
+.create-side {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.create-part {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* How many pieces: a big number to type in, the grid beside it, the slider under. */
+.count {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.count-num {
+  width: 3.4em;
+  margin: 0 0 0 -6px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.15s, background 0.15s;
+}
+.count-num:hover {
+  background: var(--hover);
+}
+.count-num:focus {
+  border-color: var(--fg);
+  background: transparent;
+}
+.count-grid {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+/* The shapes side by side, each with its outline. */
+.shapes {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+.shape {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 10px 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--field);
+  color: var(--muted);
+  font-size: 11px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.shape:hover {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+.shape.on {
+  border-color: var(--fg);
+  background: var(--bg);
+  color: var(--fg);
+  font-weight: 500;
+}
+.shape:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 4px var(--ring);
+}
+.shape svg {
+  width: 28px;
+  height: 28px;
+}
+.toggle-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.toggle-title svg {
+  width: 15px;
+  height: 15px;
+}
+.create-slot {
+  display: flex;
+}
+/* Before there's a picture: solid, just quieter, rather than see-through. */
+.create-btn:disabled {
+  opacity: 1;
+  border-color: transparent;
+  background: color-mix(in srgb, var(--fg) 9%, var(--bg));
+  color: color-mix(in srgb, var(--fg) 40%, var(--bg));
 }
 
 /* ---- room ---- */

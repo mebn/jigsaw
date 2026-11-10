@@ -37,6 +37,8 @@ export interface RoomSummary {
   // Share of the pieces connected, 0 to 1.
   progress: number
   done: boolean
+  // When it was finished (ms since epoch), or 0 when not known.
+  finished: number
 }
 
 // A jigsaw a player has played (api.player()): pieces is how many they connected, time how long they

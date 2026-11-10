@@ -74,6 +74,7 @@ type ListRow = {
   n: number
   groups: number
   seconds: number
+  finished: number
 }
 type PlayerRoomRow = {
   id: string
@@ -413,7 +414,11 @@ function createApi(dbFile: string) {
       SELECT r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
              r.thumb, r.owner, r.private,
              CASE WHEN r.units > 0 THEN r.units ELSE COUNT(p.idx) END AS n, COUNT(DISTINCT p.g) AS groups,
-             (SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_id = r.id) AS seconds
+             (SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_id = r.id) AS seconds,
+             -- When a finished jigsaw was finished: its last snapshot (the biggest group last grew,
+             -- to the whole picture), or for one finished before snapshots, when someone was last in it.
+             COALESCE((SELECT MAX(s.t) FROM snapshots s WHERE s.room_id = r.id),
+                      (SELECT MAX(t.seen) FROM times t WHERE t.room_id = r.id), 0) AS finished
       FROM rooms r LEFT JOIN pieces p ON p.room_id = r.id
       WHERE r.private = 0 OR r.id IN (SELECT room_id FROM room_players WHERE player_id = ?)
       GROUP BY r.id ORDER BY r.created DESC`) as Stmt<ListRow>,

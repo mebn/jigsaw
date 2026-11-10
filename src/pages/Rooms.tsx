@@ -112,6 +112,9 @@ const TABS: { key: TabKey; title: string; hint: string; test: (r: RoomSummary) =
   { key: 'private', title: 'Private', hint: 'Private jigsaws', test: (r) => !!r.private },
 ]
 
+// When a jigsaw was finished, for the line under its picture: "4 Nov 2026".
+const finishedOn = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+
 // How long a jigsaw took, for the line under its picture: "45 min", "3 h 12 min".
 function took(seconds: number) {
   const m = Math.round(seconds / 60)
@@ -125,8 +128,8 @@ function Art({ r, w, h }: { r: RoomSummary; w: number; h: number }) {
   const [full, setFull] = useState(false)
   return (
     <span className="art-pic" style={{ width: w, height: h }}>
-      <img src={r.thumb} alt="" />
-      <img className={`full${full ? ' on' : ''}`} src={api.imageUrl(r.id)} alt="" loading="lazy" decoding="async" onLoad={() => setFull(true)} />
+      <img src={r.thumb} alt="" draggable={false} />
+      <img className={`full${full ? ' on' : ''}`} src={api.imageUrl(r.id)} alt="" draggable={false} loading="lazy" decoding="async" onLoad={() => setFull(true)} />
     </span>
   )
 }
@@ -166,6 +169,7 @@ function Tile({ r, i, kind, mine, onPick, onDelete, children, below }: TileProps
     <a
       className={`tile ${kind}`}
       href={`/r/${r.id}`}
+      draggable={false}
       style={{ '--i': Math.min(i, 14) } as CSSProperties}
       onClick={(e) => onPick(e, r.id)}
       onPointerMove={tilt}
@@ -192,8 +196,8 @@ function Tile({ r, i, kind, mine, onPick, onDelete, children, below }: TileProps
   )
 }
 
-// The canvas: dragged (with a little glide after), scrolled or moved with the arrow keys, up and
-// down only, and not zoomed. The jigsaws are in the middle across, and when they don't fit on the
+// The canvas: scrolled, moved with the arrow keys, or on a touch screen dragged with a finger (with
+// a little glide after), up and down only, and not zoomed. The mouse doesn't drag it. The jigsaws are in the middle across, and when they don't fit on the
 // screen they can be moved until a gap past their top or bottom reaches the screen's.
 // render(r, w, h) makes the jigsaw for each place.
 function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; gap: number; render: (p: Placed) => ReactNode }) {
@@ -291,7 +295,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
     let dragged = false
     let glide = 0
     const pointerdown = (e: PointerEvent) => {
-      if (e.button || (e.target as Element).closest('button')) return
+      if (e.pointerType === 'mouse' || e.button || (e.target as Element).closest('button')) return
       cancelAnimationFrame(glide)
       cam.current.vy = 0
       down = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), moved: false }
@@ -415,10 +419,12 @@ interface GalleryProps {
 }
 
 export default function Gallery({ here, closing, newOpen }: GalleryProps) {
-  const { roomId, openRoom, player, playerId, openLogin } = useApp()
+  const { openRoom, player, playerId, openLogin } = useApp()
   const [rooms, setRooms] = useState<RoomSummary[] | null>(null)
   const small = useSmall()
-  const last = store.get('lastRoom')
+  // The jigsaw to go back to, as it was when the page opened: it stays while the page fades over a
+  // jigsaw that is opening, so the bar in the top left doesn't change before it goes.
+  const [last, setLast] = useState(() => store.get('lastRoom'))
   // Which jigsaws show, kept in this browser.
   const [tab, setTabState] = useState(() =>
     TABS.some((t) => t.key === store.get('roomsTab')) ? (store.get('roomsTab') as TabKey) : 'all',
@@ -459,13 +465,14 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
       return load()
     }
     if (store.get('lastRoom') === room.id) store.set('lastRoom', null)
+    if (last === room.id) setLast(null)
     load()
   }
 
   const closeNew = useCallback(() => navigate('/rooms'), [])
   const [newShown, newClosing] = useLinger(newOpen)
-  // The bar under the new jigsaw form's title, where it puts its Create button (see NewRoom).
-  const [bar, setBar] = useState<HTMLDivElement | null>(null)
+  // Where in the new jigsaw window's header its Create button goes (see NewRoom).
+  const [createSlot, setCreateSlot] = useState<HTMLDivElement | null>(null)
 
   const progress = rooms?.filter((r) => shown(r) && !r.done) || []
   const finished = rooms?.filter((r) => shown(r) && r.done) || []
@@ -482,8 +489,14 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
       onDelete={setDoomed}
       below={
         p.r.done ? (
-          <span className="art-info" title="Time it took">
-            {took(p.r.seconds)}
+          <span className="art-info">
+            <span title="Time it took">{took(p.r.seconds)}</span>
+            {p.r.finished > 0 && (
+              <>
+                <span className="dot" aria-hidden="true">·</span>
+                <span title="Finished on">{finishedOn(p.r.finished)}</span>
+              </>
+            )}
           </span>
         ) : (
           <span className="art-info" title="Pieces connected">
@@ -500,7 +513,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
     <div className={`gallery${!here ? ' going' : ''}${closing ? ' closing' : ''}`}>
       <header className="gallery-head">
         <div className="float">
-          {last && last !== roomId && (
+          {last && (
             <button className="icon-btn" onClick={() => openRoom(last)} aria-label="Back to the jigsaw" data-tip="Back to the jigsaw">
               <Back />
             </button>
@@ -546,14 +559,14 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
       {newShown && (
         <Dialog
           title="New jigsaw"
-          className="sheet"
+          className="sheet new-sheet"
           bg="sheet-bg"
           onClose={closeNew}
           closing={newClosing}
           keepTyping
-          bar={<div className="rooms-bar" ref={setBar} />}
+          actions={<div className="create-slot" ref={setCreateSlot} />}
         >
-          <NewRoom bar={bar} />
+          <NewRoom slot={createSlot} />
         </Dialog>
       )}
       {doomed && (

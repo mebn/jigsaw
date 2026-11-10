@@ -1,11 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, Dispatch, SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api.ts'
-import { SHAPES, buildPuzzle, gridFor, longPaths, outlinePath, samplePiecePath, scatter } from '../lib/geometry.ts'
+import { SHAPES, buildPuzzle, gridFor, outlinePath, samplePiecePath, scatter } from '../lib/geometry.ts'
 import { useApp } from '../App.tsx'
-import { Arrow, Chevron, Close, Upload } from '../components/icons.tsx'
-import InviteList from '../components/Invite.tsx'
+import { Arrow, Close, Lock, Upload } from '../components/icons.tsx'
 
 type Shape = (typeof SHAPES)[number]
 
@@ -58,107 +57,17 @@ function ShapeIcon({ shape }: { shape: Shape }) {
 
 const shapeName = (s: string) => s[0].toUpperCase() + s.slice(1)
 
-// A dropdown of piece shapes, each shown with its outline. The list floats over the window
-// (position: fixed), so opening it doesn't grow or scroll the form around it. It opens below the
-// button, or above when there's no room, and follows the button when the form scrolls.
-// Picking a shape leaves it open, so shapes can be tried one after another on the preview.
-function ShapePicker({ value, onChange }: { value: Shape; onChange: (shape: Shape) => void }) {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState<CSSProperties | null>(null)
-  const wrap = useRef<HTMLDivElement>(null)
-  const btn = useRef<HTMLButtonElement>(null)
-  const menu = useRef<HTMLUListElement>(null)
-
-  useLayoutEffect(() => {
-    if (!open) return setPos(null)
-    const place = () => {
-      const b = btn.current!.getBoundingClientRect()
-      const h = menu.current!.offsetHeight
-      const below = window.innerHeight - b.bottom - 6 >= h + 8 || b.top < h + 14
-      setPos({ top: below ? b.bottom + 6 : b.top - 6 - h, right: window.innerWidth - b.right, minWidth: b.width })
-    }
-    place()
-    menu.current!.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true })
-    window.addEventListener('resize', place)
-    window.addEventListener('scroll', place, true)
-    return () => {
-      window.removeEventListener('resize', place)
-      window.removeEventListener('scroll', place, true)
-    }
-  }, [open])
-
-  // Close on a press anywhere else, or Escape (which then leaves the window open).
-  useEffect(() => {
-    if (!open) return
-    const away = (e: PointerEvent) => !wrap.current?.contains(e.target as Node) && setOpen(false)
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopImmediatePropagation()
-      setOpen(false)
-    }
-    window.addEventListener('pointerdown', away, true)
-    window.addEventListener('keydown', key, true)
-    return () => {
-      window.removeEventListener('pointerdown', away, true)
-      window.removeEventListener('keydown', key, true)
-    }
-  }, [open])
-
-  return (
-    <div className="shape-picker" ref={wrap}>
-      <button
-        ref={btn}
-        type="button"
-        className={`shape-btn${open ? ' on' : ''}`}
-        onClick={() => setOpen((o) => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={`Shape: ${shapeName(value)}`}
-      >
-        <ShapeIcon shape={value} />
-        <span>{shapeName(value)}</span>
-        <Chevron className="shape-chevron" />
-      </button>
-      {open && (
-        <ul
-          ref={menu}
-          className="shape-menu"
-          role="listbox"
-          aria-label="Shape"
-          style={pos || { top: 0, left: -9999 }}
-        >
-          {SHAPES.map((s) => (
-            <li key={s}>
-              <button
-                type="button"
-                className={`shape-option${s === value ? ' on' : ''}`}
-                role="option"
-                aria-selected={s === value}
-                onClick={() => onChange(s)}
-              >
-                <ShapeIcon shape={s} />
-                <span>{shapeName(s)}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
-// The image with the cuts drawn over it, as wide as its box but at most 70% of the window's height
-// (a tall image is centred in the box). Drawn again when the box or the window changes size.
+// The image with the cuts drawn over it, as big as fits its box, in the middle of it. Drawn again
+// when the box changes size.
 interface PreviewProps {
   img: HTMLImageElement
   cols: number
   rows: number
   shape: Shape
   seed: number
-  longPieces: boolean
 }
 
-function Preview({ img, cols, rows, shape, seed, longPieces }: PreviewProps) {
+function Preview({ img, cols, rows, shape, seed }: PreviewProps) {
   const ref = useRef<HTMLCanvasElement>(null)
   const paint = (c: HTMLCanvasElement, width: number, height: number) => {
     const k = Math.min(width / img.naturalWidth, height / img.naturalHeight)
@@ -172,13 +81,12 @@ function Preview({ img, cols, rows, shape, seed, longPieces }: PreviewProps) {
     const ctx = c.getContext('2d')!
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.drawImage(img, 0, 0, w, h)
-    const geo = buildPuzzle({ cols, rows, width: w, height: h, shape, seed, longPieces })
+    const geo = buildPuzzle({ cols, rows, width: w, height: h, shape, seed })
     ctx.lineWidth = 1
     ctx.lineJoin = 'round'
     for (const p of geo.pieces) {
+      const path = outlinePath(p.outline)
       ctx.setTransform(dpr, 0, 0, dpr, p.cx * dpr, p.cy * dpr)
-      // A long piece's cells only draw their cut sides.
-      const path = longPaths(p, 0)?.rim || outlinePath(p.outline)
       ctx.strokeStyle = 'rgba(0,0,0,.45)'
       ctx.stroke(path)
       ctx.setTransform(dpr, 0, 0, dpr, (p.cx + 0.6) * dpr, (p.cy + 0.6) * dpr)
@@ -192,26 +100,23 @@ function Preview({ img, cols, rows, shape, seed, longPieces }: PreviewProps) {
     let size = ''
     const draw = () => {
       const width = box.clientWidth
-      const height = Math.max(240, Math.round(window.innerHeight * 0.7))
+      const height = Math.max(200, box.clientHeight)
       if (!width || `${width}x${height}` === size) return
       size = `${width}x${height}`
       paint(c, width, height)
     }
     const watch = new ResizeObserver(draw)
     watch.observe(box)
-    window.addEventListener('resize', draw)
     draw()
-    return () => {
-      watch.disconnect()
-      window.removeEventListener('resize', draw)
-    }
-  }, [img, cols, rows, shape, seed, longPieces])
+    return () => watch.disconnect()
+  }, [img, cols, rows, shape, seed])
   return <canvas ref={ref} />
 }
 
-// The new jigsaw form, shown inside the jigsaws window: the image at the top, its settings under
-// it, and the Create button in the window's bar (where New jigsaw was).
-export default function NewRoom({ bar }: { bar: HTMLElement | null }) {
+// The new jigsaw form, in a window over the jigsaws page, in one column: the image large at the
+// top, and under it the settings: how many pieces, their shape and whether it's private. The
+// Create button goes in slot, in the window's header.
+export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
   const { requireName, currentPlayer, openRoom } = useApp()
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   // Pieces asked for, by slider or typed. The jigsaw gets the closest grid to it.
@@ -219,10 +124,7 @@ export default function NewRoom({ bar }: { bar: HTMLElement | null }) {
   // What's in the number field while typing; null shows the actual piece count.
   const [typed, setTyped] = useState<string | null>(null)
   const [shape, setShape] = useState<Shape>('classic')
-  const [longPieces, setLongPieces] = useState(false)
   const [hidden, setHidden] = useState(false)
-  // Players to email the private jigsaw's link to, by id.
-  const [invited, setInvited] = useState(() => new Set<string>())
   const [over, setOver] = useState(false)
   const [busy, setBusy] = useState(false)
   const [seed] = useState(() => (Math.random() * 2 ** 31) | 0)
@@ -266,14 +168,14 @@ export default function NewRoom({ bar }: { bar: HTMLElement | null }) {
     try {
       const full = encode(img, maxSide(grid.cols, grid.rows), 0.9)
       const thumb = encode(img, 480, 0.8)
-      const room = { cols: grid.cols, rows: grid.rows, width: full.width, height: full.height, shape, seed, longPieces }
+      const room = { cols: grid.cols, rows: grid.rows, width: full.width, height: full.height, shape, seed, longPieces: false }
       const { id } = await api.create({
         ...room,
         name: 'Jigsaw',
         image: full.data,
         thumb: thumb.data,
         private: hidden,
-        invite: hidden ? [...invited] : [],
+        invite: [],
         pieces: scatter(room),
         passphrase: currentPlayer()?.passphrase,
       })
@@ -283,130 +185,136 @@ export default function NewRoom({ bar }: { bar: HTMLElement | null }) {
     }
   }
 
-  // A switch row in the options box.
-  const option = (on: boolean, set: Dispatch<SetStateAction<boolean>>, label: string, hint: string) => (
-    <button className={`toggle${on ? ' on' : ''}`} role="switch" aria-checked={on} onClick={() => set((v) => !v)} title={label}>
-      <span className="toggle-text">
-        <span>{label}</span>
-        <span className="toggle-hint">{hint}</span>
-      </span>
-      <span className="toggle-track" aria-hidden="true">
-        <span className="toggle-knob" />
-      </span>
-    </button>
-  )
-
   return (
     <section className="create">
-      <div className="create-media">
-        <h2 className="label">Image</h2>
-        <div className="drop-wrap">
-          <div
-            className={`drop${over ? ' over' : ''}${img ? ' has' : ''}`}
-            onClick={() => input.current!.click()}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && input.current!.click()}
-            role="button"
-            tabIndex={0}
-            title={img ? 'Change image (or paste one)' : 'Upload, drop or paste an image'}
-            onDragOver={(e) => {
-              e.preventDefault()
-              setOver(true)
-            }}
-            onDragLeave={() => setOver(false)}
-            onDrop={(e) => {
-              e.preventDefault()
-              setOver(false)
-              pick(e.dataTransfer.files[0])
-            }}
-          >
-            {img ? (
-              <Preview img={img} {...grid} shape={shape} seed={seed} longPieces={longPieces} />
-            ) : (
-              <span className="drop-empty">
-                <span className="drop-icon">
-                  <Upload className="big" />
-                </span>
-                <span className="drop-hint">Click to upload, drop an image here, or just paste one</span>
-              </span>
-            )}
-            <input ref={input} type="file" accept="image/*" onChange={(e) => pick(e.target.files![0])} />
+      <div
+        className={`stage${over ? ' over' : ''}${img ? ' has' : ''}`}
+        onClick={() => input.current!.click()}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && input.current!.click()}
+        role="button"
+        tabIndex={0}
+        title={img ? 'Change image (or paste one)' : 'Upload, drop or paste an image'}
+        onDragOver={(e) => {
+          e.preventDefault()
+          setOver(true)
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setOver(false)
+          pick(e.dataTransfer.files[0])
+        }}
+      >
+        {img ? (
+          <div className="stage-pic">
+            <Preview img={img} {...grid} shape={shape} seed={seed} />
           </div>
-          {img && (
-            <button type="button" className="icon-btn drop-clear" onClick={clear} aria-label="Remove image" title="Remove image">
-              <Close />
-            </button>
-          )}
-        </div>
+        ) : (
+          <span className="stage-empty">
+            <span className="stage-icon">
+              <Upload />
+            </span>
+            <span className="stage-title">Choose a picture</span>
+            <span className="stage-hint">Click, drop one here, or paste it</span>
+          </span>
+        )}
+        <input ref={input} type="file" accept="image/*" onChange={(e) => pick(e.target.files![0])} />
+        {img && (
+          <button
+            type="button"
+            className="icon-btn stage-clear"
+            onClick={(e) => {
+              e.stopPropagation()
+              clear()
+            }}
+            aria-label="Remove image"
+            title="Remove image"
+          >
+            <Close />
+          </button>
+        )}
       </div>
 
-      <div className="create-settings">
-        <div className="row pieces-row">
-          <section className="field grow">
-            <h2 className="label">Pieces</h2>
-            <div className="row slider">
-              <input
-                type="range"
-                style={{ '--p': `${slider}%` } as CSSProperties}
-                min="0"
-                max="100"
-                value={slider}
-                onChange={(e) => {
-                  setCount(toCount(+e.target.value))
-                  setTyped(null)
-                }}
-                aria-label="Pieces"
-                title="Number of pieces"
-              />
-              <input
-                className="num"
-                type="text"
-                inputMode="numeric"
-                value={typed ?? grid.cols * grid.rows}
-                onChange={(e) => {
-                  const v = e.target.value.replace(/\D/g, '').slice(0, 4)
-                  setTyped(v)
-                  if (+v >= MIN) setCount(clampCount(+v))
-                }}
-                onFocus={(e) => e.target.select()}
-                onBlur={() => {
-                  if (typed && +typed) setCount(clampCount(+typed))
-                  setTyped(null)
-                }}
-                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                aria-label="Number of pieces"
-                title={`Type a number of pieces, ${MIN} to ${MAX}`}
-              />
-            </div>
-          </section>
-          <section className="field">
-            <h2 className="label">Shape</h2>
-            <ShapePicker value={shape} onChange={setShape} />
-          </section>
-        </div>
+      <div className="create-side">
+        <section className="create-part">
+          <h2 className="label">Pieces</h2>
+          <div className="count">
+            <input
+              className="count-num"
+              type="text"
+              inputMode="numeric"
+              value={typed ?? grid.cols * grid.rows}
+              onChange={(e) => {
+                const v = e.target.value.replace(/\D/g, '').slice(0, 4)
+                setTyped(v)
+                if (+v >= MIN) setCount(clampCount(+v))
+              }}
+              onFocus={(e) => e.target.select()}
+              onBlur={() => {
+                if (typed && +typed) setCount(clampCount(+typed))
+                setTyped(null)
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              aria-label="Number of pieces"
+              title={`Type a number of pieces, ${MIN} to ${MAX}`}
+            />
+            <span className="count-grid" title="Columns by rows">
+              {grid.cols} × {grid.rows}
+            </span>
+          </div>
+          <input
+            type="range"
+            style={{ '--p': `${slider}%` } as CSSProperties}
+            min="0"
+            max="100"
+            value={slider}
+            onChange={(e) => {
+              setCount(toCount(+e.target.value))
+              setTyped(null)
+            }}
+            aria-label="Pieces"
+            title="Number of pieces"
+          />
+        </section>
 
-        <section className="field">
-          <h2 className="label">Options</h2>
-          <div className="options">
-            {option(longPieces, setLongPieces, 'Big pieces', 'Some pieces are two to five in one: long, L, T and other shapes.')}
-            {option(hidden, setHidden, 'Private room', 'Only people with the link can join.')}
-            {hidden && (
-              <div className="options-invite">
-                <h3 className="label">Invite players</h3>
-                <InviteList selected={invited} onChange={setInvited} />
-              </div>
-            )}
+        <section className="create-part">
+          <h2 className="label">Shape</h2>
+          <div className="shapes" role="radiogroup" aria-label="Shape">
+            {SHAPES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`shape${s === shape ? ' on' : ''}`}
+                role="radio"
+                aria-checked={s === shape}
+                onClick={() => setShape(s)}
+                title={shapeName(s)}
+              >
+                <ShapeIcon shape={s} />
+                <span>{shapeName(s)}</span>
+              </button>
+            ))}
           </div>
         </section>
+
+        <button className={`toggle${hidden ? ' on' : ''}`} role="switch" aria-checked={hidden} onClick={() => setHidden((v) => !v)}>
+          <span className="toggle-text">
+            <span className="toggle-title">
+              <Lock />
+              Private room
+            </span>
+            <span className="toggle-hint">Only people with the link can join.</span>
+          </span>
+          <span className="toggle-track" aria-hidden="true">
+            <span className="toggle-knob" />
+          </span>
+        </button>
+
       </div>
 
-      {bar &&
+      {slot &&
         createPortal(
-          <button
-            className="primary new-btn create-btn"
-            onClick={create}
-            disabled={!img || busy}
-            title={img ? 'Create jigsaw' : 'Add an image first'}
-          >
+          <button className="primary new-btn create-btn" onClick={create} disabled={!img || busy} title={img ? 'Create jigsaw' : 'Choose a picture first'}>
             {busy ? (
               <span className="spin" />
             ) : (
@@ -416,7 +324,7 @@ export default function NewRoom({ bar }: { bar: HTMLElement | null }) {
               </>
             )}
           </button>,
-          bar,
+          slot,
         )}
     </section>
   )
