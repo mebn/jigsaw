@@ -64,8 +64,7 @@ export default function Reactions({ engine, busRef, hint }: ReactionsProps) {
 
   useEffect(() => {
     busRef.current = (msg) => {
-      const { cam, vw, vh } = engine
-      burst((msg.x - cam.x) * cam.z + vw / 2, (msg.y - cam.y) * cam.z + vh / 2)
+      for (const [x, y] of engine.spotsOf(msg.x, msg.y)) burst(x, y)
     }
     return () => {
       busRef.current = null
@@ -95,14 +94,16 @@ export default function Reactions({ engine, busRef, hint }: ReactionsProps) {
       if (e.target !== c || e.button !== 0 || !e.isPrimary || stop) return
       e.stopPropagation()
       e.preventDefault()
-      let [sx, sy] = engine.pos(e)
+      // On the canvas, across both panes of a split screen.
+      const at = (ev: PointerEvent) => [ev.clientX - engine.rect.left, ev.clientY - engine.rect.top]
+      let [sx, sy] = at(e)
       const move = (ev: PointerEvent) => {
-        if (ev.pointerId === e.pointerId) [sx, sy] = engine.pos(ev)
+        if (ev.pointerId === e.pointerId) [sx, sy] = at(ev)
       }
       const up = (ev: PointerEvent) => ev.pointerId === e.pointerId && stop!()
       const emit = () => {
         burst(sx, sy)
-        const [x, y] = engine.toWorld(sx, sy)
+        const [x, y] = engine.worldAt(sx, sy)
         engine.send({ type: 'react', kind: KIND, x: Math.round(x), y: Math.round(y) })
       }
       emit()

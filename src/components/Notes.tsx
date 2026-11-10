@@ -483,9 +483,10 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
   useEffect(() => {
     createRef.current = async (clientX, clientY) => {
       const rect = engine.canvas.getBoundingClientRect()
-      const sx = clientX == null ? rect.width / 2 : clientX - rect.left
+      // Notes show in the left pane of a split screen, so one without a place goes in its middle.
+      const sx = clientX == null ? engine.vw / 2 : clientX - rect.left
       const sy = clientY == null ? rect.height / 2 : clientY - rect.top
-      const [wx, wy] = engine.toWorld(sx, sy)
+      const [wx, wy] = engine.worldAt(sx, sy)
       const author = await requireName()
       if (!author) return
       const note: NoteRow = {

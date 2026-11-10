@@ -1112,6 +1112,30 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .room canvas.gpu.top {
   z-index: 4;
 }
+/* Split screen: notes show in the left pane only, see the engine. */
+.notes-clip {
+  display: contents;
+}
+.room.split .notes-clip {
+  position: absolute;
+  inset: 0 50% 0 0;
+  z-index: 4;
+  display: block;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* The line between the two panes, over everything on the table. */
+.split-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  z-index: 5;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--line-strong);
+  pointer-events: none;
+}
 /* Other players' cursors: above the notes and trays, below the panels. */
 .room canvas.cursors {
   position: absolute;

@@ -1,5 +1,9 @@
 # Changelog
 
+## 10 November 2026
+
+- **Split screen**: press `X` or the split button in the toolbar to see the table twice, side by side. Move and zoom each half on its own, then drag pieces straight from one half into the other to carry them across the table. Notes show in the left half only.
+
 ## 5 November 2026
 
 - New trays now have auto sort on from the start, so pieces put in them sort themselves. Click the switch on the tray to turn it off.

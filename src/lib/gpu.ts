@@ -64,6 +64,9 @@ export interface GpuFrame {
   selUnder?: boolean
   hlOver?: boolean
   shadow: { color: Rgba; blur: number; ox: number; oy: number } | null
+  // Where on the canvas this frame goes, for split screen: its left edge (device pixels), and whether
+  // it clears the canvas first (the first pane does, the second draws beside it). Default: all of it.
+  pane?: { x: number; clear: boolean }
 }
 type PostName = 'blurX' | 'blurY' | 'shadow' | 'sel' | 'hl'
 type PipeName =
@@ -105,7 +108,8 @@ struct U {
   // Sprite size (pixels), sprites per row, sprites per page.
   s2: vec4f,
   bg: vec4f,
-  // The world point at the middle of the screen, device pixels per world unit.
+  // The world point at the middle of the screen, device pixels per world unit, and the screen's left
+  // edge on the canvas (device pixels; not 0 for the right pane of a split screen).
   cam: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
@@ -322,7 +326,7 @@ struct P { a: vec4f, b: vec4f, c: vec4f }
 }
 
 fn mask(p: vec2f) -> f32 {
-  return dot(textureSampleLevel(src, samp, p / u.s0.xy, 0.0), pu.b);
+  return dot(textureSampleLevel(src, samp, (p - vec2f(u.cam.w, 0.0)) / u.s0.xy, 0.0), pu.b);
 }
 
 // a: colour; b: which channel of the mask; c: outline width and the cut out's growth (device pixels).
@@ -840,7 +844,9 @@ class Gpu {
     U.set([W, H, f.sprite[0], f.sprite[1], this.atlasSize[0], this.atlasSize[1], this.cell.cw, this.cell.ch])
     U.set([this.spritePx[0], this.spritePx[1], this.cell.perRow, this.cell.perPage], 8)
     U.set(premul(f.bg), 12)
-    U.set([f.cam[0], f.cam[1], f.cam[2], 0], 16)
+    const px = f.pane?.x || 0
+    const load: GPULoadOp = f.pane && !f.pane.clear ? 'load' : 'clear'
+    U.set([f.cam[0], f.cam[1], f.cam[2], px], 16)
     d.queue.writeBuffer(this.ubuf, 0, U)
 
     const pieces = this.fill('pieces', f.pieces.data, f.pieces.count * PIECE_FLOATS)
@@ -902,7 +908,7 @@ class Gpu {
       const reach = Math.min(48, Math.ceil(sigma * 3))
       d.queue.writeBuffer(this.post.blurX, 0, new Float32Array([1, 0, sigma, reach, sw, shh, 0, 0]))
       d.queue.writeBuffer(this.post.blurY, 0, new Float32Array([0, 1, sigma, reach, sw, shh, 0, 0]))
-      d.queue.writeBuffer(this.post.shadow, 0, new Float32Array([...premul(sh.color), sh.ox, sh.oy, sw * SHADOW_K, shh * SHADOW_K]))
+      d.queue.writeBuffer(this.post.shadow, 0, new Float32Array([...premul(sh.color), sh.ox + px, sh.oy, sw * SHADOW_K, shh * SHADOW_K]))
       const target = (tex: GPUTexture): GPURenderPassDescriptor => ({ colorAttachments: [{ view: tex.createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
       let pass = enc.beginRenderPass(target(this.shA))
       pass.setBindGroup(0, this.g0)
@@ -935,8 +941,15 @@ class Gpu {
     // lying on it) under, and over them the trays, the pieces in them, the pieces being carried and
     // the outlines. Lifted trays go over the shadow, with the pieces in them.
     let pass = enc.beginRenderPass({
-      colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 1] }],
+      colorAttachments: [{ view: this.ctx.getCurrentTexture().createView(), loadOp: load, storeOp: 'store', clearValue: [0, 0, 0, 1] }],
     })
+    // Only this frame's part of the canvas.
+    const clip = () => {
+      if (!f.pane) return
+      pass.setViewport(px, 0, W, H, 0, 1)
+      pass.setScissorRect(px, 0, W, H)
+    }
+    clip()
     pass.setBindGroup(0, this.g0)
     pass.setPipeline(this.pipes.bg)
     pass.draw(3)
@@ -961,17 +974,18 @@ class Gpu {
       const x1 = Math.min(W, Math.ceil(box[2] + r + 2))
       const y1 = Math.min(H, Math.ceil(box[3] + r + 2))
       if (x1 <= x0 || y1 <= y0) return
-      pass.setScissorRect(x0, y0, x1 - x0, y1 - y0)
+      pass.setScissorRect(px + x0, y0, x1 - x0, y1 - y0)
       pass.setPipeline(this.pipes.outline)
       pass.setBindGroup(1, group)
       pass.draw(3)
-      pass.setScissorRect(0, 0, W, H)
+      pass.setScissorRect(px, 0, W, H)
     }
     piecesOf(seg.still)
     pass.end()
     pass = enc.beginRenderPass({
-      colorAttachments: [{ view: this.ctxTop.getCurrentTexture().createView(), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }],
+      colorAttachments: [{ view: this.ctxTop.getCurrentTexture().createView(), loadOp: load, storeOp: 'store', clearValue: [0, 0, 0, 0] }],
     })
+    clip()
     pass.setBindGroup(0, this.g0)
     if (f.trays.down) {
       pass.setPipeline(this.pipes.tray)

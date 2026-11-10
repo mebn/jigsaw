@@ -133,6 +133,8 @@ interface CamAnim {
   t0: number
   ms: number
   zoom?: boolean
+  // The pane whose camera moves, see split.
+  pane: number
 }
 // The colours the engine draws with, from the page's theme.
 export interface EngineColors {
@@ -754,6 +756,18 @@ export class Engine {
   vw: number
   vh: number
   cam: Cam
+  // Split screen: the table shown twice side by side, each half (pane) with a camera of its own, so
+  // pieces can be carried from one part of the table to another far away. The pane the pointer is
+  // over is the active one: this.cam is its camera, this.vw its width and this.ox its left edge on the
+  // canvas (CSS pixels), and screen positions (sx, sy) are within it. cams holds both cameras (the
+  // active one's as of the last switch, see usePane()). A carried piece follows the pointer across.
+  split: boolean
+  pane: number
+  cams: Cam[]
+  ox: number
+  // The right pane's left edge (CSS pixels), and a pane's width in device pixels.
+  ox1: number
+  pw: number
   camAnim: CamAnim | null
   drag: Drag | null
   lift: Lift | null
@@ -1002,6 +1016,12 @@ export class Engine {
     this.vw = 1
     this.vh = 1
     this.cam = { x: mx, y: my, z: 1 }
+    this.split = false
+    this.pane = 0
+    this.cams = [this.cam, this.cam]
+    this.ox = 0
+    this.ox1 = 0
+    this.pw = 1
     this.camAnim = null
     this.drag = null
     this.lift = null
@@ -1031,7 +1051,7 @@ export class Engine {
     this.bind()
     this.resize()
     const saved = this.loadCam()
-    if (saved) this.cam = saved
+    if (saved) this.cam = this.cams[0] = saved
     else this.fit(false)
     // Resolves once the table can be drawn; rejects if WebGPU can't be started.
     this.ready = this.startGpu()
@@ -1132,6 +1152,7 @@ export class Engine {
       // The pointer is tracked over the whole window, so notes and panels above the canvas don't hide it.
       track: (e) => {
         if (!e.isPrimary) return
+        this.followPane(e)
         const [sx, sy] = this.pos(e)
         if (sx < 0 || sy < 0 || sx > this.vw || sy > this.vh) return
         this.pointerAt = [sx, sy]
@@ -1209,13 +1230,19 @@ export class Engine {
   resize() {
     const rect = (this.rect = this.canvas.getBoundingClientRect())
     this.dpr = Math.min(MAX_DPR, window.devicePixelRatio || 1)
-    this.vw = Math.max(1, rect.width)
+    const fw = Math.max(1, rect.width)
     this.vh = Math.max(1, rect.height)
+    const cw = Math.round(fw * this.dpr)
     for (const c of [this.canvas, this.gpuEl, this.gpuTop, this.overlay]) {
       if (!c) continue
-      c.width = Math.round(this.vw * this.dpr)
+      c.width = cw
       c.height = Math.round(this.vh * this.dpr)
     }
+    // Both panes are as wide, to the device pixel, so the GPU's screen sized textures fit both.
+    this.pw = this.split ? Math.max(1, Math.floor(cw / 2)) : cw
+    this.vw = this.split ? this.pw / this.dpr : fw
+    this.ox1 = this.split ? (cw - this.pw) / this.dpr : 0
+    this.ox = this.pane ? this.ox1 : 0
     this.dirty = true
     this.invalidate()
   }
@@ -1231,6 +1258,82 @@ export class Engine {
   }
 
   // ---- camera -------------------------------------------------------------
+
+  // Turns split screen on or off. Turned on, the view is cut in two down the middle, each half
+  // showing what it showed before; restore: (when the page loads) the right pane's camera as it was
+  // last time, if saved. Turned off, the left pane's camera widens to the whole screen, keeping it in
+  // place on the left.
+  setSplit(on: boolean, restore = false) {
+    if (on === this.split) return
+    this.camAnim = null
+    this.usePane(0)
+    const z = this.cam.z
+    if (on) {
+      const shift = this.vw / 4 / z
+      const saved = restore && this.loadCam(1)
+      this.cams[1] = saved || { x: this.cam.x + shift, y: this.cam.y, z }
+      if (!saved) this.cam = this.cams[0] = { x: this.cam.x - shift, y: this.cam.y, z }
+    }
+    this.split = on
+    const half = this.vw
+    this.resize()
+    if (!on) this.cam = this.cams[0] = { x: this.cam.x + (this.vw - half) / 2 / z, y: this.cam.y, z }
+    this.clampCam()
+    if (on) {
+      this.usePane(1)
+      this.clampCam()
+      this.usePane(0)
+    }
+    this.showTip(null)
+    this.setHighlight(null)
+    this.viewsVer++
+    this.invalidate()
+  }
+
+  // Makes pane k (0: left, 1: right) the active one, see split.
+  usePane(k: number) {
+    if (!this.split) k = 0
+    if (k === this.pane) return
+    this.cams[this.pane] = this.cam
+    this.pane = k
+    this.cam = this.cams[k]
+    this.ox = k ? this.ox1 : 0
+  }
+
+  // The pane at x on the canvas (CSS pixels).
+  paneAt(x: number) {
+    return this.split && x >= this.ox1 ? 1 : 0
+  }
+
+  // The pane under the pointer becomes the active one, unless it's busy elsewhere: moving the table,
+  // drawing a selection box, and the like stay in the pane they started in, while what's carried
+  // follows the pointer into the other.
+  followPane(e: { clientX: number; pointerId?: number }) {
+    if (!this.split) return
+    const held = this.drag || this.carry || this.refDrag
+    const own = held && e.pointerId === held.pointer
+    if (this.pointers.size && !(own && this.pointers.size === 1)) return
+    this.usePane(this.paneAt(e.clientX - this.rect.left))
+  }
+
+  // The world point at (x, y) on the canvas (CSS pixels), in whichever pane that is.
+  worldAt(x: number, y: number): Vec2 {
+    const k = this.paneAt(x)
+    const cam = k === this.pane ? this.cam : this.cams[k]
+    return [(x - (k ? this.ox1 : 0) - this.vw / 2) / cam.z + cam.x, (y - this.vh / 2) / cam.z + cam.y]
+  }
+
+  // Where the world point (wx, wy) shows on the canvas (CSS pixels): once per pane it's in.
+  spotsOf(wx: number, wy: number): Vec2[] {
+    const out: Vec2[] = []
+    for (let k = 0; k < (this.split ? 2 : 1); k++) {
+      const cam = k === this.pane ? this.cam : this.cams[k]
+      const x = (wx - cam.x) * cam.z + this.vw / 2
+      const y = (wy - cam.y) * cam.z + this.vh / 2
+      if (x >= 0 && x <= this.vw && y >= 0 && y <= this.vh) out.push([x + (k ? this.ox1 : 0), y])
+    }
+    return out
+  }
 
   get zmin() {
     return Math.min(4 / this.geo.S, (this.vw / (this.bounds.x1 - this.bounds.x0)) * 2)
@@ -1274,9 +1377,9 @@ export class Engine {
   // Eases the zoom around the middle of the view. Presses during the animation add up.
   zoomBy(f: number) {
     const a = this.camAnim
-    const from = a?.zoom ? a.to : this.cam
+    const from = a?.zoom && a.pane === this.pane ? a.to : this.cam
     const z = Math.min(this.zmax, Math.max(this.zmin, from.z * f))
-    this.camAnim = { from: { ...this.cam }, to: { x: from.x, y: from.y, z }, t0: performance.now(), ms: 260, zoom: true }
+    this.camAnim = { from: { ...this.cam }, to: { x: from.x, y: from.y, z }, t0: performance.now(), ms: 260, zoom: true, pane: this.pane }
     this.invalidate()
   }
 
@@ -1300,7 +1403,7 @@ export class Engine {
       Math.max(this.zmin, Math.min((this.vw * fill) / (b.x1 - b.x0), (this.vh * fill) / (b.y1 - b.y0))),
     )
     const to = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z }
-    if (animate) this.camAnim = { from: { ...this.cam }, to, t0: performance.now(), ms: 550 }
+    if (animate) this.camAnim = { from: { ...this.cam }, to, t0: performance.now(), ms: 550, pane: this.pane }
     else this.cam = to
     this.invalidate()
   }
@@ -1323,18 +1426,23 @@ export class Engine {
     this.frame(b, 0.82, animate)
   }
 
+  // Each pane's camera is saved, the right one's under a key of its own.
   saveCam() {
     clearTimeout(this.camTimer)
     this.camTimer = setTimeout(() => {
       try {
-        localStorage.setItem(`cam:${this.room.id}`, JSON.stringify(this.cam))
+        for (let k = 0; k < (this.split ? 2 : 1); k++) localStorage.setItem(this.camKey(k), JSON.stringify(k === this.pane ? this.cam : this.cams[k]))
       } catch {}
     }, 300)
   }
 
-  loadCam(): Cam | null {
+  camKey(k: number) {
+    return `${k ? 'cam2' : 'cam'}:${this.room.id}`
+  }
+
+  loadCam(k = 0): Cam | null {
     try {
-      const c = JSON.parse(localStorage.getItem(`cam:${this.room.id}`)!)
+      const c = JSON.parse(localStorage.getItem(this.camKey(k))!)
       if (c && isFinite(c.x) && isFinite(c.y) && c.z > 0) return c
     } catch {}
     return null
@@ -1712,14 +1820,16 @@ export class Engine {
 
   // Reading the canvas position on every pointer event would force a layout whenever the page
   // changed in between (the tooltip, the notes), so it is cached, see resize() and h.moved.
+  // Within the active pane (see split).
   pos(e: { clientX: number; clientY: number }): Vec2 {
     const r = this.rect
-    return [e.clientX - r.left, e.clientY - r.top]
+    return [e.clientX - r.left - this.ox, e.clientY - r.top]
   }
 
   onDown(e: PointerEvent) {
     // A page selection (from Cmd+A in the browser, say) has no business on the table.
     if (!window.getSelection()?.isCollapsed) window.getSelection()!.removeAllRanges()
+    this.followPane(e)
     const [sx, sy] = this.pos(e)
     this.canvas.setPointerCapture(e.pointerId)
     this.pointers.set(e.pointerId, [sx, sy])
@@ -1904,16 +2014,17 @@ export class Engine {
       if (m.kind === 'ref') this.selectRef(m.id!)
       if (m.kind === 'tray') this.selectTray(m.id!)
     }
-    this.onMenu(m.sx, m.sy, m.kind, m.id, { rename: !!m.rename })
+    this.onMenu(m.sx + this.ox, m.sy, m.kind, m.id, { rename: !!m.rename })
   }
 
   // The same for a note, which is not part of the canvas: at a window position.
   openNoteMenu(id: string, x: number, y: number) {
     const r = this.canvas.getBoundingClientRect()
-    this.openMenu({ kind: 'note', id, sx: x - r.left, sy: y - r.top })
+    this.openMenu({ kind: 'note', id, sx: x - r.left - this.ox, sy: y - r.top })
   }
 
   onMove(e: PointerEvent) {
+    this.followPane(e)
     const [sx, sy] = this.pos(e)
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, [sx, sy])
     // Pressing the right button while holding pieces turns them, like space. A second button on a
@@ -2111,6 +2222,7 @@ export class Engine {
 
   onWheel(e: LegacyWheelEvent) {
     e.preventDefault()
+    this.followPane(e)
     this.camAnim = null
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1
     // Two fingers on a trackpad move the table; a pinch (which arrives with ctrlKey) or a mouse
@@ -2299,7 +2411,7 @@ export class Engine {
       return
     }
     if (el.textContent !== t.text) el.textContent = t.text
-    el.style.transform = `translate(${Math.round(t.sx + 14)}px, ${Math.round(t.sy + 16)}px)`
+    el.style.transform = `translate(${Math.round(t.sx + this.ox + 14)}px, ${Math.round(t.sy + 16)}px)`
     el.style.opacity = '1'
   }
 
@@ -4308,7 +4420,9 @@ export class Engine {
     if (!p) return [0, 0]
     const [sx, sy] = p
     const dir = (v: number, size: number) => (v < EDGE_PX ? -1 : v > size - EDGE_PX ? 1 : 0)
-    return [dir(sx, this.vw), dir(sy, this.vh)]
+    const x = dir(sx, this.vw)
+    // Not at the line between the panes, where carried pieces cross into the other one.
+    return [this.split && x === (this.pane ? -1 : 1) ? 0 : x, dir(sy, this.vh)]
   }
 
   // After the table moves under the pointer, what it holds keeps up with it.
@@ -4344,6 +4458,8 @@ export class Engine {
 
     if (this.camAnim) {
       const a = this.camAnim
+      const was = this.pane
+      this.usePane(a.pane)
       const t = Math.min(1, (now - a.t0) / a.ms)
       const e = 1 - Math.pow(1 - t, 3)
       const lz = Math.log(a.from.z) + (Math.log(a.to.z) - Math.log(a.from.z)) * e
@@ -4356,6 +4472,7 @@ export class Engine {
         this.camAnim = null
         this.clampCam()
       } else again = true
+      this.usePane(was)
       if (this.marquee) this.updateMarquee()
     }
 
@@ -4511,26 +4628,52 @@ export class Engine {
     if (again) this.invalidate()
   }
 
+  // Draws each pane in turn (see split), the left one first. Views (the notes) follow the left one.
   draw() {
-    const { ctx, cam, vw, vh } = this
-    const mv = this.mv
-    if (cam.x !== mv.x || cam.y !== mv.y || cam.z !== mv.z || vw !== mv.w || vh !== mv.h || this.viewsVer !== this.viewFn) {
-      mv.x = cam.x
-      mv.y = cam.y
-      mv.z = cam.z
-      mv.w = vw
-      mv.h = vh
-      this.viewFn = this.viewsVer
-      for (const fn of this.views) fn(cam, vw, vh)
-    }
+    const { ctx } = this
+    const active = this.pane
     this.notes?.follow()
-    if (this.gpu) this.drawGpu(mv)
     if (this.dirty) {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
       ctx.clearRect(0, 0, this.canvas.width, this.canvas.height)
       this.dirty = false
     }
-    this.drawChrome()
+    this.clearOverlay()
+    for (let k = 0; k < (this.split ? 2 : 1); k++) {
+      this.usePane(k)
+      const { cam, vw, vh } = this
+      if (k === 0) {
+        const mv = this.mv
+        if (cam.x !== mv.x || cam.y !== mv.y || cam.z !== mv.z || vw !== mv.w || vh !== mv.h || this.viewsVer !== this.viewFn) {
+          mv.x = cam.x
+          mv.y = cam.y
+          mv.z = cam.z
+          mv.w = vw
+          mv.h = vh
+          this.viewFn = this.viewsVer
+          for (const fn of this.views) fn(cam, vw, vh)
+        }
+      }
+      if (this.gpu) this.drawGpu({ ...cam, w: vw, h: vh }, k)
+      if (!this.split) {
+        this.drawChrome(true)
+        continue
+      }
+      // Each pane's 2D drawing stays in it.
+      const x = Math.round(this.ox * this.dpr)
+      for (const c of [ctx, this.octx]) {
+        if (!c) continue
+        c.save()
+        c.setTransform(1, 0, 0, 1, 0, 0)
+        c.beginPath()
+        c.rect(x, 0, this.pw, this.canvas.height)
+        c.clip()
+      }
+      this.drawChrome(k === active)
+      ctx.restore()
+      this.octx?.restore()
+    }
+    this.usePane(active)
   }
 
   // The world rectangle a view shows, grown by e on every side, into this.cull.
@@ -4548,7 +4691,7 @@ export class Engine {
   // Builds a frame for the GPU (see gpu.ts) for view v, in device pixels: the trays and reference
   // images in view, the pieces lying on the table in table order, the lifted pieces, and the
   // selected and hovered pieces once more for their outlines.
-  drawGpu(v: View) {
+  drawGpu(v: View, pane = 0) {
     const { dpr } = this
     const z = v.z * dpr
     const sx = (wx: number) => ((wx - v.x) * v.z + v.w / 2) * dpr
@@ -4714,7 +4857,8 @@ export class Engine {
     for (const u of this.trayUp.values()) lv = Math.max(lv, u.value)
     const l = lv > 0 ? { value: lv } : null
     this.gpu!.frame({
-      W: this.gpuEl.width,
+      W: this.pw,
+      pane: this.split ? { x: pane ? this.gpuEl.width - this.pw : 0, clear: !pane } : undefined,
       H: this.gpuEl.height,
       cam: [v.x, v.y, z],
       sprite: [this.spriteW, this.spriteH],
@@ -4790,14 +4934,15 @@ export class Engine {
     }
   }
 
-  // Screen-space overlays: the selection box and the selected reference image's handles.
-  drawChrome() {
-    const { ctx, dpr, cam, vw, vh } = this
+  // Screen-space overlays: the selection box and the selected reference image's handles. mine: this
+  // is the active pane, which shows what's only on the screen: the selection box and trimming.
+  drawChrome(mine: boolean) {
+    const { ctx, dpr } = this
     const sel = this.refSel && this.refs.find((r) => r.id === this.refSel)
     if (sel) {
       this.dirty = true
       const [x0, y0, x1, y1] = this.refRect(sel)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
       ctx.lineWidth = 1.5
       ctx.strokeStyle = this.colors.sel
       ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
@@ -4817,10 +4962,10 @@ export class Engine {
       }
     }
     // Trimming: what would be cut away is shaded, the part kept is outlined.
-    const tb = sel && this.trim?.id === sel.id && this.trimRect()
+    const tb = mine && sel && this.trim?.id === sel.id && this.trimRect()
     if (tb) {
       const [x0, y0, x1, y1] = this.refRect(sel)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
       ctx.beginPath()
       ctx.rect(x0, y0, x1 - x0, y1 - y0)
       ctx.rect(tb[0], tb[1], tb[2] - tb[0], tb[3] - tb[1])
@@ -4833,15 +4978,15 @@ export class Engine {
       ctx.setLineDash([])
     }
     this.drawPops()
-    this.drawCursors()
-    const m = this.marquee
+    this.drawCursors(mine)
+    const m = mine && this.marquee
     if (m && Math.abs(m.sx - m.sx0) + Math.abs(m.sy - m.sy0) > 2) {
       const x = Math.min(m.sx0, m.sx)
       const y = Math.min(m.sy0, m.sy)
       const w = Math.abs(m.sx - m.sx0)
       const h = Math.abs(m.sy - m.sy0)
       this.dirty = true
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
       ctx.globalAlpha = 0.1
       ctx.fillStyle = this.colors.sel
       ctx.fillRect(x, y, w, h)
@@ -4870,7 +5015,7 @@ export class Engine {
   // Paints bursts on ctx for a view of vw by vh with camera cam.
   paintPops(ctx: CanvasRenderingContext2D, cam: Cam, vw: number, vh: number, pops: Pop[], dpr = this.dpr, scale = 1) {
     const now = performance.now()
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
     ctx.shadowColor = 'rgba(0, 0, 0, 0.35)'
     ctx.shadowBlur = 4
     ctx.strokeStyle = '#fff'
@@ -4948,7 +5093,7 @@ export class Engine {
   // Sets octx to draw at scale s around the screen point (cx, cy).
   scaleAbout(octx: CanvasRenderingContext2D, s: number, cx: number, cy: number) {
     const d = this.dpr
-    octx.setTransform(d * s, 0, 0, d * s, d * cx * (1 - s), d * cy * (1 - s))
+    octx.setTransform(d * s, 0, 0, d * s, d * (cx * (1 - s) + this.ox), d * cy * (1 - s))
   }
 
   // Each image's menu button: three dots on a chip in the table's colour, so it reads on any image.
@@ -4963,7 +5108,7 @@ export class Engine {
       this.drawMenuButton(b, look)
     }
     octx.globalAlpha = 1
-    octx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    octx.setTransform(this.dpr, 0, 0, this.dpr, this.ox * this.dpr, 0)
   }
 
   // A menu button, the same on trays and images as on notes (.note-menu): three dots on a card.
@@ -4993,20 +5138,22 @@ export class Engine {
 
   // A tray's number, name and buttons along its top edge, above the notes and trays. They scale with
   // the zoom like everything on the table, but never get too small to read.
-  drawTrayTags() {
+  // mine: the active pane, whose tray names are hovered (see trayNames).
+  drawTrayTags(mine: boolean) {
     const octx = this.octx!
     const { dpr, cam, vw, vh } = this
     const tag = Math.max(14, this.geo.S * 0.4 * cam.z)
     const gap = tag * 0.3
     // Names cut short to fit, by tray id: { rect, text }, so hovering one shows it in full.
-    this.trayNames = new Map()
+    const names = new Map<string, { rect: Rect4; text: string }>()
+    if (mine) this.trayNames = names
     const shown = this.trays.filter((t) => this.trayTagsFit(t))
     for (const t of shown) {
       const x = (t.x - cam.x) * cam.z + vw / 2
       const y = (t.y - cam.y) * cam.z + vh / 2
       if (x > vw || y > vh || x + t.w * cam.z < 0 || y + t.h * cam.z < 0) continue
       const color = TRAY_COLORS[t.color] || TRAY_COLORS.gray
-      octx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
       octx.textBaseline = 'middle'
       // The number and the name, each in a tag in the tray's colour on its top left corner, standing
       // out over the edges a little like the buttons on the right.
@@ -5039,7 +5186,7 @@ export class Engine {
       octx.fill()
       octx.fillStyle = '#fff'
       octx.fillText(text, x0 + pad, mid)
-      if (text !== name) this.trayNames.set(t.id, { rect: [x0, y0, x0 + w, y0 + tag], text: name })
+      if (text !== name) names.set(t.id, { rect: [x0, y0, x0 + w, y0 + tag], text: name })
     }
     for (const t of shown) {
       const look = this.buttonLook(`tray:${t.id}`)
@@ -5085,10 +5232,11 @@ export class Engine {
       this.drawMenuButton(b.menu, look)
     }
     octx.globalAlpha = 1
-    octx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
   }
 
-  drawCursors() {
+  // Once a frame, before the panes are drawn: clears the overlay, and moves the buttons along.
+  clearOverlay() {
     const ctx = this.octx
     if (!ctx) return
     if (this.cursorsDrawn) {
@@ -5097,15 +5245,20 @@ export class Engine {
     }
     this.cursorsDrawn = this.cursors.size > 0 || this.trays.length > 0 || this.refs.length > 0
     this.stepButtons()
+  }
+
+  drawCursors(mine: boolean) {
+    const ctx = this.octx
+    if (!ctx) return
     this.drawRefButtons()
-    this.drawTrayTags()
+    this.drawTrayTags(mine)
     if (!this.cursors.size) return
     this.paintCursors(ctx, this.cam, this.vw, this.vh)
   }
 
   // Paints other players' pointers and selection boxes on ctx for a view of vw by vh with camera cam.
   paintCursors(ctx: CanvasRenderingContext2D, cam: Cam, vw: number, vh: number, dpr = this.dpr) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, 0)
     ctx.font = '600 11px system-ui, -apple-system, sans-serif'
     ctx.textBaseline = 'middle'
     ctx.lineJoin = 'round'

@@ -5,6 +5,7 @@ import { Engine, warmSprites } from '../lib/engine.ts'
 import { navigate, store, useApp } from '../App.tsx'
 import {
   Hand,
+  Split,
   Picture,
   Redo,
   Rooms,
@@ -169,6 +170,9 @@ export default function Room({ id }: RoomProps) {
   const [gpuError, setGpuError] = useState<string | null>(null)
   // View mode: dragging with the left button (or a finger) moves the table, never pieces or notes.
   const [panMode, setPanMode] = useState(() => store.get('panMode') === '1')
+  // Split screen: the table twice, side by side, to carry pieces between two far apart places.
+  const [split, setSplit] = useState(() => store.get('split') === '1')
+  const splitSet = useRef(false)
   const [hist, setHist] = useState({ undo: false, redo: false })
   const [menu, setMenu] = useState<MenuAt | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
@@ -341,6 +345,14 @@ export default function Room({ id }: RoomProps) {
   }, [engine, panMode])
 
   useEffect(() => {
+    store.set('split', split ? '1' : '0')
+    if (!engine) return
+    // On loading, the right pane's view comes back as it was.
+    engine.setSplit(split, !splitSet.current)
+    splitSet.current = true
+  }, [engine, split])
+
+  useEffect(() => {
     if (error) navigate('/rooms')
   }, [error])
 
@@ -364,12 +376,13 @@ export default function Room({ id }: RoomProps) {
       if (engine.drag || document.querySelector('.modal-bg')) return
       const r = engine.canvas.getBoundingClientRect()
       const p = engine.pointerAt
-      const el = p && document.elementFromPoint(p[0] + r.left, p[1] + r.top)
+      const el = p && document.elementFromPoint(p[0] + engine.ox + r.left, p[1] + r.top)
       const over = el && !el.closest('.float, .players') ? p : null
       const k = e.key.toLowerCase()
       if (k === 'h') openSettings.current?.('help')
       else if (k === 'v') setPanMode((v) => !v)
-      else if (k === 'n') createNote.current?.(over ? over[0] + r.left : null, over ? over[1] + r.top : null)
+      else if (k === 'x') setSplit((v) => !v)
+      else if (k === 'n') createNote.current?.(over ? over[0] + engine.ox + r.left : null, over ? over[1] + r.top : null)
       else if (k === 't') (over ? engine.addTray(...over) : engine.addTray())
       else if (k === 'i') (over ? engine.addRef(...over) : engine.addRef())
       else if (k === '+' || k === '=') engine.zoomBy(1.4)
@@ -416,6 +429,18 @@ export default function Room({ id }: RoomProps) {
         <Hand />
         <KeyHint k="V" />
       </button>
+      <button
+        className={`icon-btn${split ? ' on' : ''}`}
+        onClick={() => setSplit((v) => !v)}
+        aria-pressed={split}
+        aria-label="Split screen"
+        aria-keyshortcuts="X"
+        data-tip={split ? 'Split screen on: drag pieces from one half to the other' : 'Split screen: two views of the table side by side'}
+        data-key="X"
+      >
+        <Split />
+        <KeyHint k="X" />
+      </button>
       <Reactions engine={engine} busRef={reactBus} hint={<KeyHint k="R" />} />
       <span className="bar-sep" />
       <TrayButton engine={engine} hint={<KeyHint k="T" />} />
@@ -435,7 +460,7 @@ export default function Room({ id }: RoomProps) {
   )
   return (
     <div
-      className={`room${panMode ? ' pan-mode' : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}`}
+      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ' split' : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}`}
     >
       <canvas ref={canvas} className="board" tabIndex={0} />
       <div ref={tip} className="tip" />
@@ -451,20 +476,23 @@ export default function Room({ id }: RoomProps) {
           )}
         </div>
       )}
+      {engine && split && <div className="split-line" />}
       {engine && (
-        <NotesLayer
-          engine={engine}
-          roomId={id}
-          me={playerId}
-          nameOf={nameOf}
-          initial={data!.notes}
-          initialReactions={data!.noteReactions}
-          initialReplies={data!.noteReplies}
-          busRef={noteBus}
-          ensureName={ensureName}
-          requireName={requireName}
-          createRef={createNote}
-        />
+        <div className="notes-clip">
+          <NotesLayer
+            engine={engine}
+            roomId={id}
+            me={playerId}
+            nameOf={nameOf}
+            initial={data!.notes}
+            initialReactions={data!.noteReactions}
+            initialReplies={data!.noteReplies}
+            busRef={noteBus}
+            ensureName={ensureName}
+            requireName={requireName}
+            createRef={createNote}
+          />
+        </div>
       )}
       <canvas ref={cursors} className="cursors" />
       <div className="float tl">{nav}</div>
