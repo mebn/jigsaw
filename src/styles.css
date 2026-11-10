@@ -383,11 +383,8 @@ button {
   position: fixed;
   inset: 0;
   z-index: 50;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: calc(16px + var(--notch)) 0 96px;
+  overflow: hidden;
   background: var(--wall);
-  scrollbar-width: thin;
   animation: gallery-in 0.55s ease 0.12s both;
 }
 @keyframes gallery-in {
@@ -400,7 +397,8 @@ button {
   pointer-events: none;
 }
 .gallery.going .gallery-head,
-.gallery.going .gallery-label,
+.gallery.going .gallery-tabs,
+.gallery.going .canvas-where,
 .gallery.going .tile {
   opacity: 0;
   transition: opacity 0.22s ease;
@@ -412,14 +410,22 @@ button {
   animation: fade-out 0.45s ease forwards;
 }
 
+/* The bar along the top and the tabs under it float over the canvas. */
 .gallery-head {
-  position: relative;
+  position: absolute;
+  top: calc(16px + var(--notch));
+  left: 16px;
+  right: 16px;
+  z-index: 3;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 12px;
-  margin: 0 16px;
+  pointer-events: none;
   transition: opacity 0.2s;
+}
+.gallery-head > * {
+  pointer-events: auto;
 }
 .gallery-head .float {
   position: static;
@@ -435,13 +441,19 @@ button {
 }
 /* All, public or private, under the title. */
 .gallery-tabs {
+  position: absolute;
+  top: calc(72px + var(--notch));
+  left: 0;
+  right: 0;
+  z-index: 3;
   display: flex;
   justify-content: center;
-  margin: 20px 16px 0;
+  pointer-events: none;
   transition: opacity 0.2s;
 }
-.gallery.going .gallery-tabs {
-  opacity: 0;
+.gallery-tabs .tabs {
+  pointer-events: auto;
+  background: var(--panel);
 }
 .gallery-actions {
   display: flex;
@@ -464,58 +476,72 @@ button {
   }
 }
 
-.gallery-label {
+/* The canvas the jigsaws lie on (see Canvas in Rooms.tsx): dragged, scrolled or moved with the
+   arrow keys, up and down. */
+.canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.canvas.dragging {
+  cursor: grabbing;
+}
+.canvas.dragging .tile {
+  pointer-events: none;
+}
+.cell {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+/* A section's heading on the canvas: in progress, or finished. */
+.canvas-heading {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin: 0 0 28px;
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+  white-space: nowrap;
   color: var(--muted);
+  animation: fade 0.5s ease 0.2s both;
   transition: opacity 0.2s;
 }
-.gallery-label .n {
+.canvas-heading .n {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
   opacity: 0.7;
 }
-
-/* In progress: each jigsaw's biggest group, straight on the wall, set out like the finished ones. */
-.gallery-table {
-  max-width: 1400px;
-  margin: 48px auto 0;
-  padding: 0 clamp(16px, 5vw, 72px);
+.gallery.going .canvas-heading {
+  opacity: 0;
 }
-.gallery-table .gallery-label {
-  margin-bottom: 16px;
-}
-.groups {
+/* Where on the canvas the middle of the screen is. */
+.canvas-where {
+  position: absolute;
+  bottom: 20px;
+  z-index: 2;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px 28px;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  left: 24px;
+  pointer-events: none;
+  transition: opacity 0.2s;
 }
 @media (max-width: 600px) {
-  .groups {
-    gap: 4px 12px;
+  .canvas-where {
+    display: none;
   }
-}
-
-/* The finished pictures, on the wall. */
-.gallery-wall {
-  max-width: 1400px;
-  margin: 72px auto 0;
-  padding: 0 clamp(16px, 5vw, 72px);
-}
-.wall {
-  display: flex;
-  flex-direction: column;
-}
-.wall-row {
-  display: flex;
-  justify-content: center;
 }
 
 /* A jigsaw on the page: rises into place as the page comes in, the later ones a little later. */
@@ -537,14 +563,17 @@ button {
     transform: translateY(26px) scale(0.96);
   }
 }
+/* The jigsaw under the pointer lifts and tilts towards it (see tilt() in Rooms.tsx). */
 .tile .pic {
   position: relative;
   display: grid;
   place-items: center;
-  transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(var(--lift, 0px));
+  transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .tile:hover .pic {
-  transform: translateY(-4px);
+  --lift: -4px;
+  transition-duration: 0.12s;
 }
 .tile:focus-visible .pic {
   outline: 2px solid var(--sel);
@@ -556,6 +585,8 @@ button {
 .art-pic {
   position: relative;
   display: block;
+  overflow: hidden;
+  border-radius: 10px;
   box-shadow:
     0 1px 2px var(--art-shadow),
     0 22px 40px -18px var(--art-shadow);
@@ -570,6 +601,9 @@ button {
   align-items: stretch;
 }
 .art-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 12px;
   color: var(--muted);
   font-size: 12px;
@@ -580,6 +614,11 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   transition: color 0.2s;
+}
+.art-info svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
 }
 .tile.art:hover .art-info {
   color: var(--fg);
@@ -599,55 +638,18 @@ button {
 .art-pic img.full.on {
   opacity: 1;
 }
-
-/* A jigsaw in progress: its biggest group, cut out, with a shadow like a piece on the table, in
-   the bottom left of its box so the line under it lines up with it. */
-.tile.group {
-  align-items: stretch;
-}
-.group-pic {
-  display: grid;
-  place-items: end start;
-}
-.group-pic canvas {
-  display: block;
+/* A soft light where the pointer is. */
+.art-pic::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.22), transparent 55%);
   opacity: 0;
-  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.18)) drop-shadow(0 10px 14px rgba(0, 0, 0, 0.16));
-  transition:
-    opacity 0.4s,
-    filter 0.35s;
+  transition: opacity 0.3s;
+  pointer-events: none;
 }
-.group-pic.drawn canvas {
+.tile.art:hover .art-pic::after {
   opacity: 1;
-}
-.tile.group:hover .group-pic canvas {
-  filter: drop-shadow(0 4px 4px rgba(0, 0, 0, 0.2)) drop-shadow(0 18px 22px rgba(0, 0, 0, 0.2));
-}
-.group-info {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 18px;
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  transition: color 0.2s;
-}
-.group-info svg {
-  width: 12px;
-  height: 12px;
-}
-.tile.group:hover .group-info {
-  color: var(--fg);
-}
-.group-ghost {
-  display: block;
-  border-radius: 14px;
-  background: linear-gradient(100deg, var(--hover) 30%, color-mix(in srgb, var(--hover) 40%, var(--wall)) 50%, var(--hover) 70%) var(--hover);
-  background-size: 300% 100%;
-  animation: ghost 1.4s ease-in-out infinite;
-  animation-delay: calc(var(--i) * 0.12s);
 }
 
 /* The owner's delete button, on hover. */
@@ -691,10 +693,12 @@ button {
 }
 
 .gallery-empty {
+  position: absolute;
+  inset: 0;
   display: grid;
+  place-content: center;
   justify-items: center;
   gap: 16px;
-  margin-top: 22vh;
   color: var(--muted);
 }
 .gallery-empty p {
