@@ -635,11 +635,11 @@ const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 // What's carried swings around the pointer like something pinned there (see swing()): pushed round
 // by the pointer speeding up and slowing down (KICK) and by the air it moves through (DRAG, 1/s),
 // pulled straight again by a spring (K, 1/s²) and slowed (DAMP, 1/s), and never past MAX (radians).
-const SWAY_KICK = 0.35
-const SWAY_DRAG = 0.9
+const SWAY_KICK = 0.25
+const SWAY_DRAG = 0.6
 const SWAY_K = 70
 const SWAY_DAMP = 10
-const SWAY_MAX = 0.17
+const SWAY_MAX = 0.13
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
 const TRAY_H = 4
