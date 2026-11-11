@@ -280,6 +280,17 @@ export interface Drag {
   sy0: number
   moved: boolean
   piece?: number
+  // The sway (radians, around the pointer) the pieces swing by as they're moved, see swing(), its
+  // speed, the pointer's smoothed speed (screen px/s), where it was last frame, and the middle of the
+  // carried pieces from the pointer before any turn (world units).
+  sway: number
+  swayV: number
+  vx: number
+  vy: number
+  lx: number
+  ly: number
+  mx: number
+  my: number
 }
 // Pieces lifted off the table (carried, or landing), see liftPoses().
 export interface Lift {
@@ -579,6 +590,14 @@ export function warmSprites() {
   }
 }
 const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+// Carried pieces swing around the pointer as it moves, as if hanging from it (see swing()): at most
+// this far (radians, less for bigger loads), reaching most of it at this speed (screen px/s), as if
+// held this far (screen px) above their middle, on a spring this stiff (1/s²) and damped.
+const SWAY_MAX = 0.24
+const SWAY_SPEED = 1500
+const SWAY_HANG = 70
+const SWAY_K = 240
+const SWAY_DAMP = 0.45
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
 const TRAY_H = 4
@@ -2594,8 +2613,20 @@ export class Engine {
       sx0: sx,
       sy0: sy,
       moved: false,
+      sway: 0,
+      swayV: 0,
+      vx: 0,
+      vy: 0,
+      lx: sx,
+      ly: sy,
+      mx: 0,
+      my: 0,
     }
     const d0 = this.drag
+    for (let j = 0; j < ids.length; j++) {
+      d0.mx += d0.ox[j] / ids.length
+      d0.my += d0.oy[j] / ids.length
+    }
     ids.forEach((i, j) => {
       // A piece picked up while still turning on the table finishes the turn in the hand.
       const t = this.turns.get(i)
@@ -3293,6 +3324,7 @@ export class Engine {
     if (tray) {
       this.placeInTrays(d.ids, d.px, d.py, tray)
       this.keepSpin(d)
+      this.keepSway(d)
       this.commit(changed)
       // Moving a whole tray doesn't sort it again.
       return
@@ -3311,6 +3343,7 @@ export class Engine {
     }
     if (loose.length) changes.push(this.placeInTrays(loose, d.px, d.py))
     this.keepSpin(d)
+    this.keepSway(d)
     this.commit(changed)
     for (const c of changes) this.autoSort(c)
     // A tray whose last pieces were dragged out goes. It's the same step to undo, so undo brings it
@@ -3337,6 +3370,57 @@ export class Engine {
       }
       this.turns.set(i, t)
     })
+  }
+
+  // Swings the carried pieces with the pointer's movement, as if they hung from it: they trail behind
+  // the way it goes, more the faster it goes, and grabbed by an end they swing round behind it. When
+  // it stops they swing back and wobble a little before settling. Returns whether still moving.
+  swing(d: Drag, dt: number) {
+    const f = dt / 1000
+    if (f > 0) {
+      const k = ease(dt, 40)
+      d.vx += ((d.sx - d.lx) / f - d.vx) * k
+      d.vy += ((d.sy - d.ly) / f - d.vy) * k
+    }
+    d.lx = d.sx
+    d.ly = d.sy
+    // Pieces riding in a moved tray lie flat in it.
+    if (d.tray || calm?.matches) {
+      d.sway = d.swayV = 0
+      return false
+    }
+    // The lever from the pointer to the pieces' middle, on screen, hanging a little below it so even
+    // pieces held by their middle lean as they're moved. The pointer's speed across it turns them.
+    const z = this.cam.z
+    const mx = d.mx * z
+    const my = d.my * z
+    const ca = Math.cos(d.angle)
+    const sa = Math.sin(d.angle)
+    const lx = mx * ca - my * sa
+    const ly = mx * sa + my * ca + SWAY_HANG
+    const across = (ly * d.vx - lx * d.vy) / Math.hypot(lx, ly)
+    const max = SWAY_MAX / (1 + 0.12 * Math.sqrt(d.ids.length - 1))
+    const target = max * Math.tanh(across / SWAY_SPEED)
+    // A damped spring toward it, stepped finely enough to stay steady on a slow frame.
+    const steps = Math.ceil(f / 0.008)
+    const h = f / Math.max(1, steps)
+    const c = 2 * SWAY_DAMP * Math.sqrt(SWAY_K)
+    for (let i = 0; i < steps; i++) {
+      d.swayV += (SWAY_K * (target - d.sway) - c * d.swayV) * h
+      d.sway += d.swayV * h
+    }
+    const still = Math.abs(d.sway) < 0.0005 && Math.abs(d.swayV) < 0.005 && Math.hypot(d.vx, d.vy) < 2
+    if (still) d.sway = d.swayV = d.vx = d.vy = 0
+    return !still
+  }
+
+  // What's left of a swing when the pieces are let go settles as a turn on the table around the
+  // pointer, where they land, so they don't jump straight.
+  keepSway(d: Drag) {
+    if (Math.abs(d.sway) < 0.001) return
+    const l = this.lift
+    const t: Turn = { cx: l ? l.px : d.px, cy: l ? l.py : d.py, a: d.sway }
+    for (const i of d.ids) if (!this.turns.has(i)) this.turns.set(i, t)
   }
 
   // With out given, out.onto is set to the piece the group snapped onto, if any.
@@ -4790,6 +4874,7 @@ export class Engine {
           d.spinning = false
         }
       }
+      if (this.swing(d, dt)) again = true
     }
 
     if (this.lift) {
@@ -5168,7 +5253,7 @@ export class Engine {
     const l = this.lift!
     const s = l.tray ? 1 : 1 + 0.045 * l.value
     const d = this.drag && this.drag.set === l.set ? this.drag : null
-    const a = d ? d.angle : l.angle
+    const a = d ? d.angle + d.sway : l.angle
     // Growing around (cx, cy) moves the pointer's own spot by (1 - s) of the way to it, turned with
     // the pieces: (px, py) is where the carried pieces' origin is drawn, in world units.
     const gx = (l.cx || 0) * (1 - s)
@@ -5183,15 +5268,15 @@ export class Engine {
       }
       return
     }
-    const ca = Math.cos(d.angle)
-    const sa = Math.sin(d.angle)
+    const ca = Math.cos(a)
+    const sa = Math.sin(a)
     for (let j = 0; j < d.ids.length; j++) {
       const t = d.sa[j]
       const dx = d.ox[j] - d.cx[j]
       const dy = d.oy[j] - d.cy[j]
       const ox = d.spinning ? d.cx[j] + dx * Math.cos(t) - dy * Math.sin(t) + d.tx[j] : d.ox[j]
       const oy = d.spinning ? d.cy[j] + dx * Math.sin(t) + dy * Math.cos(t) + d.ty[j] : d.oy[j]
-      fn(d.ids[j], px + (ox * ca - oy * sa) * s, py + (ox * sa + oy * ca) * s, d.r0[j] * Q + (d.spinning ? t : 0) + d.angle, s)
+      fn(d.ids[j], px + (ox * ca - oy * sa) * s, py + (ox * sa + oy * ca) * s, d.r0[j] * Q + (d.spinning ? t : 0) + a, s)
     }
   }
 
