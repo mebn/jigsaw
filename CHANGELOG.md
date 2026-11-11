@@ -8,6 +8,7 @@
 - A note you drag is now outlined as you move it, like an image or a tray, and the others see it outlined in your colour.
 - The selection box another player drags out now grows smoothly with their pointer instead of in jumps.
 - The list of players now scrolls inside its window, so its scrollbar no longer sticks out past the rounded corners.
+- Switching dark mode on or off in a jigsaw now changes the table's colour straight away, instead of leaving it in the old one.
 - The jigsaws page now scrolls smoothly, gliding to a stop, also at the top and bottom, instead of jumping and stopping dead.
 - **A new look**: the bars, buttons, tabs, menus and windows are now made of glass, with rounded shapes and a bright rim. The bars, buttons and tabs are almost clear, so you see the table and the jigsaws through them, and windows and menus are frosted so they stay easy to read. In Chrome and Edge the rim bends what lies behind it, with a faint fringe of colour, like real glass.
 - Windows, menus and hover cards now spring gently into place, buttons press in a little when clicked, and a soft light follows the mouse across the bars.

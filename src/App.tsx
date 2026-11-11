@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Gallery, { GALLERY_OUT_MS } from './pages/Rooms.tsx'
 import Room from './pages/Room.tsx'
 import Tooltips from './components/Tooltips.tsx'
@@ -43,7 +43,9 @@ function useTheme() {
     return () => media.removeEventListener('change', on)
   }, [])
   const theme = choice || system
-  useEffect(() => {
+  // A layout effect, so the page has the new colours before any passive effect (the canvas, see
+  // Room's setColors) reads them.
+  useLayoutEffect(() => {
     if (choice) document.documentElement.dataset.theme = choice
     else delete document.documentElement.dataset.theme
   }, [choice])
