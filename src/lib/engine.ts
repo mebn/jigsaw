@@ -639,11 +639,11 @@ const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 // don't make it jitter) and by the air it moves through (DRAG, 1/s), pulled straight again by a spring
 // (K, 1/s²) and slowed nearly to a stop (DAMP, 1/s), so it settles without wobbling, and never pushed
 // past MAX (radians).
-const SWAY_KICK = 0.12
-const SWAY_DRAG = 0.55
+const SWAY_KICK = 0.17
+const SWAY_DRAG = 0.78
 const SWAY_K = 70
 const SWAY_DAMP = 18
-const SWAY_MAX = 0.09
+const SWAY_MAX = 0.13
 const SWAY_ACC_MS = 60
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
