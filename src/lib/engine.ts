@@ -368,7 +368,10 @@ export interface Cursor {
   name: string
   color: string
   t: number
+  // The selection box they're dragging out, as drawn ([x0, y0, x1, y1], world units), easing with the
+  // pointer to the one they sent (tbox), so it grows as smoothly as the pointer moves.
   box: number[] | null
+  tbox: number[] | null
 }
 // What another player has selected or hovers over.
 export interface Marks {
@@ -4050,10 +4053,10 @@ export class Engine {
         const c = this.cursors.get(msg.client)
         const name = String(msg.name || '').slice(0, 32) || 'Guest'
         const box = Array.isArray(msg.box) && msg.box.length === 4 && msg.box.every(isFinite) ? msg.box : null
-        if (c) Object.assign(c, { tx: msg.x!, ty: msg.y!, name, t: now, box })
+        if (c) Object.assign(c, { tx: msg.x!, ty: msg.y!, name, t: now, tbox: box, box: box && (c.box || box.slice()) })
         else {
           const color = this.colorOf(msg.client)
-          this.cursors.set(msg.client, { x: msg.x!, y: msg.y!, tx: msg.x!, ty: msg.y!, name, color, t: now, box })
+          this.cursors.set(msg.client, { x: msg.x!, y: msg.y!, tx: msg.x!, ty: msg.y!, name, color, t: now, box: box && box.slice(), tbox: box })
         }
       }
       this.invalidate()
@@ -5313,6 +5316,15 @@ export class Engine {
       else {
         c.x = c.tx
         c.y = c.ty
+      }
+      if (c.box && c.tbox) {
+        let far = 0
+        for (let k = 0; k < 4; k++) {
+          c.box[k] += (c.tbox[k] - c.box[k]) * f
+          far += Math.abs(c.tbox[k] - c.box[k])
+        }
+        if (far > 0.05) again = true
+        else c.box = c.tbox.slice()
       }
     }
     if (this.cursors.size) {
