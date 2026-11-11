@@ -6,7 +6,6 @@ import { Engine, cursorColor, warmSprites } from '../lib/engine.ts'
 import { navigate, store, useApp } from '../App.tsx'
 import {
   Hand,
-  MapIcon,
   Pencil,
   Picture,
   Rooms,
@@ -516,9 +515,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         data-key="I"
       >
         <Picture />
-      </button>
-      <button className="icon-btn" onClick={() => setMap(true)} aria-label="Picture as a map" aria-keyshortcuts="Q" data-tip="Look at the picture, zoom in and draw on it" data-key="Q">
-        <MapIcon />
       </button>
       <NoteButton createRef={createNote} />
     </>
