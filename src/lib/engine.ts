@@ -320,6 +320,8 @@ export interface Hand {
   v: number
   vx: number
   vy: number
+  ax: number
+  ay: number
   lx: number
   ly: number
   px: number
@@ -633,13 +635,16 @@ export function warmSprites() {
 }
 const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 // What's carried swings around the pointer like something pinned there (see swing()): pushed round
-// by the pointer speeding up and slowing down (KICK) and by the air it moves through (DRAG, 1/s),
-// pulled straight again by a spring (K, 1/s²) and slowed (DAMP, 1/s), and never past MAX (radians).
-const SWAY_KICK = 0.17
-const SWAY_DRAG = 0.4
+// by the pointer speeding up and slowing down (KICK, smoothed over ACC_MS ms so uneven pointer events
+// don't make it jitter) and by the air it moves through (DRAG, 1/s), pulled straight again by a spring
+// (K, 1/s²) and slowed nearly to a stop (DAMP, 1/s), so it settles without wobbling, and never pushed
+// past MAX (radians).
+const SWAY_KICK = 0.12
+const SWAY_DRAG = 0.55
 const SWAY_K = 70
-const SWAY_DAMP = 10
+const SWAY_DAMP = 18
 const SWAY_MAX = 0.09
+const SWAY_ACC_MS = 60
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
 const TRAY_H = 4
@@ -3471,7 +3476,7 @@ export class Engine {
       mx /= area
       my /= area
     }
-    return { pointer: g.pointer, held: true, a: 0, v: 0, vx: 0, vy: 0, lx: g.sx, ly: g.sy, px: g.px, py: g.py, mx, my, area, objs }
+    return { pointer: g.pointer, held: true, a: 0, v: 0, vx: 0, vy: 0, ax: 0, ay: 0, lx: g.sx, ly: g.sy, px: g.px, py: g.py, mx, my, area, objs }
   }
 
   // Swings what this player moves by hand (pieces, images, notes and trays) with the pointer's
@@ -3499,17 +3504,16 @@ export class Engine {
       this.hand = null
       return false
     }
-    // The pointer's speed, smoothed, and how fast it changes (screen px/s and px/s²).
-    let ax = 0
-    let ay = 0
+    // The pointer's speed, smoothed, and how fast it changes, smoothed again (screen px/s and px/s²).
     if (f > 0) {
       const k = ease(dt, 40)
       const vx = h.vx
       const vy = h.vy
       h.vx += ((g.sx - h.lx) / f - h.vx) * k
       h.vy += ((g.sy - h.ly) / f - h.vy) * k
-      ax = (h.vx - vx) / f
-      ay = (h.vy - vy) / f
+      const ka = ease(dt, SWAY_ACC_MS)
+      h.ax += ((h.vx - vx) / f - h.ax) * ka
+      h.ay += ((h.vy - vy) / f - h.ay) * ka
     }
     h.lx = g.sx
     h.ly = g.sy
@@ -3537,8 +3541,10 @@ export class Engine {
     // harder to turn, so bigger loads swing less.
     const rho2 = (area * z * z) / 6
     const inertia = lx * lx + ly * ly + rho2 || 1
-    const fx = -(SWAY_KICK * ax + SWAY_DRAG * h.vx)
-    const fy = -(SWAY_KICK * ay + SWAY_DRAG * h.vy)
+    const fx = -(SWAY_KICK * h.ax + SWAY_DRAG * h.vx)
+    const fy = -(SWAY_KICK * h.ay + SWAY_DRAG * h.vy)
+    // The push is limited, rather than the angle stopped hard, so it never bounces off a limit.
+    const lim = SWAY_K * SWAY_MAX
     // Stepped finely enough to stay steady on a slow frame. The lever turns as it swings, so it comes
     // to rest trailing behind, not spinning on.
     const steps = Math.ceil(f / 0.008)
@@ -3548,14 +3554,12 @@ export class Engine {
       const s = Math.sin(h.a)
       const rx = lx * c - ly * s
       const ry = lx * s + ly * c
-      const turn = (rx * fy - ry * fx) / inertia
-      // Past half of MAX the spring stiffens, so it leans less and less the further it goes.
-      const over = Math.max(0, Math.abs(h.a) - SWAY_MAX * 0.5) * Math.sign(h.a)
-      h.v += (turn - SWAY_K * h.a - SWAY_K * 12 * over - SWAY_DAMP * h.v) * st
+      const turn = lim * Math.tanh((rx * fy - ry * fx) / inertia / lim)
+      h.v += (turn - SWAY_K * h.a - SWAY_DAMP * h.v) * st
       h.a = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, h.a + h.v * st))
     }
     const still = Math.abs(h.a) < 0.0005 && Math.abs(h.v) < 0.005 && Math.hypot(h.vx, h.vy) < 2
-    if (still) h.a = h.v = h.vx = h.vy = 0
+    if (still) h.a = h.v = h.vx = h.vy = h.ax = h.ay = 0
     return !still
   }
 
