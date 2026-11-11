@@ -2,7 +2,7 @@
 // the time players spend on them.
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
-import { LIMITS } from '../shared/protocol.ts'
+import { LIMITS, PREVIEW_H, PREVIEW_W } from '../shared/protocol.ts'
 import type { NewRoom, PlayerRef, RoomDetails } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
 import { fail, ok, readJson, siteOrigin } from './http.ts'
@@ -20,6 +20,15 @@ type Table = ReturnType<typeof createTable>
 const THUMB_SIDE = 480
 
 // Share of a jigsaw's pieces connected (0 to 1), from how many pieces (n) and groups it has.
+// A link preview picture as sent by the page (see src/lib/preview.ts): a JPEG data URL, at most
+// PREVIEW_MAX bytes. Returns its bytes, or null for anything else.
+const PREVIEW_MAX = 1024 * 1024
+function previewBytes(data: unknown): Buffer | null {
+  const m = typeof data === 'string' ? /^data:image\/jpeg;base64,(.*)$/s.exec(data) : null
+  const bytes = m ? Buffer.from(m[1], 'base64') : null
+  return bytes && bytes.length <= PREVIEW_MAX && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? bytes : null
+}
+
 const progress = (n: number, groups: number) => ({ progress: n > 1 ? (n - groups) / (n - 1) : 0, done: n > 0 && groups === 1 })
 
 // How many groups there are, and the time everyone spent, in room r.
@@ -41,18 +50,23 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       WHERE r.private = 0 OR r.id IN (SELECT room_id FROM room_players WHERE player_id = ?)
       ORDER BY r.created DESC`),
     room: prepare<Room>(
-      'SELECT id, name, created, cols, rows, shape, seed, width, height, long_pieces AS longPieces, owner, private FROM rooms WHERE id = ?',
+      `SELECT id, name, created, cols, rows, shape, seed, width, height, long_pieces AS longPieces, owner, private,
+              preview IS NOT NULL AS preview FROM rooms WHERE id = ?`,
     ),
     image: prepare<{ image: Uint8Array; image_type: string }>('SELECT image, image_type FROM rooms WHERE id = ?'),
     // What a jigsaw's link preview shows, see sharing().
-    share: prepare<{ id: string; name: string; width: number; height: number; private: number; thumb: number; n: number; groups: number }>(
-      `SELECT r.id, r.name, r.width, r.height, r.private, length(r.thumb) > 0 AS thumb, ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
+    share: prepare<{ id: string; name: string; width: number; height: number; private: number; preview: number; thumb: number; n: number; groups: number }>(
+      `SELECT r.id, r.name, r.width, r.height, r.private, r.preview IS NOT NULL AS preview, length(r.thumb) > 0 AS thumb,
+              ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
     ),
+    preview: prepare<{ preview: Uint8Array }>('SELECT preview FROM rooms WHERE id = ? AND preview IS NOT NULL'),
+    // Only ever set once, so a preview can be cached for good and nobody can swap one that's there.
+    setPreview: prepare('UPDATE rooms SET preview = ? WHERE id = ? AND preview IS NULL'),
     // Stored as text or as bytes, depending on how the jigsaw was saved.
     thumb: prepare<{ thumb: string | Uint8Array }>('SELECT thumb FROM rooms WHERE id = ?'),
     insertRoom: prepare(`
-      INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+      INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units, preview)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     insertPiece: prepare('INSERT INTO pieces (room_id, idx, x, y, r, g) VALUES (?, ?, ?, ?, ?, ?)'),
     join: prepare('INSERT OR IGNORE INTO room_players (room_id, player_id, joined) VALUES (?, ?, ?)'),
     member: prepare('SELECT 1 FROM room_players WHERE room_id = ? AND player_id = ?'),
@@ -170,6 +184,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
         b.longPieces ? 1 : 0,
         // The cells of a long piece start out in one group, so there are as many pieces as groups.
         b.longPieces ? new Set(pieces.map((p) => p.g)).size : 0,
+        previewBytes(b.preview),
       )
       if (hidden) q.join.run(id, owner.id, Date.now())
       for (const p of pieces) q.insertPiece.run(id, p.i, p.x, p.y, p.r, p.g)
@@ -178,7 +193,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     return ok({ id })
   }
 
-  // /api/rooms/:id[/image|thumb|snapshots|join|invite|time]
+  // /api/rooms/:id[/image|thumb|preview|snapshots|join|invite|time]
   async function room(req: IncomingMessage, id: string, action: string | undefined): Promise<Reply> {
     const room = q.room.get(id)
     if (!room) return fail(404, 'not found')
@@ -206,7 +221,19 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       const m = /^data:([^;]+);base64,(.*)$/s.exec(typeof thumb === 'string' ? thumb : Buffer.from(thumb).toString('latin1'))
       return m ? { file: Buffer.from(m[2], 'base64'), type: m[1] } : fail(404, 'not found')
     }
+    if (route === 'GET preview') {
+      const p = q.preview.get(id)
+      return p ? { file: Buffer.from(p.preview), type: 'image/jpeg' } : fail(404, 'not found')
+    }
     if (route === 'GET snapshots') return ok(table.snapshots(id))
+    // A jigsaw made before link previews gets one from the first page to open it (see Room.tsx).
+    // Read here, before the other posts, as it's bigger than they may be.
+    if (route === 'POST preview') {
+      const bytes = previewBytes((await readJson<{ image: string }>(req, 2 * PREVIEW_MAX)).image)
+      if (!bytes) return fail(400, 'bad request')
+      q.setPreview.run(bytes, id)
+      return ok({ ok: true })
+    }
     const b = await readJson<{ passphrase: string; players: string[]; seconds: number; client: string }>(req)
     const who = players.whoIs(b.passphrase)
     // Only the player who created the jigsaw may delete it; old jigsaws have no owner.
@@ -242,10 +269,13 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
   function sharing(id: string): SharedRoom | null {
     const r = q.share.get(id)
     if (!r || r.private) return null
-    // The thumbnail, made at most THUMB_SIDE on its longest side (see NewRoom.tsx), as the full
-    // picture can be several MB, more than some apps take for a preview. Jigsaws without one use the picture.
+    // Its preview picture (see src/lib/preview.ts). Until it has one, the thumbnail, made at most
+    // THUMB_SIDE on its longest side (see NewRoom.tsx), as the full picture can be several MB, more
+    // than some apps take for a preview; failing that, the picture.
     const k = r.thumb ? Math.min(1, THUMB_SIDE / Math.max(r.width, r.height)) : 1
-    const image = { path: `/api/rooms/${r.id}/${r.thumb ? 'thumb' : 'image'}`, width: Math.round(r.width * k), height: Math.round(r.height * k) }
+    const image = r.preview
+      ? { path: `/api/rooms/${r.id}/preview`, width: PREVIEW_W, height: PREVIEW_H }
+      : { path: `/api/rooms/${r.id}/${r.thumb ? 'thumb' : 'image'}`, width: Math.round(r.width * k), height: Math.round(r.height * k) }
     return { id: r.id, name: r.name, image, pieces: r.n, ...progress(r.n, r.groups) }
   }
 

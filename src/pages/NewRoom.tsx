@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api.ts'
+import { renderPreview } from '../lib/preview.ts'
 import { SHAPES, buildPuzzle, gridFor, outlinePath, samplePiecePath, scatter } from '../lib/geometry.ts'
 import { useApp } from '../lib/app.ts'
 import { navigate, paths } from '../lib/router.ts'
@@ -176,6 +177,7 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
         name: 'Jigsaw',
         image: full.data,
         thumb: thumb.data,
+        preview: renderPreview(img),
         private: hidden,
         invite: [],
         pieces: scatter(room),

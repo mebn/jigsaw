@@ -214,6 +214,8 @@ export interface RoomDetails {
   longPieces: number
   owner: string | null
   private: number
+  // Whether it has its link preview picture yet (1) or not (0), see src/lib/preview.ts.
+  preview: number
   pieces: PieceRow[]
   notes: NoteRow[]
   noteReactions: NoteReaction[]
@@ -242,12 +244,17 @@ export interface PiecePlacement {
   g: number
 }
 
-// What a new jigsaw is made from: image and thumb are data URLs; invite: the ids of players to
-// invite to a private one.
+// The size of a jigsaw's link preview picture (see src/lib/preview.ts), the size link previews are made for.
+export const PREVIEW_W = 1200
+export const PREVIEW_H = 630
+
+// What a new jigsaw is made from: image, thumb and preview (its link preview picture) are data
+// URLs; invite: the ids of players to invite to a private one.
 export interface NewRoom extends PuzzleSpec {
   name: string
   image: string
   thumb: string
+  preview?: string
   private: boolean
   invite: string[]
   pieces: PiecePlacement[]

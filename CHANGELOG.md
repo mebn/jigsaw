@@ -8,7 +8,7 @@
 - A note you drag is now outlined as you move it, like an image or a tray, and the others see it outlined in your colour.
 - The selection box another player drags out now grows smoothly with their pointer instead of in jumps.
 - The list of players now scrolls inside its window, so its scrollbar no longer sticks out past the rounded corners.
-- A link to a jigsaw now shows that jigsaw's picture, name and how far along it is when you paste it in a chat or post. Links to private jigsaws still show the site's own preview, so their picture stays with those who have the link.
+- A link to a jigsaw now shows that jigsaw's picture, name and how far along it is when you paste it in a chat or post, as a big, sharp preview. Jigsaws made before today get theirs the next time someone opens them. Links to private jigsaws still show the site's own preview, so their picture stays with those who have the link.
 - The site's own link preview is now a plain white jigsaw with grey seams, without any text.
 - The celebrate button in a jigsaw's top bar now shows a thumbs-up drawn in the same style as the other buttons, instead of an emoji.
 - Switching dark mode on or off in a jigsaw now changes the table's colour straight away, instead of leaving it in the old one.

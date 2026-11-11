@@ -57,6 +57,8 @@ export const api = {
   imageUrl: (id: string) => `/api/rooms/${id}/image`,
   snapshots: (id: string) => request<Snapshot[]>(`/api/rooms/${id}/snapshots`),
   create: (body: NewRoom) => post<{ id: string }>('/api/rooms', body),
+  // A link preview picture for a jigsaw that has none yet (see src/lib/preview.ts); image: a JPEG data URL.
+  preview: (id: string, image: string) => post<{ ok: true }>(`/api/rooms/${id}/preview`, { image }),
   remove: (id: string, passphrase: string | undefined) => request<{ ok: true }>(`/api/rooms/${id}`, { method: 'DELETE', body: { passphrase } }),
   // Adds seconds to the time this player spent on a jigsaw. beacon: the page is going away, so it's
   // sent in a way that outlives it.
