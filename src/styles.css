@@ -3245,14 +3245,14 @@ button.link:hover {
 .icon-btn.split-arrow.open svg {
   transform: rotate(180deg);
 }
-/* The split screen button's menu of layouts, each with a picture of it. */
+/* The split screen button's menu of layouts, each a picture of it with a tick on the chosen one. */
 .context-menu.split-menu {
+  width: max-content;
   min-width: 0;
 }
 .context-menu.split-menu button {
   justify-content: flex-start;
   gap: 10px;
-  white-space: nowrap;
 }
 .split-menu-icon {
   width: 20px;
@@ -3262,8 +3262,8 @@ button.link:hover {
 }
 .split-menu-check {
   width: 1em;
-  margin-left: auto;
-  padding-left: 14px;
+  flex: none;
+  text-align: center;
   color: var(--muted);
 }
 /* A tray's name and colour, or an image's opacity, at the top of its menu. */

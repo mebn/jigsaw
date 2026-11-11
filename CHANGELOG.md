@@ -2,6 +2,7 @@
 
 ## 11 November 2026
 
+- The split screen button now sits after the reactions button in the toolbar, and its layout menu shows just a picture of each layout, with the tick on the chosen one sitting neatly inside its highlight.
 - Pieces, groups of pieces, images, notes and trays now swing a little as you drag them, as if pinned to the pointer where you hold them: they trail behind the way you move them, in any direction, more the faster you go and the further from their middle you hold them. Speeding up or stopping gives them a little push. Big things swing less than small ones, and everyone else in the room sees them swing too. It's off if your device is set to reduce motion.
 - Images and notes moved by another player now glide smoothly after them, like pieces and trays, instead of jumping along, and notes lift with a deeper shadow while they're moved.
 - Moving or resizing an image now hides the card saying who put it there, and its menu button, until you let go.

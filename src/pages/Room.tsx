@@ -452,15 +452,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       >
         <Hand />
       </button>
-      <SplitButton
-        on={split}
-        panes={splitPanes}
-        onToggle={() => setSplit((v) => !v)}
-        onPanes={(n) => {
-          setSplitPanes(n)
-          setSplit(true)
-        }}
-      />
       <button
         className={`icon-btn draw-btn${drawMode ? ' on' : ''}`}
         onClick={() => setDrawMode((v) => !v)}
@@ -473,6 +464,15 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         <Pencil />
       </button>
       <Reactions engine={engine} sock={session.sock} />
+      <SplitButton
+        on={split}
+        panes={splitPanes}
+        onToggle={() => setSplit((v) => !v)}
+        onPanes={(n) => {
+          setSplitPanes(n)
+          setSplit(true)
+        }}
+      />
       <span className="bar-sep" />
       <TrayButton engine={engine} />
       <button

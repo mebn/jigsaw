@@ -111,13 +111,13 @@ export default function SplitButton({ on, panes, onToggle, onPanes }: SplitButto
                 key={n}
                 role="menuitemradio"
                 aria-checked={n === panes}
+                aria-label={label}
                 onClick={() => {
                   setOpen(false)
                   onPanes(n)
                 }}
               >
                 <I className="split-menu-icon" />
-                <span>{label}</span>
                 <span className="split-menu-check" aria-hidden="true">
                   {n === panes ? '✓' : ''}
                 </span>
