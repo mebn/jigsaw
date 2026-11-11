@@ -252,7 +252,7 @@ export type RoomMessage =
   | { type: 'moves'; client: string; pieces: PieceMove[]; turns?: Turn[]; fix?: true }
   | { type: 'grab'; client: string; ids: number[]; ox: number[]; oy: number[]; r0: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; client: string; px: number; py: number; k?: number }
-  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; refs?: unknown; notes?: unknown; trays?: unknown }
+  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; objs?: unknown }
   | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: string; player?: string; box?: number[] }
   | { type: 'marks'; client: string; sel?: number[]; hl?: number[]; refs?: string[]; notes?: string[]; tray?: string | null; player?: string }
 

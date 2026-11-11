@@ -349,8 +349,9 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       const el = layer.current?.querySelector<HTMLElement>(`[data-note="${id}"]`)
       return { w: el?.offsetWidth || NOTE_W * S, h: el?.offsetHeight || S }
     }
-    // Notes turned with the hand last frame.
+    // Notes turned with the hand last frame, and those easing to where another player moved them.
     let tilted = new Set<string>()
+    let glided = new Set<string>()
     engine.notes = {
       get: () =>
         latest.current.map((n) => ({
@@ -384,22 +385,30 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           if (send === 'save') engine.trackObj('note', n.id, m)
         }
       },
-      // Each frame: notes stuck to trays follow their tray's corner as it moves or changes size, its
-      // colour, its lift while it's moved, and its outline while it's selected (data-lit, in the
-      // colour --lit).
+      // Each frame, as the engine draws the images and trays (see stepObjs() in engine.ts): a note
+      // another player moves eases to its new place, and one stuck to a tray follows the tray's corner
+      // as it moves or changes size. Each takes its lift while it's moved (its own, or its tray's),
+      // its tray's colour, and its tray's outline while that's selected (data-lit, in the colour --lit).
       follow: () => {
         const lit = new Map<string, string>()
         let marks: Map<string, string> | undefined
+        const easing = new Set<string>()
         for (const n of latest.current) {
-          const p = onTray(n)
-          const el = p.x != null && layer.current?.querySelector<HTMLElement>(`[data-note="${n.id}"]`)
+          const g = engine.glidePos('note', n.id)
+          const up = Math.max(engine.upOf('note', n.id), n.tray ? engine.upOf('tray', n.tray) : 0)
+          if (!n.tray && !g && !up && !glided.has(n.id)) continue
+          const el = layer.current?.querySelector<HTMLElement>(`[data-note="${n.id}"]`)
           if (!el) continue
-          if (el.style.left !== `${p.x}px`) el.style.left = `${p.x}px`
-          if (el.style.top !== `${p.y}px`) el.style.top = `${p.y}px`
+          // Done easing, it's where it's kept again.
+          const p = n.tray ? onTray(n) : g ? { x: g[0], y: g[1] } : { x: n.x, y: n.y }
+          if (g && !n.tray) easing.add(n.id)
+          if (p.x != null && el.style.left !== `${p.x}px`) el.style.left = `${p.x}px`
+          if (p.y != null && el.style.top !== `${p.y}px`) el.style.top = `${p.y}px`
+          const ups = up ? String(up) : ''
+          if (el.style.getPropertyValue('--up') !== ups) el.style.setProperty('--up', ups)
+          if (!n.tray) continue
           const edge = edgeOf(n)
           if (el.style.getPropertyValue('--edge') !== edge) el.style.setProperty('--edge', edge!)
-          const up = String(engine.trayUp.get(n.tray!)?.value || 0)
-          if (el.style.getPropertyValue('--up') !== up) el.style.setProperty('--up', up)
           const color = n.tray === engine.traySel ? 'var(--sel)' : (marks ||= engine.markedBy('tray')).get(n.tray!)
           if (!color) continue
           lit.set(n.id, color)
@@ -407,6 +416,7 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           if (!('lit' in el.dataset)) el.dataset.lit = ''
         }
         for (const el of layer.current?.querySelectorAll<HTMLElement>('[data-lit]') || []) if (!lit.has(el.dataset.note!)) delete el.dataset.lit
+        glided = easing
         // Notes moved by hand, here or by another player, and those stuck to a tray moved by hand,
         // swing with it around the pointer (see swing() in engine.ts).
         const now = new Set<string>()
@@ -499,6 +509,14 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       }
       const incoming = msg.note
       engine.seen('note', incoming.id, incoming)
+      // Moved by another player: lifted while they move it, and easing to each new place from where
+      // it's drawn now, as images, trays and pieces do (see glideTo() in engine.ts).
+      if (!engine.holds('note', incoming.id)) {
+        engine.raise('note', incoming.id, msg.live, msg.client)
+        const el = layer.current?.querySelector<HTMLElement>(`[data-note="${incoming.id}"]`)
+        const from = el ? [parseFloat(el.style.left), parseFloat(el.style.top)] : null
+        if (from?.every(isFinite) && !incoming.tray) engine.glideTo('note', incoming.id, [incoming.x, incoming.y], from)
+      }
       setNotes((ns) => {
         const editing = document.activeElement?.closest?.(`[data-note="${incoming.id}"]`)
         const i = ns.findIndex((n) => n.id === incoming.id)

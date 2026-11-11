@@ -110,12 +110,21 @@ export interface NotesApi {
   // A tray is going; save: this player removed it.
   trayGone(id: string, save: boolean): void
 }
-// A tray lifted off the table while it's moved (see liftTray()): value easing to target, 0 down and
-// 1 up; client: the other player moving it, null for this one.
-export interface TrayLift {
+// An image, note or tray lifted off the table while it's moved (see raise()): value easing to
+// target, 0 down and 1 up; client: the other player moving it, null for this one.
+export interface ObjLift {
   value: number
   target: number
   client: string | null
+}
+// An image, note or tray easing to where another player moved it (see glideTo()), as their pieces
+// do: where it's drawn now (v) and where it's going (to), each x, y, then w (images, trays) and h
+// (trays).
+export interface ObjGlide {
+  kind: ObjKind
+  id: string
+  v: number[]
+  to: number[]
 }
 // The camera: the world point in the middle of the view, and the zoom (screen px per world unit).
 export interface Cam {
@@ -214,7 +223,7 @@ export type Turn = { self: true; a: number } | { self?: false; cx: number; cy: n
 export type OutMessage =
   | { type: 'grab'; ids: number[]; ox: number[]; oy: number[]; r0: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; px: number; py: number; k: number }
-  | { type: 'sway'; a: number; px?: number; py?: number; pieces?: true; refs?: string[]; notes?: string[]; trays?: string[] }
+  | { type: 'sway'; a: number; px?: number; py?: number; pieces?: true; objs?: string[] }
   | { type: 'moves'; pieces: PieceState[]; turns?: TurnMsg[]; fix?: boolean }
   | { type: 'marks'; sel: number[]; hl: number[]; refs: string[]; notes: string[]; tray: string | null; player: string }
   | { type: 'cursor'; hide: true }
@@ -225,7 +234,7 @@ export type OutMessage =
 export type RemoteMessage =
   | { type: 'grab'; client: string; ids?: number[]; ox?: number[]; oy?: number[]; r0?: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; client: string; px: number; py: number; k?: number }
-  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; refs?: unknown; notes?: unknown; trays?: unknown }
+  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; objs?: unknown }
   | { type: 'moves'; client: string; pieces?: PieceState[]; turns?: unknown; fix?: boolean }
   | { type: 'marks'; client: string; sel?: unknown; hl?: unknown; refs?: unknown; notes?: unknown; tray?: unknown; player?: unknown }
   | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: unknown; box?: unknown; player?: unknown }
@@ -288,7 +297,7 @@ export interface Drag {
 }
 // How what another player holds swings (see remoteSway()): the angle shown, easing to the one they
 // sent (ta), around their pointer as sent (px, py) and eased like their pieces and trays (ex, ey), and
-// what swings: the pieces they carry, and images, notes and trays by id.
+// what swings: the pieces they carry, and images, notes and trays (see objKey()).
 export interface RemoteSway {
   a: number
   ta: number
@@ -297,15 +306,13 @@ export interface RemoteSway {
   ex: number
   ey: number
   pieces: boolean
-  refs: Set<string>
-  notes: Set<string>
-  trays: Set<string>
+  objs: Set<string>
 }
 // What this player holds swinging from the pointer, see swing(): the pointer and whether it still
 // holds them (after letting go, what's left of the swing settles), the angle (radians, around the
 // pivot) and its speed, the pointer's smoothed speed (screen px/s) and where it was last frame, the
 // pivot (the pointer, in world units), the middle of what's carried besides pieces from the pivot and
-// its area (world units), and the images, notes and trays swinging.
+// its area (world units), and the images, notes and trays swinging (see objKey()).
 export interface Hand {
   pointer: number
   held: boolean
@@ -320,9 +327,7 @@ export interface Hand {
   mx: number
   my: number
   area: number
-  refs: Set<string>
-  notes: Set<string>
-  trays: Set<string>
+  objs: Set<string>
 }
 // Pieces lifted off the table (carried, or landing), see liftPoses().
 export interface Lift {
@@ -523,6 +528,8 @@ export interface PieceChange {
   a: Look
 }
 export type ObjKind = 'ref' | 'tray' | 'note'
+// How images, notes and trays are told apart in one list: by kind and id, as 'tray:abc'.
+export const objKey = (kind: ObjKind, id: string) => `${kind}:${id}`
 // An image, tray or note as undo remembers it.
 export type ObjSnap = Ref | Tray | TrayInput | NoteData
 // An image's, tray's or note's change: before (b) and after (a), null when it isn't there.
@@ -622,14 +629,14 @@ export function warmSprites() {
   }
 }
 const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
-// Carried pieces swing around the pointer as it moves, as if hanging from it (see swing()): at most
-// this far (radians, less for bigger loads), reaching most of it at this speed (screen px/s), as if
-// held this far (screen px) above their middle, on a spring this stiff (1/s²) and damped.
-const SWAY_MAX = 0.24
-const SWAY_SPEED = 1500
-const SWAY_HANG = 70
-const SWAY_K = 240
-const SWAY_DAMP = 0.45
+// What's carried swings around the pointer like something pinned there (see swing()): pushed round
+// by the pointer speeding up and slowing down (KICK) and by the air it moves through (DRAG, 1/s),
+// pulled straight again by a spring (K, 1/s²) and slowed (DAMP, 1/s), and never past MAX (radians).
+const SWAY_KICK = 0.35
+const SWAY_DRAG = 0.9
+const SWAY_K = 70
+const SWAY_DAMP = 10
+const SWAY_MAX = 0.17
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
 const TRAY_H = 4
@@ -824,7 +831,10 @@ export class Engine {
   players: Map<string, string>
   lastMarks: number
   rlift: Map<string, RemoteLift>
-  trayUp: Map<string, TrayLift>
+  // Images, notes and trays lifted while they're moved, and moved by others easing into place, by
+  // objKey() (see raise() and glideTo()).
+  lifts: Map<string, ObjLift>
+  glides: Map<string, ObjGlide>
   order: number[]
   margin: number
   radius: number
@@ -852,7 +862,6 @@ export class Engine {
   hist: { undo: HistoryStep[]; redo: HistoryStep[] }
   sh: PieceSnapshot
   shTray!: Map<number, string>
-  trayTo: Map<string, { x: number; y: number; w: number; h: number }>
   objSh: { [K in ObjKind]: Map<string, ObjSnap> }
   pend: Pending | null
   inPress: boolean
@@ -1115,10 +1124,10 @@ export class Engine {
     this.shTray = new Map()
     this.trackTrays()
     // Where trays that others move are headed: id -> { x, y, w, h }.
-    this.trayTo = new Map()
     // Trays lifted off the table while they're moved, by this player or another (client, null for
     // this one): id -> { value, target, client }, value easing from 0 (down) to 1 (up).
-    this.trayUp = new Map()
+    this.lifts = new Map()
+    this.glides = new Map()
     // Images, trays and notes as they were at the last change, by anyone, by id.
     this.objSh = { ref: new Map(), tray: new Map(), note: new Map() }
     this.resetSeen('ref', this.refs)
@@ -1823,7 +1832,7 @@ export class Engine {
       notes: notes.map((n) => ({ id: n.id, x: n.x, y: n.y })),
       trays: [],
     }
-    this.canvas.style.cursor = 'grabbing'
+    this.hold()
     // Carried images go on top, like a lifted piece.
     this.refs = this.refs.filter((r) => !this.selRefs.has(r.id)).concat(this.refs.filter((r) => this.selRefs.has(r.id)))
     this.invalidate()
@@ -1838,7 +1847,7 @@ export class Engine {
     this.canvas.setPointerCapture(e.pointerId)
     this.pointers.set(e.pointerId, [sx, sy])
     this.carry = { pointer: e.pointerId, wx, wy, sx0: sx, sy0: sy, moved: false, note: id, alone: true, refs: [], notes: [{ id, x: n.x, y: n.y }], trays: [] }
-    this.canvas.style.cursor = 'grabbing'
+    this.hold()
   }
 
   carryAt(wx: number, wy: number, c = this.carry!): { refs: Spot[]; notes: Spot[]; trays: Spot[] } {
@@ -1898,7 +1907,7 @@ export class Engine {
     this.carry = null
     clearTimeout(this.carryTimer)
     if (!c) return
-    for (const t of c.trays) this.liftTray(t.id, false)
+    this.invalidate()
     // A click on a selected note without moving selects just that note.
     if (!c.moved && c.note) return this.notes?.click(c.note)
     if (!c.at) return
@@ -2243,7 +2252,6 @@ export class Engine {
       if (c.moved && c.lift) {
         const l = c.lift
         c.lift = null
-        this.liftTray(c.trays[0].id, true)
         // What's in it now, which may have changed since the press.
         const t = this.trays.find((x) => x.id === c.trays[0]?.id)
         const ids = t ? this.trayPieces(t) : []
@@ -2680,9 +2688,7 @@ export class Engine {
     const keep =this.lift && this.lift.ids.length === ids.length && set.has(this.lift.ids[0])
     // Pieces riding in a moved tray aren't lifted themselves: the tray is (see liftTray()).
     this.lift = { ids, set, value: keep ? this.lift!.value : 0, target: 1, px: wx, py: wy, angle: 0, tray }
-    this.canvas.style.cursor = 'grabbing'
-    this.showTip(null)
-    this.setHighlight(null)
+    this.hold()
     const d = this.drag
     this.send({ type: 'grab', ids, ox: d.ox.map(r2), oy: d.oy.map(r2), r0: d.r0, px: r2(wx), py: r2(wy), tray: tray || undefined })
     this.lastLive = performance.now()
@@ -3432,6 +3438,7 @@ export class Engine {
     const refs = new Set(c ? c.refs.map((p) => p.id) : r ? [r.ref.id] : [])
     const notes = new Set(c ? c.notes.map((p) => p.id) : [])
     const trays = new Set(c ? c.trays.map((p) => p.id) : [])
+    const objs = new Set([...[...refs].map((id) => objKey('ref', id)), ...[...notes].map((id) => objKey('note', id)), ...[...trays].map((id) => objKey('tray', id))])
     const boxes: [number, number, number, number][] = []
     for (const ref of this.refs) {
       if (!refs.has(ref.id)) continue
@@ -3452,7 +3459,7 @@ export class Engine {
       mx /= area
       my /= area
     }
-    return { pointer: g.pointer, held: true, a: 0, v: 0, vx: 0, vy: 0, lx: g.sx, ly: g.sy, px: g.px, py: g.py, mx, my, area, refs, notes, trays }
+    return { pointer: g.pointer, held: true, a: 0, v: 0, vx: 0, vy: 0, lx: g.sx, ly: g.sy, px: g.px, py: g.py, mx, my, area, objs }
   }
 
   // Swings what this player moves by hand (pieces, images, notes and trays) with the pointer's
@@ -3480,18 +3487,24 @@ export class Engine {
       this.hand = null
       return false
     }
+    // The pointer's speed, smoothed, and how fast it changes (screen px/s and px/s²).
+    let ax = 0
+    let ay = 0
     if (f > 0) {
       const k = ease(dt, 40)
+      const vx = h.vx
+      const vy = h.vy
       h.vx += ((g.sx - h.lx) / f - h.vx) * k
       h.vy += ((g.sy - h.ly) / f - h.vy) * k
+      ax = (h.vx - vx) / f
+      ay = (h.vy - vy) / f
     }
     h.lx = g.sx
     h.ly = g.sy
     h.px = g.px
     h.py = g.py
-    // The lever from the pointer to the middle of what's carried, weighed by area, on screen, hanging
-    // a little below it so even things held by their middle lean as they're moved. The pointer's
-    // speed across it turns them; bigger loads swing less. Pieces riding in a tray count as the tray.
+    // The lever from the pointer to the middle of what's carried, weighed by area, on screen. Pieces
+    // riding in a tray count as the tray.
     const d = this.drag
     let mx = h.mx * h.area
     let my = h.my * h.area
@@ -3506,18 +3519,28 @@ export class Engine {
     }
     const z = this.cam.z
     const lx = area ? (mx / area) * z : 0
-    const ly = (area ? (my / area) * z : 0) + SWAY_HANG
-    const across = (ly * h.vx - lx * h.vy) / Math.hypot(lx, ly)
-    const pieces = area / (this.geo.w * this.geo.h)
-    const max = SWAY_MAX / (1 + 0.12 * Math.sqrt(Math.max(0, pieces - 1)))
-    const target = max * Math.tanh(across / SWAY_SPEED)
-    // A damped spring toward it, stepped finely enough to stay steady on a slow frame.
+    const ly = area ? (my / area) * z : 0
+    // Held by its middle it turns hardly at all; held off it, it swings round behind the way it's
+    // pulled, whichever way that is. The load's own size (its spread around its middle, rho²) makes it
+    // harder to turn, so bigger loads swing less.
+    const rho2 = (area * z * z) / 6
+    const inertia = lx * lx + ly * ly + rho2 || 1
+    const fx = -(SWAY_KICK * ax + SWAY_DRAG * h.vx)
+    const fy = -(SWAY_KICK * ay + SWAY_DRAG * h.vy)
+    // Stepped finely enough to stay steady on a slow frame. The lever turns as it swings, so it comes
+    // to rest trailing behind, not spinning on.
     const steps = Math.ceil(f / 0.008)
     const st = f / Math.max(1, steps)
-    const c = 2 * SWAY_DAMP * Math.sqrt(SWAY_K)
     for (let i = 0; i < steps; i++) {
-      h.v += (SWAY_K * (target - h.a) - c * h.v) * st
-      h.a += h.v * st
+      const c = Math.cos(h.a)
+      const s = Math.sin(h.a)
+      const rx = lx * c - ly * s
+      const ry = lx * s + ly * c
+      const turn = (rx * fy - ry * fx) / inertia
+      // Past half of MAX the spring stiffens, so it leans less and less the further it goes.
+      const over = Math.max(0, Math.abs(h.a) - SWAY_MAX * 0.5) * Math.sign(h.a)
+      h.v += (turn - SWAY_K * h.a - SWAY_K * 12 * over - SWAY_DAMP * h.v) * st
+      h.a = Math.max(-SWAY_MAX, Math.min(SWAY_MAX, h.a + h.v * st))
     }
     const still = Math.abs(h.a) < 0.0005 && Math.abs(h.v) < 0.005 && Math.hypot(h.vx, h.vy) < 2
     if (still) h.a = h.v = h.vx = h.vy = 0
@@ -3541,9 +3564,7 @@ export class Engine {
       px: r2(h.px),
       py: r2(h.py),
       pieces: h.held && this.drag ? true : undefined,
-      refs: h.refs.size ? [...h.refs] : undefined,
-      notes: h.notes.size ? [...h.notes] : undefined,
-      trays: h.trays.size ? [...h.trays] : undefined,
+      objs: h.objs.size ? [...h.objs] : undefined,
     })
   }
 
@@ -3558,16 +3579,14 @@ export class Engine {
     if (typeof msg.px !== 'number' || typeof msg.py !== 'number' || !isFinite(msg.px) || !isFinite(msg.py)) return
     const ids = (v: unknown) => new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 500) : [])
     if (!r) {
-      r = { a: 0, ta: a, px: msg.px, py: msg.py, ex: msg.px, ey: msg.py, pieces: false, refs: new Set(), notes: new Set(), trays: new Set() }
+      r = { a: 0, ta: a, px: msg.px, py: msg.py, ex: msg.px, ey: msg.py, pieces: false, objs: new Set() }
       this.rsway.set(msg.client, r)
     }
     r.ta = a
     r.px = msg.px
     r.py = msg.py
     r.pieces = !!msg.pieces
-    r.refs = ids(msg.refs)
-    r.notes = ids(msg.notes)
-    r.trays = ids(msg.trays)
+    r.objs = ids(msg.objs)
     this.invalidate()
   }
 
@@ -3594,18 +3613,19 @@ export class Engine {
     for (const i of ids) if (!this.turns.has(i)) this.turns.set(i, t)
   }
 
-  // The pivot and angle something swings by, ours or another player's: images and notes as sent, as
-  // they jump to where they're sent; trays (and notes stuck to them) eased, as their boxes are.
-  swayFor(kind: 'refs' | 'notes' | 'trays', id: string): [number, number, number] | null {
+  // The pivot and angle an image, note or tray swings by, ours or another player's. Theirs turn
+  // around their pointer eased, as what they move eases after it (see glideTo()).
+  swayFor(kind: ObjKind, id: string): [number, number, number] | null {
+    const k = objKey(kind, id)
     const h = this.hand
-    if (h?.a && h[kind].has(id)) return [h.px, h.py, h.a]
-    for (const r of this.rsway.values()) if (r.a && r[kind].has(id)) return kind === 'trays' ? [r.ex, r.ey, r.a] : [r.px, r.py, r.a]
+    if (h?.a && h.objs.has(k)) return [h.px, h.py, h.a]
+    for (const r of this.rsway.values()) if (r.a && r.objs.has(k)) return [r.ex, r.ey, r.a]
     return null
   }
 
   // A note's swing: its own, or its tray's when it's stuck to one.
   noteSway(id: string, tray: string | null | undefined) {
-    return this.swayFor('notes', id) || (tray ? this.swayFor('trays', tray) : null)
+    return this.swayFor('note', id) || (tray ? this.swayFor('tray', tray) : null)
   }
 
   // When the pieces are let go, what's left of their swing settles as a turn on the table around the
@@ -3624,7 +3644,7 @@ export class Engine {
 
   // Where something carried with its middle at (x, y) is drawn while the hand swings: its middle
   // turned around the pivot, and the angle.
-  swayed(kind: 'refs' | 'trays', id: string, x: number, y: number): [number, number, number] {
+  swayed(kind: ObjKind, id: string, x: number, y: number): [number, number, number] {
     const w = this.swayFor(kind, id)
     if (!w) return [x, y, 0]
     const [px, py, a] = w
@@ -3637,7 +3657,7 @@ export class Engine {
 
   // The same for the 2D drawing over an image or tray (its buttons, tags and outline): sets this.tilt
   // for it, and tiltCtx() then turns the overlay with it.
-  tiltFor(kind: 'refs' | 'trays', id: string) {
+  tiltFor(kind: ObjKind, id: string) {
     const w = this.swayFor(kind, id)
     this.tilt = w ? [(w[0] - this.cam.x) * this.cam.z + this.vw / 2, (w[1] - this.cam.y) * this.cam.z + this.vh / 2, w[2]] : null
   }
@@ -4034,7 +4054,7 @@ export class Engine {
       this.players.delete(msg.client)
       this.rlift.delete(msg.client)
       this.rsway.delete(msg.client)
-      for (const u of this.trayUp.values()) if (u.client === msg.client) u.target = 0
+      for (const u of this.lifts.values()) if (u.client === msg.client) u.target = 0
       this.markNotes()
       const d = this.remote.get(msg.client)
       if (d) for (const i of d.ids) this.held.delete(i)
@@ -4296,23 +4316,32 @@ export class Engine {
     if (this.trim?.id === id) this.endTrim()
     this.selRefs.delete(id)
     if (this.refDrag?.ref.id === id) this.refDrag = null
+    this.forget('ref', id)
     if (!remote) this.onRefDelete?.(id)
     this.invalidate()
   }
 
   // Another player added, moved or resized an image.
-  remoteRef(ref: Ref) {
-    if (this.refDrag?.ref.id === ref.id || this.carry?.refs.some((r) => r.id === ref.id)) return
+  // Another player added or changed an image. live: they're still moving it, so it's lifted until they
+  // put it down, and it eases to each new place, as trays and pieces do.
+  remoteRef(ref: Ref, live = false, client: string | null = null) {
+    if (this.holds('ref', ref.id)) return
+    this.raise('ref', ref.id, live, client)
     const cur = this.refs.find((r) => r.id === ref.id)
-    if (cur) Object.assign(cur, ref)
-    else this.refs.push(ref)
-    this.seen('ref', ref.id, cur || ref)
+    if (cur) {
+      const { x, y, w, ...look } = ref
+      Object.assign(cur, look)
+      if ([x, y, w].every(isFinite)) this.glideTo('ref', cur.id, [x, y, w])
+      else Object.assign(cur, { x, y, w })
+    } else this.refs.push(ref)
+    this.seen('ref', ref.id, cur ? { ...cur, ...ref } : ref)
     this.invalidate()
   }
 
   setRefs(refs: Ref[]) {
     const dragging = this.refDrag?.ref
     this.refs = refs.map((r) => (dragging && r.id === dragging.id ? dragging : r))
+    this.forgetAll('ref')
     if (this.refSel && !this.refs.some((r) => r.id === this.refSel)) this.refSel = null
     for (const id of this.selRefs) if (!this.refs.some((r) => r.id === id)) this.selRefs.delete(id)
     this.resetSeen('ref', this.refs)
@@ -4504,7 +4533,10 @@ export class Engine {
       sx: rh.cx ? 1 : -1,
       sy: rh.cy ? 1 : -1,
     }
-    if (rh.mode === 'move') this.canvas.style.cursor = 'grabbing'
+    // Moving or resizing, its name tag and buttons go as they do for anything picked up.
+    const cursor = this.canvas.style.cursor
+    this.hold()
+    if (rh.mode !== 'move') this.canvas.style.cursor = cursor
     this.invalidate()
   }
 
@@ -4595,7 +4627,7 @@ export class Engine {
     if (remote) for (const i of ids) this.tray[i] = null
     else this.setTray(ids, null)
     this.trays = this.trays.filter((t) => t.id !== id)
-    this.trayUp.delete(id)
+    this.forget('tray', id)
     if (this.traySel === id) this.traySel = null
     if (this.carry) this.carry.trays = this.carry.trays.filter((t) => t.id !== id)
     if (!remote) this.onTrayDelete?.(id)
@@ -4605,29 +4637,159 @@ export class Engine {
     this.invalidate()
   }
 
-  // Lifts a tray off the table while it's moved (on), or puts it down. It eases up, casting a shadow
-  // and hiding what's under it, with the pieces in it lying flat in it (see drawGpu()). client: the
-  // other player moving it, if it isn't this one.
-  liftTray(id: string, on: boolean, client: string | null = null) {
-    const u = this.trayUp.get(id)
+  // ---- images, notes and trays: one way to move them -----------------------------------------
+  // Pieces are kept in their own arrays, for speed; images, notes and trays share what's here. Picked
+  // up by hand they lift (see liftHeld()), moved by another player they lift and ease after them (see
+  // remoteRef(), remoteTray() and the notes layer), and they swing as they're carried (see swing()).
+
+  // Something is picked up by hand: the pointer closes, and hover cards (who put something there),
+  // highlights and buttons go until it's put down.
+  hold() {
+    this.canvas.style.cursor = 'grabbing'
+    this.showTip(null)
+    this.setHighlight(null)
+    this.setHovered(null)
+  }
+
+  // Whether this player has this image, note or tray in hand.
+  holds(kind: ObjKind, id: string) {
+    const c = this.carry
+    if (c && (kind === 'ref' ? c.refs : kind === 'note' ? c.notes : c.trays).some((p) => p.id === id)) return true
+    return kind === 'ref' && this.refDrag?.ref.id === id
+  }
+
+  // Lifts an image, note or tray off the table while it's moved (on), or puts it down. It eases up and
+  // its shadow deepens; a tray also turns solid, hiding what's under it, with its pieces lying flat in
+  // it (see drawGpu()). client: the other player moving it, if it isn't this one.
+  raise(kind: ObjKind, id: string, on: boolean, client: string | null = null) {
+    const k = objKey(kind, id)
+    const u = this.lifts.get(k)
     if (u) Object.assign(u, { target: on ? 1 : 0, client })
-    else if (on) this.trayUp.set(id, { value: 0, target: 1, client })
+    else if (on) this.lifts.set(k, { value: 0, target: 1, client })
     this.invalidate()
+  }
+
+  // How far it's lifted, 0 to 1.
+  upOf(kind: ObjKind, id: string) {
+    return this.lifts.get(objKey(kind, id))?.value || 0
+  }
+
+  // Lifts what this player moves by hand, once it's moving, and puts down what they've let go of.
+  liftHeld() {
+    const held = new Set<string>()
+    const c = this.carry
+    if (c?.at && c.moved) {
+      for (const p of c.refs) held.add(objKey('ref', p.id))
+      for (const p of c.notes) held.add(objKey('note', p.id))
+      for (const p of c.trays) held.add(objKey('tray', p.id))
+    }
+    const r = this.refDrag
+    if (r?.mode === 'move' && r.moved) held.add(objKey('ref', r.ref.id))
+    for (const k of held) {
+      const u = this.lifts.get(k)
+      if (!u) this.lifts.set(k, { value: 0, target: 1, client: null })
+      else if (u.target !== 1 || u.client) Object.assign(u, { target: 1, client: null })
+    }
+    for (const [k, u] of this.lifts) if (!u.client && u.target && !held.has(k)) u.target = 0
+  }
+
+  // Where an image or tray is: x, y, then its width (and a tray's height).
+  objBox(kind: ObjKind, id: string): number[] | null {
+    if (kind === 'ref') {
+      const r = this.refs.find((x) => x.id === id)
+      return r ? [r.x, r.y, r.w] : null
+    }
+    if (kind === 'tray') {
+      const t = this.trays.find((x) => x.id === id)
+      return t ? [t.x, t.y, t.w, t.h] : null
+    }
+    return null
+  }
+
+  // An image, note or tray another player moved eases to its new place (to: as objBox(), a note's
+  // just x, y), the way their pieces do, rather than jumping each time word comes. from: where it's
+  // drawn now, for a note (they're drawn by the notes layer, which follows glidePos()).
+  glideTo(kind: ObjKind, id: string, to: number[], from?: number[]) {
+    const k = objKey(kind, id)
+    const g = this.glides.get(k)
+    if (g && g.v.length === to.length) g.to = to
+    else {
+      const v = from || this.objBox(kind, id)
+      if (!v || v.length !== to.length) return
+      this.glides.set(k, { kind, id, v: v.slice(), to })
+    }
+    this.invalidate()
+  }
+
+  // Where a note easing into place is drawn now, if it is.
+  glidePos(kind: ObjKind, id: string) {
+    return this.glides.get(objKey(kind, id))?.v || null
+  }
+
+  // Stops easing and lifting something that's gone.
+  forget(kind: ObjKind, id: string) {
+    this.glides.delete(objKey(kind, id))
+    this.lifts.delete(objKey(kind, id))
+  }
+
+  // Everything of a kind came afresh (after a reconnect): nothing of it is easing anywhere.
+  forgetAll(kind: ObjKind) {
+    for (const [k, g] of this.glides) if (g.kind === kind) this.glides.delete(k)
+  }
+
+  // A frame of images, notes and trays easing to where others moved them, and being lifted or put
+  // down. Returns whether any are still moving.
+  stepObjs(dt: number) {
+    let again = false
+    const f = ease(dt, 40)
+    for (const [k, g] of this.glides) {
+      // Picked up here since, it goes where this player takes it.
+      if (this.holds(g.kind, g.id)) {
+        this.glides.delete(k)
+        continue
+      }
+      let far = 0
+      for (let j = 0; j < g.v.length; j++) {
+        g.v[j] += (g.to[j] - g.v[j]) * f
+        far += Math.abs(g.to[j] - g.v[j])
+      }
+      const done = far < 0.05
+      if (done) g.v = g.to.slice()
+      if (g.kind === 'ref') {
+        const r = this.refs.find((x) => x.id === g.id)
+        if (r) [r.x, r.y, r.w] = g.v
+        else this.glides.delete(k)
+      } else if (g.kind === 'tray') {
+        const t = this.trays.find((x) => x.id === g.id)
+        if (t) [t.x, t.y, t.w, t.h] = g.v
+        else this.glides.delete(k)
+      }
+      if (done) this.glides.delete(k)
+      else again = true
+    }
+    for (const [k, u] of this.lifts) {
+      u.value += (u.target - u.value) * ease(dt, u.target ? 55 : 70)
+      if (Math.abs(u.target - u.value) < 0.005) {
+        u.value = u.target
+        if (!u.target) this.lifts.delete(k)
+      } else again = true
+    }
+    return again
   }
 
   // Another player added, moved, renamed or recoloured a tray. What's in it comes with the pieces'
   // moves, so a list sent along is left out.
   // live: they're still moving it, so it's lifted until they put it down.
   remoteTray(tray: TrayInput, live = false, client: string | null = null) {
-    if (this.carry?.trays.some((t) => t.id === tray.id)) return
-    this.liftTray(tray.id, live, client)
+    if (this.holds('tray', tray.id)) return
+    this.raise('tray', tray.id, live, client)
     const { pieces, ...rest } = tray
     const cur = this.trays.find((t) => t.id === tray.id)
     if (cur) {
       // Its box eases to the new place, as the pieces carried in it do.
       const { x, y, w, h, ...look } = rest
       Object.assign(cur, look)
-      if ([x, y, w, h].every(isFinite)) this.trayTo.set(cur.id, { x, y, w, h })
+      if ([x, y, w, h].every(isFinite)) this.glideTo('tray', cur.id, [x, y, w, h])
       else Object.assign(cur, { x, y, w, h })
     } else {
       this.trays.push({ ...rest, pieces: [] })
@@ -4641,7 +4803,7 @@ export class Engine {
   setTrays(trays: TrayInput[]) {
     this.trays = trays.map(({ pieces, ...t }) => ({ ...t, auto: !!t.auto, pieces: [] }))
     this.syncTrays()
-    this.trayTo.clear()
+    this.forgetAll('tray')
     if (this.traySel && !this.trays.some((t) => t.id === this.traySel)) this.traySel = null
     this.resetSeen('tray', this.trays)
     this.trackTrays()
@@ -4924,7 +5086,7 @@ export class Engine {
       trays: [{ id: t.id, x: t.x, y: t.y }],
       lift: { wx, wy, sx, sy },
     }
-    this.canvas.style.cursor = 'grabbing'
+    this.hold()
     this.invalidate()
   }
 
@@ -5174,27 +5336,8 @@ export class Engine {
       } else again = true
     }
 
-    for (const [id, to] of this.trayTo) {
-      const t = this.trays.find((x) => x.id === id)
-      if (!t || this.carry?.trays.some((c) => c.id === id)) {
-        this.trayTo.delete(id)
-        continue
-      }
-      const f = ease(dt, 40)
-      for (const k of ['x', 'y', 'w', 'h'] as const) t[k] += (to[k] - t[k]) * f
-      if (Math.abs(to.x - t.x) + Math.abs(to.y - t.y) + Math.abs(to.w - t.w) + Math.abs(to.h - t.h) < 0.05) {
-        Object.assign(t, to)
-        this.trayTo.delete(id)
-      } else again = true
-    }
-
-    for (const [id, u] of this.trayUp) {
-      u.value += (u.target - u.value) * ease(dt, u.target ? 55 : 70)
-      if (Math.abs(u.target - u.value) < 0.005) {
-        u.value = u.target
-        if (!u.target) this.trayUp.delete(id)
-      } else again = true
-    }
+    this.liftHeld()
+    if (this.stepObjs(dt)) again = true
 
     if (this.pops.length) again = true
     for (const [key, s] of this.strokes) {
@@ -5289,7 +5432,7 @@ export class Engine {
       const on = t.id === this.traySel
       const mark = !on && markedTrays.get(t.id)
       // Turned around the pointer while it swings in the hand (see swing()).
-      const [tx, ty, ta] = this.swayed('trays', t.id, t.x + t.w / 2, t.y + t.h / 2)
+      const [tx, ty, ta] = this.swayed('tray', t.id, t.x + t.w / 2, t.y + t.h / 2)
       const rect = [sx(tx - t.w / 2), sy(ty - t.h / 2), sx(tx + t.w / 2), sy(ty + t.h / 2)]
       const r = Math.min(radius, (rect[2] - rect[0]) / 2, (rect[3] - rect[1]) / 2)
       // Lifting, its see-through fill turns solid, the same colour over the table, so it hides its own
@@ -5299,7 +5442,7 @@ export class Engine {
       const f = fill.map((c, k) => c + (solid[k] - c) * up)
       this.gTrays.set([...rect, ...f, ...pm(on ? rgba(this.colors.sel) : mark ? rgba(mark) : color, on || mark ? 1 : 0.7), r, (on || mark ? 2.5 : 1.25) * dpr, up, ta], trays++ * TRAY_FLOATS)
     }
-    const trayUp = (t: Tray) => this.trayUp.get(t.id)?.value || 0
+    const trayUp = (t: Tray) => this.upOf('tray', t.id)
     for (const t of this.trays) if (!trayUp(t)) trayInto(t, 0)
     const traysDown = trays
     for (const t of this.trays) if (trayUp(t)) trayInto(t, trayUp(t))
@@ -5311,7 +5454,7 @@ export class Engine {
       if (ref.x + w / 2 < wx0 || ref.x - w / 2 > wx1 || ref.y + h / 2 < wy0 || ref.y - h / 2 > wy1) continue
       const on = this.selRefs.has(ref.id)
       const mark = !on && markedRefs.get(ref.id)
-      const [rx, ry, ra] = this.swayed('refs', ref.id, ref.x, ref.y)
+      const [rx, ry, ra] = this.swayed('ref', ref.id, ref.x, ref.y)
       const rect = [sx(rx - w / 2), sy(ry - h / 2), sx(rx + w / 2), sy(ry + h / 2)]
       this.gRefs.set([...rect, ...pm(rgba(on ? this.colors.sel : mark || this.colors.dot)), (on || mark ? 3 : 1) * dpr, ref.opacity ?? 1, ra, 0, ...this.refTrim(ref)], refs++ * REF_FLOATS)
     }
@@ -5447,7 +5590,7 @@ export class Engine {
 
     // One shadow for everything lifted: pieces, and trays being moved.
     let lv = Math.max(this.lift && !this.lift.tray ? this.lift.value : 0, rvalue)
-    for (const u of this.trayUp.values()) lv = Math.max(lv, u.value)
+    for (const t of this.trays) lv = Math.max(lv, this.upOf('tray', t.id))
     const l = lv > 0 ? { value: lv } : null
     this.gpu!.frame({
       W: this.pw,
@@ -5536,7 +5679,7 @@ export class Engine {
       this.dirty = true
       const [x0, y0, x1, y1] = this.refRect(sel)
       ctx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
-      this.tiltFor('refs', sel.id)
+      this.tiltFor('ref', sel.id)
       this.tiltCtx(ctx)
       this.tilt = null
       ctx.lineWidth = 1.5
@@ -5644,7 +5787,7 @@ export class Engine {
 
   // What the pointer is over, for showing buttons: 'ref:<id>', 'tray:<id>' or null.
   hoverKey({ rh, th }: { rh?: RefHit | null; th?: TrayHit | null }) {
-    return rh ? `ref:${rh.ref.id}` : th ? `tray:${th.tray.id}` : null
+    return rh ? objKey('ref', rh.ref.id) : th ? objKey('tray', th.tray.id) : null
   }
 
   setHovered(key: string | null) {
@@ -5704,7 +5847,7 @@ export class Engine {
       const b = look && this.refButton(ref)
       if (!b) continue
       if (b[0] > vw || b[1] > vh || b[2] < 0 || b[3] < 0) continue
-      this.tiltFor('refs', ref.id)
+      this.tiltFor('ref', ref.id)
       this.drawMenuButton(b, look)
     }
     this.tilt = null
@@ -5755,7 +5898,7 @@ export class Engine {
       if (x > vw || y > vh || x + t.w * cam.z < 0 || y + t.h * cam.z < 0) continue
       const color = TRAY_COLORS[t.color] || TRAY_COLORS.gray
       octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
-      this.tiltFor('trays', t.id)
+      this.tiltFor('tray', t.id)
       this.tiltCtx(octx)
       octx.textBaseline = 'middle'
       // The number and the name, each in a tag in the tray's colour on its top left corner, standing
@@ -5799,7 +5942,7 @@ export class Engine {
       const right = b.menu[2]
       if (x0 > vw || y0 > vh || right < 0 || y1 < 0) continue
       const color = TRAY_COLORS[t.color] || TRAY_COLORS.gray
-      this.tiltFor('trays', t.id)
+      this.tiltFor('tray', t.id)
       // Both buttons grow and fade in together: the switch from the middle of the two, the menu button
       // from its own.
       this.scaleAbout(octx, look.s, (x0 + right) / 2, (y0 + y1) / 2)

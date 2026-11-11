@@ -288,7 +288,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
             } else if (msg.type === 'time') timeBus.current?.(msg)
             else if (msg.type === 'note' || msg.type === 'note-delete' || msg.type === 'note-react' || msg.type === 'note-reply' || msg.type === 'note-reply-delete') noteBus.current?.(msg)
             else if (msg.type === 'react') reactBus.current?.(msg)
-            else if (msg.type === 'ref') eng!.remoteRef(msg.ref)
+            else if (msg.type === 'ref') eng!.remoteRef(msg.ref, msg.live, msg.client)
             else if (msg.type === 'ref-delete') eng!.removeRef(msg.id, true)
             else if (msg.type === 'tray') eng!.remoteTray(msg.tray, msg.live, msg.client)
             else if (msg.type === 'tray-delete') eng!.removeTray(msg.id, true)
