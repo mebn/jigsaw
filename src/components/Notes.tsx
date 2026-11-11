@@ -349,6 +349,8 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       const el = layer.current?.querySelector<HTMLElement>(`[data-note="${id}"]`)
       return { w: el?.offsetWidth || NOTE_W * S, h: el?.offsetHeight || S }
     }
+    // Notes turned with the hand last frame.
+    let tilted = new Set<string>()
     engine.notes = {
       get: () =>
         latest.current.map((n) => ({
@@ -405,6 +407,28 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           if (!('lit' in el.dataset)) el.dataset.lit = ''
         }
         for (const el of layer.current?.querySelectorAll<HTMLElement>('[data-lit]') || []) if (!lit.has(el.dataset.note!)) delete el.dataset.lit
+        // Notes moved by hand, and those stuck to a tray moved by hand, swing with it around the
+        // pointer (see swing() in engine.ts).
+        const h = engine.hand
+        const now = new Set<string>()
+        if (h?.a) {
+          for (const n of latest.current) {
+            if (!h.notes.has(n.id) && !(n.tray && h.trays.has(n.tray))) continue
+            const el = layer.current?.querySelector<HTMLElement>(`[data-note="${n.id}"]`)
+            if (!el) continue
+            el.style.transformOrigin = `${h.px - parseFloat(el.style.left)}px ${h.py - parseFloat(el.style.top)}px`
+            el.style.transform = `rotate(${h.a}rad)`
+            now.add(n.id)
+          }
+        }
+        for (const id of tilted) {
+          if (now.has(id)) continue
+          const el = layer.current?.querySelector<HTMLElement>(`[data-note="${id}"]`)
+          if (!el) continue
+          el.style.transform = ''
+          el.style.transformOrigin = ''
+        }
+        tilted = now
       },
       // A tray is going: the notes on it stay where they are, on no tray. save: this player removed it.
       trayGone: (id: string, save: boolean) => {
