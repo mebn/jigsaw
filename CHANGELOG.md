@@ -2,6 +2,8 @@
 
 ## 11 November 2026
 
+- The changelog and the link to the source code have moved from General to a new **About** section in the settings.
+- The first time you open a jigsaw, a small window now shows just the basic controls (moving, rotating, panning and zooming) instead of all of them. Press `H` there for all the shortcuts.
 - The split screen button now sits after the reactions button in the toolbar, and its layout menu shows just a picture of each layout, with the tick on the chosen one sitting neatly inside its highlight.
 - Pieces, groups of pieces, images, notes and trays now swing a little as you drag them, as if pinned to the pointer where you hold them: they trail behind the way you move them, in any direction, more the faster you go and the further from their middle you hold them. Speeding up or stopping gives them a little push. Big things swing less than small ones, and everyone else in the room sees them swing too. It's off if your device is set to reduce motion.
 - Images and notes moved by another player now glide smoothly after them, like pieces and trays, instead of jumping along, and notes lift with a deeper shadow while they're moved.

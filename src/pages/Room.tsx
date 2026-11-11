@@ -15,6 +15,7 @@ import { useTimes } from '../lib/times.ts'
 import { isPlainKey, isTyping, onTable, overlays, useEscapeFallback, useOverlay } from '../lib/overlays.ts'
 import { Hand, Pencil, Picture, Rooms, Share } from '../components/icons.tsx'
 import Settings from '../components/Settings.tsx'
+import { BasicsDialog } from '../components/Help.tsx'
 import type { OpenSettings } from '../components/Settings.tsx'
 import Players, { rankPlayers } from '../components/Players.tsx'
 import type { NameOf, Stats } from '../components/Players.tsx'
@@ -140,12 +141,20 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const [seen, setSeen] = useState<Record<string, number>>({})
   const openSettings = useRef<OpenSettings | null>(null)
   const openAccount = useCallback(() => openSettings.current?.('account'), [])
-  // How to play opens by itself the first time this player opens each jigsaw, once it has arrived.
+  // The basic controls show by themselves the first time this player opens each jigsaw, once it has
+  // arrived; H there opens how to play with all of them.
+  const [basics, setBasics] = useState(false)
+  const [basicsShown, basicsClosing] = useLinger(basics)
+  const closeBasics = useCallback(() => setBasics(false), [])
+  const allControls = useCallback(() => {
+    setBasics(false)
+    openSettings.current?.('help')
+  }, [])
   useEffect(() => {
     const help = roomOnce('help', id)
     if (arriving || help.done()) return
     help.mark()
-    openSettings.current?.('help')
+    setBasics(true)
   }, [id, arriving])
   const idle = useIdle()
   const [error, setError] = useState(false)
@@ -537,6 +546,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         </div>
       )}
       {menu && engine && <ContextMenu key={`${menu.kind}:${menu.id}:${menu.x}:${menu.y}`} engine={engine} at={menu} onClose={closeMenu} />}
+      {basicsShown && <BasicsDialog onClose={closeBasics} onAll={allControls} closing={basicsClosing} />}
       {party && <Celebration key={partyKey} onDone={endParty} />}
       {import.meta.env.DEV && devMenu && engine && (
         <DevMenu

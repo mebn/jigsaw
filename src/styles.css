@@ -2433,6 +2433,22 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 
 /* ---- how to play (in the settings) ---- */
 
+/* The basic controls, shown the first time a jigsaw is opened. */
+.modal.basics-dialog {
+  width: min(380px, 100%);
+}
+.basics-body {
+  gap: 14px;
+}
+.basics-more {
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+button.basics-more {
+  align-self: center;
+}
+
 /* ---- changelog ---- */
 
 .modal.changelog {
@@ -2481,7 +2497,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   gap: 8px;
 }
 /* Keys in one column, what they do in the next, lined up across the section. */
-.settings-help dl {
+.settings-help dl,
+.basics-body dl {
   display: grid;
   grid-template-columns: auto 1fr;
   align-items: baseline;

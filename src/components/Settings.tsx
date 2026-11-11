@@ -7,6 +7,7 @@ import {
   Gear,
   GitHub,
   Help,
+  Info,
   Lock,
   Moon,
   Sound,
@@ -22,12 +23,13 @@ import PrivateRoom from './PrivateRoom.tsx'
 import { isPlainKey, useEscapeFallback } from '../lib/overlays.ts'
 
 // Header button that opens the settings dialog, with its panels in a list down the side:
-// general (dark mode, sounds, changelog and source link), account, and in a jigsaw (help) how to play.
+// general (dark mode, sounds), account, about (changelog and source link), and in a jigsaw (help)
+// how to play.
 // In development (npm run dev) general also has the dev menu switch.
 // In a private jigsaw general also has a button that shows its link.
 // openRef.current(panel) opens it on that panel, as H does with how to play (see Room).
 // Escape opens it when nothing else takes it (see overlays.ts). The dialog closes on Escape.
-type SettingsPanel = 'general' | 'account' | 'help'
+type SettingsPanel = 'general' | 'account' | 'about' | 'help'
 // What Settings puts in openRef: opens the dialog on a panel.
 export type OpenSettings = (panel: SettingsPanel) => void
 
@@ -60,6 +62,7 @@ export default function Settings({ privateRoom = false, help = false, openRef }:
   const panels = ([
     { key: 'general', title: 'General', icon: <Gear /> },
     { key: 'account', title: 'Account', icon: <User /> },
+    { key: 'about', title: 'About', icon: <Info /> },
     help && { key: 'help', title: 'How to play', icon: <Help />, shortcut: 'H' },
   ] as (PanelRow | false)[]).filter((p) => !!p)
 
@@ -152,28 +155,30 @@ export default function Settings({ privateRoom = false, help = false, openRef }:
                     </button>
                   </section>
                 )}
-                <section className="settings-section" aria-labelledby="settings-about">
-                  <h2 className="label" id="settings-about">About</h2>
-                  <button className="settings-row" onClick={then(() => setChangelog(true))}>
-                    <ChangelogIcon />
-                    <span>Changelog</span>
-                  </button>
-                  <a
-                    className="settings-row"
-                    href="https://github.com/mebn/jigsaw"
-                    title="Opens in a new tab"
-                    aria-label="Source on GitHub (opens in a new tab)"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    <GitHub />
-                    <span>Source on GitHub</span>
-                    <External className="settings-ext" />
-                  </a>
-                </section>
               </>
             )}
             {shown === 'account' && <AccountPanel onClose={close} />}
+            {shown === 'about' && (
+              <section className="settings-section" aria-labelledby="settings-about">
+                <h2 className="label" id="settings-about">This site</h2>
+                <button className="settings-row" onClick={then(() => setChangelog(true))}>
+                  <ChangelogIcon />
+                  <span>Changelog</span>
+                </button>
+                <a
+                  className="settings-row"
+                  href="https://github.com/mebn/jigsaw"
+                  title="Opens in a new tab"
+                  aria-label="Source on GitHub (opens in a new tab)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <GitHub />
+                  <span>Source on GitHub</span>
+                  <External className="settings-ext" />
+                </a>
+              </section>
+            )}
             {shown === 'help' && <HelpPanel />}
           </div>
         </Dialog>

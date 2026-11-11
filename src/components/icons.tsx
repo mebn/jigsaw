@@ -158,6 +158,14 @@ export const Help = (p: IconProps) => (
   </Svg>
 )
 
+export const Info = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5" />
+    <circle cx="12" cy="7.9" r=".6" fill="currentColor" />
+  </Svg>
+)
+
 export const Picture = (p: IconProps) => (
   <Svg {...p}>
     <rect x="4" y="5" width="16" height="14" rx="2" />

@@ -1,5 +1,7 @@
 
 import type { ReactNode } from 'react'
+import Dialog from './Dialog.tsx'
+import { isPlainKey } from '../lib/overlays.ts'
 
 const Key = ({ children }: { children: ReactNode }) => <kbd className="key">{children}</kbd>
 
@@ -115,19 +117,77 @@ const SECTIONS = [
 // Touch screens get the touch gestures, everything else the mouse and keyboard ones.
 const TOUCH = window.matchMedia('(hover: none)').matches
 
+type Row = [ReactNode, string]
+
+// Keys in one column, what they do in the next, every other row shaded.
+const Rows = ({ rows }: { rows: Row[] }) => (
+  <dl>
+    {rows.map(([k, text], i) => (
+      <div key={i} className="help-row">
+        <dt>{k}</dt>
+        <dd>{text}</dd>
+      </div>
+    ))}
+  </dl>
+)
+
 // The controls, in sections. Shown in the settings window (see Settings.tsx).
 export default function HelpPanel() {
   return SECTIONS.filter((s) => (s.title === 'Touch') === TOUCH).map((s) => (
     <section key={s.title} className={`help-${s.title.toLowerCase()}`}>
       <h2 className="label">{s.title}</h2>
-      <dl>
-        {s.rows.map(([k, text], i) => (
-          <div key={i} className="help-row">
-            <dt>{k}</dt>
-            <dd>{text}</dd>
-          </div>
-        ))}
-      </dl>
+      <Rows rows={s.rows as Row[]} />
     </section>
   ))
+}
+
+// Just enough to start: moving, rotating, panning and zooming.
+const BASICS: Row[] = TOUCH
+  ? [
+      [<Key key="tp">Drag a piece</Key>, 'Move'],
+      [<Key key="t2">2nd finger tap</Key>, 'Rotate'],
+      [<Key key="tt">Drag the table</Key>, 'Pan'],
+      [<Key key="tz">Pinch</Key>, 'Zoom'],
+    ]
+  : [
+      [<Key key="lp">Drag a piece</Key>, 'Move'],
+      [<Key key="sp">Space</Key>, 'Rotate'],
+      [<Key key="r">Right drag</Key>, 'Pan'],
+      [<Key key="w">Scroll</Key>, 'Zoom'],
+    ]
+
+// Shown by itself the first time a player opens a jigsaw (see Room): the basic controls, and how to
+// find the rest. H, or the button on touch screens, opens how to play in the settings instead.
+interface BasicsProps {
+  onClose: () => void
+  onAll: () => void
+  closing: boolean
+}
+
+export function BasicsDialog({ onClose, onAll, closing }: BasicsProps) {
+  return (
+    <Dialog
+      title="How to play"
+      className="basics-dialog"
+      bodyClass="basics-body"
+      closing={closing}
+      onClose={onClose}
+      onKey={(e) => {
+        if (e.key.toLowerCase() !== 'h' || !isPlainKey(e)) return
+        e.preventDefault()
+        onAll()
+      }}
+    >
+      <Rows rows={BASICS} />
+      {TOUCH ? (
+        <button type="button" className="secondary basics-more" onClick={onAll}>
+          All controls
+        </button>
+      ) : (
+        <p className="basics-more">
+          Press <Key>H</Key> for all shortcuts
+        </p>
+      )}
+    </Dialog>
+  )
 }
