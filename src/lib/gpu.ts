@@ -92,7 +92,8 @@ interface ExtraMask {
 }
 
 // Floats per instance: pieces [m00 m01 m10 m11 x y cell -], trays [rect fill stroke (radius width
-// lift -)], images [rect border (width opacity - -) part]. The instance classes below write them.
+// lift angle)], images [rect border (width opacity angle -) part]. An angle (radians) turns the box
+// around its middle. The instance classes below write them.
 const PIECE_FLOATS = 8
 const TRAY_FLOATS = 16
 const REF_FLOATS = 16
@@ -147,10 +148,10 @@ export class TrayInstances extends Instances {
   constructor() {
     super(TRAY_FLOATS)
   }
-  // A tray's box (device px) with rounded corners, its fill and its border, and how far it's lifted
-  // (0 to 1, how strong its shadow is).
-  put(rect: readonly number[], fill: readonly number[], stroke: readonly number[], radius: number, width: number, lift: number) {
-    this.data.set([...rect, ...fill, ...stroke, radius, width, lift, 0], this.next())
+  // A tray's box (device px) with rounded corners, its fill and its border, how far it's lifted (0 to
+  // 1, how strong its shadow is), and how far it's turned around its middle (radians).
+  put(rect: readonly number[], fill: readonly number[], stroke: readonly number[], radius: number, width: number, lift: number, angle = 0) {
+    this.data.set([...rect, ...fill, ...stroke, radius, width, lift, angle], this.next())
   }
 }
 
@@ -158,10 +159,10 @@ export class RefInstances extends Instances {
   constructor() {
     super(REF_FLOATS)
   }
-  // An image's box (device px), its border, how see-through it is and the part of the picture that
-  // shows ([x, y, w, h] as fractions of it).
-  put(rect: readonly number[], border: readonly number[], width: number, opacity: number, part: readonly number[]) {
-    this.data.set([...rect, ...border, width, opacity, 0, 0, ...part], this.next())
+  // An image's box (device px), its border, how see-through it is, the part of the picture that
+  // shows ([x, y, w, h] as fractions of it), and how far it's turned around its middle (radians).
+  put(rect: readonly number[], border: readonly number[], width: number, opacity: number, part: readonly number[], angle = 0) {
+    this.data.set([...rect, ...border, width, opacity, angle, 0, ...part], this.next())
   }
 }
 
@@ -196,6 +197,12 @@ fn corner(vi: u32) -> vec2f {
   return vec2f(select(0.0, 1.0, k == 1u || k == 4u || k == 5u), select(0.0, 1.0, k == 2u || k == 3u || k == 5u));
 }
 
+// The point q off a box's middle c, with the box turned by a (radians).
+fn turned(c: vec2f, q: vec2f, a: f32) -> vec2f {
+  let k = vec2f(cos(a), sin(a));
+  return c + vec2f(q.x * k.x - q.y * k.y, q.x * k.y + q.y * k.x);
+}
+
 // Signed distance from a box of half size hs, rounded by r, centred on the origin.
 fn box(d: vec2f, hs: vec2f, r: f32) -> f32 {
   let q = abs(d) - hs + r;
@@ -226,11 +233,12 @@ struct O {
 @vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) rect: vec4f, @location(1) fill: vec4f,
               @location(2) stroke: vec4f, @location(3) prm: vec4f) -> O {
   let e = prm.y * 0.5 + 1.0;
-  let d = mix(rect.xy - e, rect.zw + e, corner(vi));
+  let hs = (rect.zw - rect.xy) * 0.5;
+  let q = mix(-hs - e, hs + e, corner(vi));
   var o: O;
-  o.p = clip(d);
-  o.d = d - (rect.xy + rect.zw) * 0.5;
-  o.hs = (rect.zw - rect.xy) * 0.5;
+  o.p = clip(turned((rect.xy + rect.zw) * 0.5, q, prm.w));
+  o.d = q;
+  o.hs = hs;
   o.fill = fill;
   o.stroke = stroke;
   o.prm = prm;
@@ -263,13 +271,14 @@ struct O {
 @vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) rect: vec4f, @location(1) border: vec4f,
               @location(2) prm: vec4f, @location(3) part: vec4f) -> O {
   let e = prm.x * 0.5 + 1.0;
-  let d = mix(rect.xy - e, rect.zw + e, corner(vi));
+  let hs = (rect.zw - rect.xy) * 0.5;
+  let q = mix(-hs - e, hs + e, corner(vi));
   var o: O;
-  o.p = clip(d);
-  o.d = d - (rect.xy + rect.zw) * 0.5;
-  o.uv = part.xy + (d - rect.xy) / (rect.zw - rect.xy) * part.zw;
+  o.p = clip(turned((rect.xy + rect.zw) * 0.5, q, prm.z));
+  o.d = q;
+  o.uv = part.xy + (q + hs) / (hs * 2.0) * part.zw;
   o.part = part;
-  o.hs = (rect.zw - rect.xy) * 0.5;
+  o.hs = hs;
   o.border = border;
   o.bw = prm.x;
   o.op = prm.y;

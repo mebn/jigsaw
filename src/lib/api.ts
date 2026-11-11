@@ -82,7 +82,7 @@ export interface RoomSocket {
   close: () => void
 }
 
-const transient = (msg: ClientMessage) => ('live' in msg && msg.live) || msg.type === 'live' || msg.type === 'grab' || msg.type === 'cursor'
+const transient = (msg: ClientMessage) => ('live' in msg && msg.live) || msg.type === 'live' || msg.type === 'grab' || msg.type === 'sway' || msg.type === 'cursor'
 
 // passphrase: the login of who is logged in on this page right now, told to the room on every
 // connect. onOpen(reconnect) fires on every connect.
