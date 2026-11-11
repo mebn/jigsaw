@@ -25,6 +25,8 @@ const COL = 250
 const COL_SMALL = 150
 const GAP = 64
 const GAP_SMALL = 28
+// The widest the columns spread on a wide screen, so they stay together in the middle (CSS px).
+const MAX_WIDTH = 1600
 // The line under each jigsaw, with the gap above it (CSS px).
 const CAPTION = 30
 // A section's heading, with the room under it, and the extra room between the sections (CSS px).
@@ -74,25 +76,35 @@ interface Heading {
   n: number
 }
 
-// The jigsaws in columns, each going in the shortest so far, with as many columns as fit in width.
-// Those in progress come first under their heading, level along the top; the finished ones start
-// under theirs, below the lowest of them, every other column a little lower. Centred on 0, 0.
+// The jigsaws in columns, as many as fit in width. Those in progress come first under their
+// heading, level along the top; the finished ones start under theirs, below the lowest of them,
+// every other column a little lower. A section with fewer jigsaws than columns uses only as many
+// columns as it has jigsaws, in the middle, so a few don't spread out across the page. Each
+// section's first row goes left to right, then each jigsaw goes in the shortest column so far.
+// Centred on 0, 0.
 function layout(list: RoomSummary[], col: number, gap: number, width: number) {
   const step = col + gap
-  const cols = Math.max(1, Math.min(list.length, Math.floor((width + gap) / step)))
+  const count = (done: boolean) => list.filter((o) => o.done === done).length
+  const fit = Math.max(1, Math.floor((width + gap) / step))
+  const cols = Math.max(1, Math.min(fit, Math.max(count(false), count(true))))
   const stagger = (c: number) => (c % 2 ? step * 0.45 : 0)
-  let heights = Array.from({ length: cols }, () => 0)
+  let heights: number[] = []
+  let left = 0
+  let start = 0
   const headings: Heading[] = []
-  const section = (done: boolean) => {
+  const section = (done: boolean, i: number) => {
+    const n = count(done)
     const top = headings.length ? Math.max(...heights) - gap + BETWEEN : 0
-    headings.push({ x: 0, y: top, title: done ? 'Finished' : 'In progress', n: list.filter((o) => o.done === done).length })
-    heights = heights.map((_, c) => top + HEADING + (done ? stagger(c) : 0))
+    left = ((cols - Math.min(cols, n)) * step) / 2
+    start = i
+    headings.push({ x: left, y: top, title: done ? 'Finished' : 'In progress', n })
+    heights = Array.from({ length: Math.min(cols, n) }, (_, c) => top + HEADING + (done ? stagger(c) : 0))
   }
   const placed: Placed[] = list.map((r, i) => {
-    if (!i || r.done !== list[i - 1].done) section(r.done)
-    const c = heights.indexOf(Math.min(...heights))
+    if (!i || r.done !== list[i - 1].done) section(r.done, i)
+    const c = i - start < heights.length ? i - start : heights.indexOf(Math.min(...heights))
     const h = tallness(r, col)
-    const at = { r, x: c * step, y: heights[c], w: col, h, depth: 0.4 + ((i * 7) % 10) / 10, i }
+    const at = { r, x: left + c * step, y: heights[c], w: col, h, depth: 0.4 + ((i * 7) % 10) / 10, i }
     heights[c] += h + CAPTION + gap
     return at
   })
@@ -205,7 +217,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
   const cells = useRef<(HTMLDivElement | null)[]>([])
   const where = useRef<HTMLSpanElement>(null)
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight })
-  const { placed, headings, w: W, h: H } = layout(list, col, gap, view.w - 2 * gap)
+  const { placed, headings, w: W, h: H } = layout(list, col, gap, Math.min(view.w - 2 * gap, MAX_WIDTH))
   const heads = useRef<(HTMLDivElement | null)[]>([])
   const key = list.map((r) => r.id).join() + col + W
 

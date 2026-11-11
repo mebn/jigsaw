@@ -1,5 +1,9 @@
 # Changelog
 
+## 11 November 2026
+
+- On wide screens the jigsaws page keeps its jigsaws and the bar along the top together in the middle, with at most five columns of jigsaws, instead of spreading them across the whole screen. A section with only a few jigsaws now keeps them side by side in the middle, in order, instead of leaving wide gaps between them.
+
 ## 10 November 2026
 
 - **A new jigsaws page**: all jigsaws now have a page of their own, like a gallery: a canvas you scroll up and down, with the jigsaws in staggered columns that drift a little as you move the mouse, the one under it tilting towards it. Jigsaws still in progress come first, with how far along each one is, and finished ones follow, each with how long it took and the day it was finished. Clicking all jigsaws zooms out of the table into the page, and clicking a jigsaw takes you straight to its table, zooming in. Private jigsaws in progress show a small lock.

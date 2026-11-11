@@ -383,12 +383,15 @@ button {
   animation: fade-out 0.45s ease forwards;
 }
 
-/* The bar along the top and the tabs under it float over the canvas. */
+/* The bar along the top and the tabs under it float over the canvas. The bar is at most as wide
+   as the jigsaws' columns can spread (MAX_WIDTH in Rooms.tsx), in the middle. */
 .gallery-head {
   position: absolute;
   top: calc(16px + var(--notch));
-  left: 16px;
-  right: 16px;
+  left: 0;
+  right: 0;
+  width: min(1600px, 100% - 32px);
+  margin: 0 auto;
   z-index: 3;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
