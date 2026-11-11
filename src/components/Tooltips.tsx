@@ -81,7 +81,8 @@ export default function Tooltips() {
   // Under the button and centred on it, kept inside the window.
   useLayoutEffect(() => {
     if (!tip || !card.current) return setPos(null)
-    const { width, height } = card.current.getBoundingClientRect()
+    // Its size as laid out, not as drawn while it's still growing in.
+    const { offsetWidth: width, offsetHeight: height } = card.current
     const r = tip.rect
     const below = r.bottom + GAP + height <= window.innerHeight - GAP
     const top = below ? r.bottom + GAP : r.top - GAP - height

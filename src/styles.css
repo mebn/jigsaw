@@ -16,6 +16,22 @@
   --shadow: rgba(0, 0, 0, 0.4);
   --sel: #2f6fed;
   --radius: 10px;
+  /* Liquid glass (see "liquid glass" below and lib/glass.ts): a thin pane for the bars over the
+     table, a thick one for windows and menus, which need to be read. */
+  --glass: rgba(255, 255, 255, 0.46);
+  --glass-thick: rgba(250, 250, 250, 0.74);
+  --glass-line: rgba(255, 255, 255, 0.7);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.2);
+  --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.06), 0 36px 80px -16px rgba(0, 0, 0, 0.38);
+  --glass-fx: blur(8px) saturate(1.8);
+  --glass-fx-thick: blur(28px) saturate(1.8);
+  --glass-shine: rgba(255, 255, 255, 0.55);
+  /* The raised chip of the chosen tab. */
+  --chip: #fff;
+  --chip-drop: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.12);
+  --spring: cubic-bezier(0.3, 1.36, 0.5, 1);
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   /* A MacBook's notch in fullscreen (set in App.tsx), which the toolbars and windows keep below. */
   --notch: 0px;
   color-scheme: light;
@@ -38,6 +54,15 @@
     --field: rgba(245, 245, 245, 0.035);
     --line-strong: rgba(245, 245, 245, 0.32);
     --ring: rgba(245, 245, 245, 0.1);
+    --glass: rgba(44, 44, 48, 0.42);
+    --glass-thick: rgba(22, 22, 24, 0.72);
+    --glass-line: rgba(255, 255, 255, 0.1);
+    --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 1px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.4);
+    --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
+    --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
+    --glass-shine: rgba(255, 255, 255, 0.1);
+    --chip: rgba(255, 255, 255, 0.14);
+    --chip-drop: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
 }
@@ -58,6 +83,15 @@
   --dot: rgba(255, 255, 255, 0.09);
   --shadow: rgba(0, 0, 0, 0.85);
   --sel: #5b8cff;
+  --glass: rgba(44, 44, 48, 0.42);
+  --glass-thick: rgba(22, 22, 24, 0.72);
+  --glass-line: rgba(255, 255, 255, 0.1);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 1px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
+  --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
+  --glass-shine: rgba(255, 255, 255, 0.1);
+  --chip: rgba(255, 255, 255, 0.14);
+  --chip-drop: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
 
@@ -99,13 +133,19 @@ button {
   height: 36px;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 999px;
   background: transparent;
   color: inherit;
-  transition: background 0.15s;
+  transition:
+    background 0.2s,
+    color 0.2s,
+    transform 0.3s var(--spring);
 }
 .icon-btn:hover:not(:disabled) {
   background: var(--hover);
+}
+.icon-btn:active:not(:disabled) {
+  transform: scale(0.9);
 }
 .icon-btn:disabled {
   opacity: 0.35;
@@ -129,11 +169,67 @@ button {
   z-index: 5;
   display: flex;
   gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel);
+  padding: 4px;
+  border-radius: 999px;
 }
+
+/* ---- liquid glass ---- */
+
+/* Every pane of glass: see-through and tinted, blurring what's behind it, with a bright rim along
+   the top and a soft shadow under it. In Chromium the rim also bends what's behind it (--refract,
+   set by lib/glass.ts, which lists the same elements). */
+.float,
+.modal,
+.gallery-tabs .tabs,
+.context-menu,
+.players-menu,
+.player-card,
+.ui-tip,
+.podium-btn,
+.share-btn,
+.more-btn {
+  border: 1px solid var(--glass-line);
+  background-color: var(--glass);
+  box-shadow: var(--glass-rim), var(--glass-drop);
+  backdrop-filter: var(--glass-fx) var(--refract,);
+  -webkit-backdrop-filter: var(--glass-fx);
+}
+/* Windows and menus are thicker, so what's in them reads over anything. */
+.modal,
+.context-menu,
+.players-menu,
+.player-card,
+.ui-tip {
+  --glass: var(--glass-thick);
+  --glass-fx: var(--glass-fx-thick);
+}
+.modal {
+  --glass-drop: var(--glass-drop-deep);
+}
+/* A soft light on a bar where the pointer is (--gx and --gy, see lib/glass.ts). */
+.float::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(90px circle at var(--gx, 50%) var(--gy, 0px), var(--glass-shine), transparent 70%);
+  opacity: 0;
+  transition: opacity 0.4s;
+  pointer-events: none;
+}
+.float:hover::before {
+  opacity: 1;
+}
+/* For those who asked their system for less see-through: solid panes. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --glass: var(--panel);
+    --glass-thick: var(--bg);
+    --glass-fx: none;
+    --glass-fx-thick: none;
+  }
+}
+
 .float.tl {
   top: 16px;
   left: 16px;
@@ -171,10 +267,20 @@ button {
   display: grid;
   place-items: center;
   padding: calc(16px + var(--notch)) 16px 16px;
-  background: rgba(0, 0, 0, 0.35);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  animation: fade 0.15s ease;
+  --scrim: rgba(0, 0, 0, 0.28);
+  --scrim-fx: blur(5px);
+}
+/* What dims and blurs the page behind a window. It's a layer of its own, behind the window, so the
+   window's glass has the page to look through to. */
+.modal-bg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--scrim);
+  backdrop-filter: var(--scrim-fx);
+  -webkit-backdrop-filter: var(--scrim-fx);
+  animation: fade 0.2s ease;
 }
 .modal {
   display: flex;
@@ -182,11 +288,8 @@ button {
   gap: 20px;
   width: min(420px, 100%);
   padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--bg);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
-  animation: pop 0.18s ease;
+  border-radius: 28px;
+  animation: pop 0.36s var(--spring);
 }
 .modal h1 {
   margin: 0;
@@ -202,13 +305,15 @@ button {
 @keyframes pop {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.98);
+    transform: translateY(10px) scale(0.96);
   }
 }
 
 /* Dialogs animating out before they go (see lib/linger.ts for the timing). */
 .modal-bg.closing {
   pointer-events: none;
+}
+.modal-bg.closing::before {
   animation: fade-out 0.16s ease forwards;
 }
 .modal-bg.closing .modal {
@@ -287,9 +392,8 @@ button {
 
 /* The table behind is blurred rather than greyed out. */
 .modal-bg.sheet-bg {
-  background: none;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  --scrim: transparent;
+  --scrim-fx: blur(12px);
 }
 .modal.sheet {
   width: min(1080px, 100%);
@@ -316,24 +420,35 @@ button {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--hover);
 }
 .tab {
   height: 30px;
-  padding: 0 14px;
+  padding: 0 16px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 999px;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
   white-space: nowrap;
+  transition:
+    color 0.2s,
+    background 0.25s,
+    box-shadow 0.25s,
+    transform 0.3s var(--spring);
 }
 .tab:hover {
   color: var(--fg);
 }
+.tab:active {
+  transform: scale(0.95);
+}
+/* The chosen tab is a chip raised off the bar. */
 .tab.on {
-  background: var(--hover);
+  background: var(--chip);
+  box-shadow: var(--chip-drop);
   color: var(--fg);
 }
 .grid {
@@ -404,7 +519,7 @@ button {
   pointer-events: auto;
 }
 .gallery-head .float {
-  position: static;
+  position: relative;
   justify-self: start;
 }
 .gallery-head h1 {
@@ -429,7 +544,6 @@ button {
 }
 .gallery-tabs .tabs {
   pointer-events: auto;
-  background: var(--panel);
 }
 .gallery-actions {
   display: flex;
@@ -636,10 +750,14 @@ button {
   width: 30px;
   height: 30px;
   opacity: 0;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid var(--glass-line);
+  background: var(--glass-thick);
+  box-shadow: var(--glass-drop);
+  backdrop-filter: var(--glass-fx);
+  -webkit-backdrop-filter: var(--glass-fx);
   color: var(--fg);
   transition:
+    transform 0.3s var(--spring),
     opacity 0.15s,
     background 0.15s,
     color 0.15s;
@@ -720,17 +838,21 @@ button {
   gap: 8px;
   padding: 6px 6px 10px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 20px;
   background: var(--field);
   color: var(--fg);
   text-decoration: none;
   transition:
-    background 0.15s,
-    border-color 0.15s;
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.3s,
+    transform 0.35s var(--ease);
 }
 .card:hover {
   border-color: var(--line-strong);
   background: var(--hover);
+  box-shadow: var(--glass-drop);
+  transform: translateY(-2px);
 }
 .card:focus-visible {
   outline: 2px solid var(--sel);
@@ -740,7 +862,7 @@ button {
   display: block;
   aspect-ratio: 4 / 3;
   overflow: hidden;
-  border-radius: 9px;
+  border-radius: 14px;
   background: var(--hover);
   box-shadow: inset 0 0 0 1px var(--line);
 }
@@ -801,10 +923,14 @@ button {
   width: 30px;
   height: 30px;
   opacity: 0;
-  border: 1px solid var(--line);
-  background: var(--panel);
+  border: 1px solid var(--glass-line);
+  background: var(--glass-thick);
+  box-shadow: var(--glass-drop);
+  backdrop-filter: var(--glass-fx);
+  -webkit-backdrop-filter: var(--glass-fx);
   color: var(--fg);
   transition:
+    transform 0.3s var(--spring),
     opacity 0.15s,
     background 0.15s,
     color 0.15s;
@@ -917,7 +1043,7 @@ button {
   height: 48px;
   padding: 0 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   outline: 0;
   background: var(--field);
   font-size: 15px;
@@ -960,15 +1086,17 @@ button {
   min-width: 88px;
   height: 44px;
   padding: 0 18px;
-  border-radius: 10px;
+  border-radius: 999px;
   font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
-  transition: opacity 0.15s, transform 0.1s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: opacity 0.2s, transform 0.3s var(--spring), background 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
+/* The one solid thing among the glass: a dark drop of it, lit along the top. */
 .primary {
   border: 1px solid var(--fg);
-  background: var(--fg);
+  background: linear-gradient(rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 60%) var(--fg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 16px -6px var(--art-shadow);
   color: var(--bg);
 }
 .primary:hover:not(:disabled) {
@@ -984,7 +1112,7 @@ button {
 }
 .primary:active:not(:disabled),
 .secondary:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: scale(0.96);
 }
 .primary:focus-visible,
 .secondary:focus-visible {
@@ -1080,7 +1208,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   width: 100%;
   padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 16px;
   background: var(--field);
   color: var(--fg);
   font: inherit;
@@ -1154,7 +1282,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   padding: 12px;
   overflow: hidden;
   border: 1px dashed var(--line-strong);
-  border-radius: 16px;
+  border-radius: 24px;
   background: var(--field);
   color: var(--muted);
   cursor: pointer;
@@ -1296,7 +1424,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   gap: 6px;
   padding: 10px 2px 8px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--field);
   color: var(--muted);
   font-size: 11px;
@@ -1336,6 +1464,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .create-btn:disabled {
   opacity: 1;
   border-color: transparent;
+  box-shadow: none;
   background: color-mix(in srgb, var(--fg) 9%, var(--bg));
   color: color-mix(in srgb, var(--fg) 40%, var(--bg));
 }
@@ -1531,9 +1660,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .dev-btn {
   height: 32px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 999px;
   background: transparent;
   color: inherit;
   white-space: nowrap;
@@ -1554,9 +1683,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   align-items: center;
   padding: 0;
   border: 0;
-  border-radius: 8px;
+  border-radius: 999px;
   background: transparent;
-  transition: background 0.15s;
+  transition: background 0.2s;
 }
 .stats-btn .stat {
   cursor: pointer;
@@ -2020,14 +2149,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .player-dot.big:not(.online) {
   border-color: var(--bg);
 }
-.more-btn {
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--panel);
-}
 .more-btn:hover:not(:disabled) {
-  background: var(--panel);
-  filter: brightness(0.96);
+  background: var(--glass-thick);
 }
 
 /* Beside a row of the players list, placed in the window (see Players.tsx). */
@@ -2046,13 +2169,10 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   gap: 6px;
   width: 220px;
   padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px var(--shadow);
+  border-radius: 20px;
   font-size: 13px;
   pointer-events: none;
-  animation: pop 0.14s ease;
+  animation: pop 0.26s var(--spring);
 }
 .player-card-head {
   display: flex;
@@ -2127,11 +2247,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   max-height: min(420px, calc(100dvh - 90px));
   overflow-y: auto;
   padding: 12px 6px 6px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px var(--shadow);
-  animation: pop 0.14s ease;
+  border-radius: 22px;
+  transform-origin: 100% 0;
+  animation: pop 0.3s var(--spring);
   scrollbar-width: thin;
 }
 .players-menu.closing {
@@ -2180,7 +2298,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   gap: 10px;
   padding: 5px 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 14px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -2483,15 +2601,12 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   gap: 10px;
   max-width: 280px;
   padding: 7px 8px 7px 11px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--bg);
-  box-shadow: 0 8px 24px var(--shadow);
+  border-radius: 14px;
   color: var(--fg);
   font-size: 13px;
   line-height: 1.35;
   pointer-events: none;
-  animation: pop 0.12s ease;
+  animation: pop 0.22s var(--spring);
 }
 .ui-tip:not(:has(kbd)) {
   padding-right: 11px;
@@ -2610,11 +2725,12 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   height: 36px;
   padding: 0 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   background: transparent;
   color: inherit;
   text-align: left;
   text-decoration: none;
+  transition: background 0.15s;
 }
 .settings-row:hover {
   background: var(--hover);
@@ -2802,16 +2918,14 @@ button.link:hover {
   width: 44px;
   height: 44px;
   padding: 0 0 6px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
+  border-radius: 999px;
   color: inherit;
   cursor: pointer;
   transform: translateX(-50%);
   animation: podium-in 0.5s cubic-bezier(0.3, 1.6, 0.5, 1);
 }
 .podium-btn:hover {
-  background: var(--hover);
+  background: var(--glass-thick);
 }
 .podium-icon {
   display: flex;
@@ -2849,9 +2963,8 @@ button.link:hover {
 
 /* The podium itself: a sticker on the table, with the table only slightly blurred behind it. */
 .modal-bg.podium-bg {
-  background: none;
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
+  --scrim: transparent;
+  --scrim-fx: blur(3px);
   cursor: pointer;
 }
 .podium {
@@ -3031,7 +3144,7 @@ button.link:hover {
   padding: 4px;
   overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 16px;
   list-style: none;
   scrollbar-width: thin;
 }
@@ -3043,7 +3156,7 @@ button.link:hover {
   height: 36px;
   padding: 0 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 12px;
   background: transparent;
   color: inherit;
   text-align: left;
@@ -3100,11 +3213,16 @@ button.link:hover {
   display: flex;
   flex-direction: column;
   min-width: 220px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--panel);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  padding: 5px;
+  border-radius: 16px;
+  transform-origin: 0 0;
+  animation: menu-in 0.22s var(--spring);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
 }
 .context-menu button {
   display: flex;
@@ -3113,7 +3231,7 @@ button.link:hover {
   gap: 24px;
   padding: 7px 10px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 11px;
   background: none;
   color: inherit;
   font: inherit;
@@ -3142,6 +3260,10 @@ button.link:hover {
   max-width: 280px;
   max-height: calc(100dvh - 8px);
   overflow-y: auto;
+  /* Inside the menu it opens from, so it has nothing behind it to look through to: solid instead. */
+  background: var(--panel);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   animation: sub-in 0.12s ease-out;
 }
 .context-menu .sub-label {
@@ -3234,9 +3356,8 @@ button.link:hover {
   transform: scale(1.12);
 }
 .context-menu .tray-colors button[aria-checked='true'] {
-  box-shadow:
-    0 0 0 2px var(--panel),
-    0 0 0 4px var(--c);
+  outline: 2px solid var(--c);
+  outline-offset: 2px;
 }
 
 
@@ -3251,14 +3372,12 @@ button.link:hover {
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--panel);
+  border-radius: 999px;
   color: inherit;
   cursor: pointer;
 }
 .share-btn:hover {
-  background: var(--hover);
+  background: var(--glass-thick);
 }
 .share-btn svg {
   width: 20px;
@@ -3294,7 +3413,7 @@ button.link:hover {
   aspect-ratio: 1;
   padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 18px;
   background: var(--field);
   text-align: center;
   overflow: hidden;
@@ -3318,9 +3437,8 @@ button.link:hover {
   display: block;
   padding: 0;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(6px) saturate(0.8);
-  -webkit-backdrop-filter: blur(6px) saturate(0.8);
+  --scrim: rgba(0, 0, 0, 0.22);
+  --scrim-fx: blur(6px) saturate(0.8);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -3337,6 +3455,10 @@ button.link:hover {
   left: 0;
   transform-origin: 0 0;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.35);
+  animation: fade 0.2s ease;
+}
+.map-bg.closing .map-picture {
+  animation: fade-out 0.16s ease forwards;
 }
 .map-picture img,
 .map-picture svg {
@@ -3385,7 +3507,7 @@ button.link:hover {
 .modal-bg.search-bg {
   place-items: start center;
   padding-top: calc(12vh + var(--notch));
-  background: rgba(0, 0, 0, 0.25);
+  --scrim: rgba(0, 0, 0, 0.2);
 }
 .modal.search {
   gap: 0;
