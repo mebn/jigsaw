@@ -2260,11 +2260,20 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   gap: 2px;
   width: 300px;
   max-height: min(420px, calc(100dvh - 90px));
-  overflow-y: auto;
-  padding: 12px 6px 6px;
+  /* The list scrolls inside, clear of the rounded corners, so its scrollbar never shows past them. */
+  overflow: hidden;
+  padding: 12px 6px;
   border-radius: 22px;
   transform-origin: 100% 0;
   animation: pop 0.3s var(--spring);
+}
+.players-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
 }
 .players-menu.closing {

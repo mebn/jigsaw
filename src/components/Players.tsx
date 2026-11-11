@@ -266,52 +266,54 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
             <Clock />
             Total time {formatTime(list.reduce((t, p) => t + p.seconds, 0))}
           </p>
-          {(
-            [
-              ['Here now', here],
-              ['Away', away],
-            ] as const
-          ).map(
-            ([title, group]) =>
-              group.length > 0 && (
-                <section key={title}>
-                  <h2 className="label">
-                    {title}
-                    <span className="n">{group.length}</span>
-                  </h2>
-                  {group.map((p) => (
-                    <button
-                      key={p.id}
-                      className={`players-row${p.id === me ? ' me' : ''}`}
-                      onClick={() => openProfile(p)}
-                      onPointerEnter={(e) => e.pointerType === 'mouse' && showRow(p, e.currentTarget)}
-                      onPointerLeave={hideRow}
-                      onFocus={(e) => e.target.matches(':focus-visible') && showRow(p, e.currentTarget)}
-                      onBlur={hideRow}
-                    >
-                      <Dot p={p} here={online.has(p.id)} />
-                      <span className="pname">
-                        {p.name}
-                        {p.id === me && <span className="you-label"> you</span>}
-                        {p.id === owner && (
-                          <span className="powner">
-                            <Crown />
-                          </span>
-                        )}
-                      </span>
-                      <span className="pstat">
-                        <Piece />
-                        {p.pieces}
-                      </span>
-                      <span className="pstat ptime">
-                        <Clock />
-                        {formatTime(p.seconds)}
-                      </span>
-                    </button>
-                  ))}
-                </section>
-              ),
-          )}
+          <div className="players-list">
+            {(
+              [
+                ['Here now', here],
+                ['Away', away],
+              ] as const
+            ).map(
+              ([title, group]) =>
+                group.length > 0 && (
+                  <section key={title}>
+                    <h2 className="label">
+                      {title}
+                      <span className="n">{group.length}</span>
+                    </h2>
+                    {group.map((p) => (
+                      <button
+                        key={p.id}
+                        className={`players-row${p.id === me ? ' me' : ''}`}
+                        onClick={() => openProfile(p)}
+                        onPointerEnter={(e) => e.pointerType === 'mouse' && showRow(p, e.currentTarget)}
+                        onPointerLeave={hideRow}
+                        onFocus={(e) => e.target.matches(':focus-visible') && showRow(p, e.currentTarget)}
+                        onBlur={hideRow}
+                      >
+                        <Dot p={p} here={online.has(p.id)} />
+                        <span className="pname">
+                          {p.name}
+                          {p.id === me && <span className="you-label"> you</span>}
+                          {p.id === owner && (
+                            <span className="powner">
+                              <Crown />
+                            </span>
+                          )}
+                        </span>
+                        <span className="pstat">
+                          <Piece />
+                          {p.pieces}
+                        </span>
+                        <span className="pstat ptime">
+                          <Clock />
+                          {formatTime(p.seconds)}
+                        </span>
+                      </button>
+                    ))}
+                  </section>
+                ),
+            )}
+          </div>
         </div>
       )}
       {open && rowHover && (
