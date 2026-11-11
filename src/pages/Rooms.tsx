@@ -211,9 +211,14 @@ function Tile({ r, i, mine, onPick, onDelete, children, below }: TileProps) {
   )
 }
 
+// Scrolling eases to where it's sent with this time constant (ms), so it glides to a stop, also at
+// either end.
+const EASE_MS = 70
+
 // The canvas: scrolled, moved with the arrow keys, or on a touch screen dragged with a finger (with
 // a little glide after), up and down only, and not zoomed. The mouse doesn't drag it. The jigsaws are in the middle across, and when they don't fit on the
-// screen they can be moved until a gap past their top or bottom reaches the screen's.
+// screen they can be moved until a gap past their top or bottom reaches the screen's. Scrolling eases
+// smoothly to where it's sent, never past either end.
 // render(p) makes the jigsaw for each place.
 function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; gap: number; render: (p: Placed) => ReactNode }) {
   const field = useRef<HTMLDivElement>(null)
@@ -224,9 +229,10 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
   const heads = useRef<(HTMLDivElement | null)[]>([])
   const key = list.map((r) => r.id).join() + col + W
 
-  // The canvas point in the middle of the screen, and how fast it glides (px per ms). The pointer,
-  // from -1 to 1 across the screen, and where the jigsaws have drifted to so far (following it).
-  const cam = useRef({ x: 0, y: 0, vy: 0 })
+  // The canvas point in the middle of the screen, where it's easing to (ty), and how fast a finger's
+  // glide carries it (px per ms). The pointer, from -1 to 1 across the screen, and where the jigsaws
+  // have drifted to so far (following it).
+  const cam = useRef({ x: 0, y: 0, ty: 0, vy: 0 })
   const mouse = useRef({ x: 0, y: 0, sx: 0, sy: 0 })
   const frame = useRef(0)
   const place = useRef<() => boolean>(() => false)
@@ -268,6 +274,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
     const r = range()
     c.x = Math.min(r.x[1], Math.max(r.x[0], c.x))
     c.y = Math.min(r.y[1], Math.max(r.y[0], c.y))
+    c.ty = Math.min(r.y[1], Math.max(r.y[0], c.ty))
   }
   const clampRef = useRef(clamp)
   clampRef.current = clamp
@@ -281,7 +288,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
 
   // A new set of jigsaws starts at the top, in the middle.
   useLayoutEffect(() => {
-    cam.current = { x: 0, y: range().y[0], vy: 0 }
+    cam.current = { x: 0, y: range().y[0], ty: range().y[0], vy: 0 }
     place.current()
   }, [key])
 
@@ -293,26 +300,57 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       place.current()
     })
     ro.observe(el)
+    // Scrolling moves where the canvas is going (ty), never past either end, and it eases there each
+    // frame. A finger moves it directly, and its glide after carries on the same way, ending at an end.
+    let down: { id: number; x: number; y: number; t: number; moved: boolean } | null = null
+    let dragged = false
+    let gliding = false
+    let raf = 0
+    let last = 0
+    const ends = () => range().y
     const move = (dy: number) => {
-      cam.current.y += dy
-      clampRef.current()
-      draw()
+      const c = cam.current
+      const [lo, hi] = ends()
+      c.ty = Math.min(hi, Math.max(lo, c.ty + dy))
+      run()
+    }
+    const step = (now: number) => {
+      raf = 0
+      const dt = Math.min(40, now - last)
+      last = now
+      const c = cam.current
+      if (gliding) {
+        const was = c.ty
+        c.vy *= Math.pow(0.994, dt)
+        move(c.vy * dt)
+        // Stopped at an end, or slowed to nothing.
+        if (c.ty === was || Math.abs(c.vy) < 0.02) gliding = false
+      }
+      c.y = down ? c.ty : c.y + (c.ty - c.y) * (1 - Math.exp(-dt / EASE_MS))
+      if (Math.abs(c.ty - c.y) < 0.3) c.y = c.ty
+      if (place.current()) draw()
+      if (gliding || c.y !== c.ty) run()
+    }
+    const run = () => {
+      if (raf) return
+      if (!last || performance.now() - last > 100) last = performance.now()
+      raf = requestAnimationFrame(step)
     }
     // A pinch on a trackpad comes as a wheel with ctrl: it does nothing here, rather than zoom the page.
     const wheel = (e: WheelEvent) => {
       e.preventDefault()
       if (e.ctrlKey) return
       const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1
+      gliding = false
       cam.current.vy = 0
       move(e.deltaY * k)
     }
-    let down: { id: number; x: number; y: number; t: number; moved: boolean } | null = null
-    let dragged = false
-    let glide = 0
     const pointerdown = (e: PointerEvent) => {
       if (e.pointerType === 'mouse' || e.button || (e.target as Element).closest('button')) return
-      cancelAnimationFrame(glide)
+      gliding = false
       cam.current.vy = 0
+      // Caught mid-glide or mid-ease, it stays where it's shown.
+      cam.current.ty = cam.current.y
       down = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), moved: false }
       dragged = false
     }
@@ -345,17 +383,8 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       if (performance.now() - down.t > 80) cam.current.vy = 0
       down = null
       el.classList.remove('dragging')
-      if (!moved) return
-      let last = performance.now()
-      const step = (now: number) => {
-        const c = cam.current
-        const dt = Math.min(40, now - last)
-        last = now
-        c.vy *= Math.pow(0.994, dt)
-        move(c.vy * dt)
-        if (Math.abs(c.vy) > 0.02) glide = requestAnimationFrame(step)
-      }
-      glide = requestAnimationFrame(step)
+      if (moved && cam.current.vy) gliding = true
+      run()
     }
     // A drag doesn't open the jigsaw it started on.
     const click = (e: globalThis.MouseEvent) => {
@@ -369,6 +398,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       const d = ({ ArrowUp: -1, ArrowDown: 1, PageUp: -4, PageDown: 4 } as Record<string, number>)[e.key]
       if (!d) return
       e.preventDefault()
+      gliding = false
       move(d * 160)
     }
     el.addEventListener('wheel', wheel, { passive: false })
@@ -380,7 +410,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
     window.addEventListener('keydown', key)
     return () => {
       ro.disconnect()
-      cancelAnimationFrame(glide)
+      cancelAnimationFrame(raf)
       cancelAnimationFrame(frame.current)
       el.removeEventListener('wheel', wheel)
       el.removeEventListener('pointerdown', pointerdown)

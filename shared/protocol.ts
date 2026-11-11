@@ -283,6 +283,9 @@ export type ClientMessage =
   | { type: 'hello'; passphrase: string | null }
   | { type: 'grab'; ids: number[]; ox: number[]; oy: number[]; r0: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; px: number; py: number; k: number }
+  // How what the page holds swings (radians, around (px, py)): its pieces, and images, notes and trays
+  // by kind and id ('tray:abc'). a: 0 once it's straight again.
+  | { type: 'sway'; a: number; px?: number; py?: number; pieces?: true; objs?: string[] }
   | { type: 'moves'; pieces: PieceMove[]; turns?: Spin[]; fix?: boolean }
   | { type: 'marks'; sel: number[]; hl: number[]; refs: string[]; notes: string[]; tray: string | null; player: string }
   | { type: 'cursor'; hide: true }
@@ -299,7 +302,7 @@ export type ClientMessage =
   | { type: 'tray'; live: boolean; tray: TrayInput }
   | { type: 'tray-delete'; id: string }
 
-// Messages from other pages that the server only relays (grab, live, cursor, marks and parts of
+// Messages from other pages that the server only relays (grab, live, sway, cursor, marks and parts of
 // moves) carry whatever those pages sent: anything typed unknown or optional here may be missing or
 // wrong, and is checked where it's used.
 // What comes in over a room's socket. client is the sending page's client id.
@@ -324,6 +327,7 @@ export type ServerMessage =
   | { type: 'moves'; client: string; pieces?: PieceMove[]; turns?: unknown; fix?: boolean }
   | { type: 'grab'; client: string; ids?: number[]; ox?: number[]; oy?: number[]; r0?: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; client: string; px: number; py: number; k?: number }
+  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; objs?: unknown }
   | { type: 'marks'; client: string; sel?: unknown; hl?: unknown; refs?: unknown; notes?: unknown; tray?: unknown; player?: unknown }
   | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: unknown; box?: unknown; player?: unknown }
 

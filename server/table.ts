@@ -214,6 +214,7 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
       // Drags, pointers and what players have selected are only relayed, as they are.
       case 'grab':
       case 'live':
+      case 'sway':
       case 'cursor':
       case 'marks':
         return relay({ ...m, client } as ServerMessage)
