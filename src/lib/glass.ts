@@ -6,14 +6,21 @@
 
 // Every pane of glass; the same elements as the glass rules in styles.css.
 const PANES =
-  '.float, .modal, .gallery-tabs .tabs, .context-menu:not(.sub-menu), .players-menu, .player-card, .ui-tip, .podium-btn, .share-btn, .more-btn'
+  '.float, .modal, .tabs, .primary, .secondary, .context-menu:not(.sub-menu), .players-menu, .player-card, .ui-tip, .podium-btn, .share-btn, .more-btn'
 // The bars a soft light follows the pointer over.
 const LIT = '.float'
 
 const SVG = 'http://www.w3.org/2000/svg'
-// How far in from the rim the glass bends (px), at most, and how fine the map is drawn.
-const BEZEL = 16
-const DETAIL = 0.5
+// How far in from the rim the glass bends: this much of the corner's radius, and at most this many
+// px, so the middle of a bar stays clear. Large panes have their map drawn at half size.
+const BEZEL = 22
+const BEZEL_OF_RADIUS = 0.65
+// Panes up to this size (px²) also split the light a little along the rim, into red, green and
+// blue; on larger ones it would cost more than it shows.
+const FRINGE_AREA = 120000
+// How far each colour bends, red the most.
+const FRINGE = [1, 0.9, 0.8]
+const ONLY = ['1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0', '0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0', '0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0']
 
 interface Lens {
   filter: SVGFilterElement
@@ -23,9 +30,9 @@ interface Lens {
 // The displacement map of a rounded pane: neutral grey in the middle, and towards the rim more
 // and more red and green, which push each pixel's sample inwards along the rim's normal. The
 // bend follows a quarter circle, so it is gentle at first and steep at the very edge.
-function lensMap(w: number, h: number, r: number, bezel: number): string {
-  const cw = Math.max(1, Math.round(w * DETAIL))
-  const ch = Math.max(1, Math.round(h * DETAIL))
+function lensMap(w: number, h: number, r: number, bezel: number, detail: number): string {
+  const cw = Math.max(1, Math.round(w * detail))
+  const ch = Math.max(1, Math.round(h * detail))
   const canvas = document.createElement('canvas')
   canvas.width = cw
   canvas.height = ch
@@ -111,13 +118,14 @@ export function liquidGlass() {
     const h = el.offsetHeight
     if (!w || !h) return
     const r = Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0, w / 2, h / 2)
-    const bezel = Math.max(4, Math.min(BEZEL, r, w / 2, h / 2))
+    const bezel = Math.max(4, Math.min(BEZEL, r * BEZEL_OF_RADIUS, w / 2, h / 2))
     const key = `${w}x${h}r${Math.round(r)}`
     if (worn.get(el) === key) return
     release(el)
     let lens = lenses.get(key)
     if (!lens) {
-      const href = lensMap(w, h, r, bezel)
+      const small = w * h <= FRINGE_AREA
+      const href = lensMap(w, h, r, bezel, small ? 1 : 0.5)
       if (!href) return
       const filter = document.createElementNS(SVG, 'filter')
       filter.id = `glass-${key}`
@@ -136,13 +144,41 @@ export function liquidGlass() {
       map.setAttribute('height', `${h}`)
       map.setAttribute('preserveAspectRatio', 'none')
       map.setAttribute('result', 'map')
-      const bend = document.createElementNS(SVG, 'feDisplacementMap')
-      bend.setAttribute('in', 'SourceGraphic')
-      bend.setAttribute('in2', 'map')
-      bend.setAttribute('scale', `${bezel * 2}`)
-      bend.setAttribute('xChannelSelector', 'R')
-      bend.setAttribute('yChannelSelector', 'G')
-      filter.append(map, bend)
+      filter.append(map)
+      const bend = (scale: number, result?: string) => {
+        const fe = document.createElementNS(SVG, 'feDisplacementMap')
+        fe.setAttribute('in', 'SourceGraphic')
+        fe.setAttribute('in2', 'map')
+        fe.setAttribute('scale', `${scale}`)
+        fe.setAttribute('xChannelSelector', 'R')
+        fe.setAttribute('yChannelSelector', 'G')
+        if (result) fe.setAttribute('result', result)
+        filter.append(fe)
+      }
+      if (!small) bend(bezel * 2)
+      else {
+        // Each colour bent on its own, a little less than the last, then laid back together.
+        FRINGE.forEach((by, c) => {
+          bend(bezel * 2 * by, `bent${c}`)
+          const only = document.createElementNS(SVG, 'feColorMatrix')
+          only.setAttribute('in', `bent${c}`)
+          only.setAttribute('type', 'matrix')
+          only.setAttribute('values', ONLY[c])
+          only.setAttribute('result', `c${c}`)
+          filter.append(only)
+        })
+        for (const [a, b, result] of [
+          ['c0', 'c1', 'c01'],
+          ['c01', 'c2', ''],
+        ]) {
+          const mix = document.createElementNS(SVG, 'feBlend')
+          mix.setAttribute('mode', 'screen')
+          mix.setAttribute('in', a)
+          mix.setAttribute('in2', b)
+          if (result) mix.setAttribute('result', result)
+          filter.append(mix)
+        }
+      }
       defs.append(filter)
       lens = { filter, users: 0 }
       lenses.set(key, lens)

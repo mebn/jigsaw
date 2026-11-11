@@ -18,17 +18,21 @@
   --radius: 10px;
   /* Liquid glass (see "liquid glass" below and lib/glass.ts): a thin pane for the bars over the
      table, a thick one for windows and menus, which need to be read. */
-  --glass: rgba(255, 255, 255, 0.46);
+  --glass: rgba(255, 255, 255, 0.1);
   --glass-thick: rgba(250, 250, 250, 0.74);
   --glass-line: rgba(255, 255, 255, 0.7);
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  /* Light caught along the top and bottom edges, and a faint glow just inside them. */
+  --glass-rim: inset 0 1px 0.5px rgba(255, 255, 255, 0.95), inset 0 -1px 0.5px rgba(255, 255, 255, 0.55), inset 0 0 8px rgba(255, 255, 255, 0.2),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
   --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.2);
   --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.06), 0 36px 80px -16px rgba(0, 0, 0, 0.38);
-  --glass-fx: blur(8px) saturate(1.8);
+  /* Thin glass is nearly clear: what's behind it is hardly blurred, only lightened a little so
+     what's on the glass still reads. */
+  --glass-fx: blur(2px) saturate(1.6) brightness(1.02);
   --glass-fx-thick: blur(28px) saturate(1.8);
   --glass-shine: rgba(255, 255, 255, 0.55);
   /* The raised chip of the chosen tab. */
-  --chip: #fff;
+  --chip: rgba(255, 255, 255, 0.8);
   --chip-drop: 0 1px 2px rgba(0, 0, 0, 0.1), 0 2px 8px -2px rgba(0, 0, 0, 0.12);
   --spring: cubic-bezier(0.3, 1.36, 0.5, 1);
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -54,10 +58,12 @@
     --field: rgba(245, 245, 245, 0.035);
     --line-strong: rgba(245, 245, 245, 0.32);
     --ring: rgba(245, 245, 245, 0.1);
-    --glass: rgba(44, 44, 48, 0.42);
+    --glass: rgba(255, 255, 255, 0.05);
     --glass-thick: rgba(22, 22, 24, 0.72);
-    --glass-line: rgba(255, 255, 255, 0.1);
-    --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 1px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.4);
+    --glass-line: rgba(255, 255, 255, 0.12);
+    --glass-rim: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.12), inset 0 0 14px rgba(255, 255, 255, 0.05),
+      0 0 0 1px rgba(0, 0, 0, 0.35);
+    --glass-fx: blur(2px) saturate(1.7) brightness(0.78);
     --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
     --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
     --glass-shine: rgba(255, 255, 255, 0.1);
@@ -83,10 +89,12 @@
   --dot: rgba(255, 255, 255, 0.09);
   --shadow: rgba(0, 0, 0, 0.85);
   --sel: #5b8cff;
-  --glass: rgba(44, 44, 48, 0.42);
+  --glass: rgba(255, 255, 255, 0.05);
   --glass-thick: rgba(22, 22, 24, 0.72);
-  --glass-line: rgba(255, 255, 255, 0.1);
-  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -1px 1px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.4);
+  --glass-line: rgba(255, 255, 255, 0.12);
+  --glass-rim: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.12), inset 0 0 14px rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(0, 0, 0, 0.35);
+  --glass-fx: blur(2px) saturate(1.7) brightness(0.78);
   --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
   --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
   --glass-shine: rgba(255, 255, 255, 0.1);
@@ -180,7 +188,9 @@ button {
    set by lib/glass.ts, which lists the same elements). */
 .float,
 .modal,
-.gallery-tabs .tabs,
+.tabs,
+.primary,
+.secondary,
 .context-menu,
 .players-menu,
 .player-card,
@@ -200,11 +210,18 @@ button {
 .players-menu,
 .player-card,
 .ui-tip {
-  --glass: var(--glass-thick);
-  --glass-fx: var(--glass-fx-thick);
+  background-color: var(--glass-thick);
+  backdrop-filter: var(--glass-fx-thick) var(--refract,);
+  -webkit-backdrop-filter: var(--glass-fx-thick);
 }
 .modal {
-  --glass-drop: var(--glass-drop-deep);
+  box-shadow: var(--glass-rim), var(--glass-drop-deep);
+}
+/* Glass set in a window lies flat in it, without a shadow of its own. */
+.modal .tabs,
+.modal .primary,
+.modal .secondary {
+  box-shadow: var(--glass-rim);
 }
 /* A soft light on a bar where the pointer is (--gx and --gy, see lib/glass.ts). */
 .float::before {
@@ -420,9 +437,7 @@ button {
   display: inline-flex;
   gap: 2px;
   padding: 3px;
-  border: 1px solid transparent;
   border-radius: 999px;
-  background: var(--hover);
 }
 .tab {
   height: 30px;
@@ -1092,23 +1107,21 @@ button {
   white-space: nowrap;
   transition: opacity 0.2s, transform 0.3s var(--spring), background 0.2s, border-color 0.2s, box-shadow 0.2s;
 }
-/* The one solid thing among the glass: a dark drop of it, lit along the top. */
+/* Glass like the bars (see "liquid glass"). The main button is tinted dark, still see-through. */
 .primary {
-  border: 1px solid var(--fg);
-  background: linear-gradient(rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0) 60%) var(--fg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 6px 16px -6px var(--art-shadow);
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--glass-line));
+  background-color: color-mix(in srgb, var(--fg) 76%, transparent);
+  background-image: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 60%);
   color: var(--bg);
 }
 .primary:hover:not(:disabled) {
-  opacity: 0.86;
+  background-color: color-mix(in srgb, var(--fg) 88%, transparent);
 }
 .secondary {
-  border: 1px solid var(--line);
-  background: var(--field);
   color: var(--fg);
 }
 .secondary:hover:not(:disabled) {
-  border-color: var(--line-strong);
+  background-color: var(--hover);
 }
 .primary:active:not(:disabled),
 .secondary:active:not(:disabled) {
@@ -1465,6 +1478,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   opacity: 1;
   border-color: transparent;
   box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   background: color-mix(in srgb, var(--fg) 9%, var(--bg));
   color: color-mix(in srgb, var(--fg) 40%, var(--bg));
 }
