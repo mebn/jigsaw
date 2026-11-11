@@ -272,3 +272,10 @@ export const Share = (p: IconProps) => (
     <path d="M5 12v6.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V12" />
   </Svg>
 )
+
+export const ThumbsUp = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="4" y="10.5" width="3.5" height="9" rx="1" />
+    <path d="M9.5 19.5h6.6a2 2 0 0 0 1.95-1.56l1.2-5.3A2 2 0 0 0 17.3 10.2H14l.6-3.1A2 2 0 0 0 12.6 4.7L9.5 10.5v9Z" />
+  </Svg>
+)

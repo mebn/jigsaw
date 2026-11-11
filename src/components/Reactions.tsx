@@ -4,6 +4,7 @@ import type { Engine } from '../lib/engine.ts'
 import type { RoomSocket } from '../lib/api.ts'
 import { fling } from '../lib/fling.ts'
 import { isPlainKey, isTyping, overlays, useOverlay } from '../lib/overlays.ts'
+import { ThumbsUp } from './icons.tsx'
 
 const EMOJI = '👍'
 
@@ -114,7 +115,7 @@ export default function Reactions({ engine, sock }: ReactionsProps) {
         data-tip={on ? 'Celebrate: press on the board to throw confetti. Click to stop' : 'Celebrate'}
         data-key="R"
       >
-        <span className="react-emoji">{EMOJI}</span>
+        <ThumbsUp />
       </button>
       {createPortal(<div ref={layer} className="reactions" />, host)}
     </span>

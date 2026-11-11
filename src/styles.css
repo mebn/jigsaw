@@ -1661,13 +1661,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   cursor: pointer;
   touch-action: manipulation;
 }
-.react-emoji {
-  font-size: 18px;
-  line-height: 1;
-}
-.icon-btn.on .react-emoji {
-  filter: drop-shadow(0 0 1px var(--bg));
-}
 .reactions {
   position: absolute;
   inset: 0;
