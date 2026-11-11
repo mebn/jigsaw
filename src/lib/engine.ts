@@ -2247,7 +2247,16 @@ export class Engine {
     }
     const c = this.carry
     if (c && e.pointerId === c.pointer) {
-      if (Math.hypot(sx - c.sx0, sy - c.sy0) > CLICK_PX) c.moved = true
+      if (!c.moved && Math.hypot(sx - c.sx0, sy - c.sy0) > CLICK_PX) {
+        c.moved = true
+        // A note picked up on its own is selected as it starts moving, outlined like an image or tray
+        // being moved (and in this player's colour for the others).
+        if (c.alone && c.note && !this.selNotes.has(c.note)) {
+          this.selectRef(null)
+          this.selectTray(null)
+          this.setSelection(new Set(), new Set(), new Set([c.note]))
+        }
+      }
       // A tray starts moving: pick up its pieces, from where the press was, so they keep their place.
       if (c.moved && c.lift) {
         const l = c.lift

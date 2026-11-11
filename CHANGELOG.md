@@ -5,6 +5,7 @@
 - Pieces, groups of pieces, images, notes and trays now swing a little as you drag them, as if pinned to the pointer where you hold them: they trail behind the way you move them, in any direction, more the faster you go and the further from their middle you hold them. Speeding up or stopping gives them a little push. Big things swing less than small ones, and everyone else in the room sees them swing too. It's off if your device is set to reduce motion.
 - Images and notes moved by another player now glide smoothly after them, like pieces and trays, instead of jumping along, and notes lift with a deeper shadow while they're moved.
 - Moving or resizing an image now hides the card saying who put it there, and its menu button, until you let go.
+- A note you drag is now outlined as you move it, like an image or a tray, and the others see it outlined in your colour.
 - The list of players now scrolls inside its window, so its scrollbar no longer sticks out past the rounded corners.
 - The jigsaws page now scrolls smoothly, gliding to a stop, also at the top and bottom, instead of jumping and stopping dead.
 - **A new look**: the bars, buttons, tabs, menus and windows are now made of glass, with rounded shapes and a bright rim. The bars, buttons and tabs are almost clear, so you see the table and the jigsaws through them, and windows and menus are frosted so they stay easy to read. In Chrome and Edge the rim bends what lies behind it, with a faint fringe of colour, like real glass.
