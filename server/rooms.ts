@@ -8,6 +8,7 @@ import type { Db } from './db.ts'
 import { fail, ok, readJson, siteOrigin } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
+import type { SharedRoom } from './meta.ts'
 import type { createMailer } from './mail.ts'
 import type { Players } from './players.ts'
 import type { createTable } from './table.ts'
@@ -40,6 +41,10 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       'SELECT id, name, created, cols, rows, shape, seed, width, height, long_pieces AS longPieces, owner, private FROM rooms WHERE id = ?',
     ),
     image: prepare<{ image: Uint8Array; image_type: string }>('SELECT image, image_type FROM rooms WHERE id = ?'),
+    // What a jigsaw's link preview shows, see sharing().
+    share: prepare<{ id: string; name: string; width: number; height: number; private: number; n: number; groups: number }>(
+      `SELECT r.id, r.name, r.width, r.height, r.private, ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
+    ),
     insertRoom: prepare(`
       INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -221,8 +226,17 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     }
   }
 
+  // What a link to jigsaw id shows when shared, or null to show the site's own preview: for a jigsaw
+  // that's gone, or a private one, whose picture only those with the link should see.
+  function sharing(id: string): SharedRoom | null {
+    const r = q.share.get(id)
+    if (!r || r.private) return null
+    return { id: r.id, name: r.name, width: r.width, height: r.height, pieces: r.n, ...progress(r.n, r.groups) }
+  }
+
   return {
     exists: (id: string) => !!q.room.get(id),
+    sharing,
     invitable,
     profile,
     rooms,

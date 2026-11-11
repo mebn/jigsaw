@@ -10,6 +10,7 @@ import type { Reply } from './http.ts'
 import { createHub } from './hub.ts'
 import type { RoomSocket } from './hub.ts'
 import { createMailer } from './mail.ts'
+import { roomPage } from './meta.ts'
 import { createPlayers } from './players.ts'
 import { createRooms } from './rooms.ts'
 import { createTable } from './table.ts'
@@ -79,7 +80,19 @@ function createApi(dbFile: string) {
     }
   }
 
-  return { middleware, connect, setBuild: (b: string | null) => (build = b) }
+  // The page for url (index.html): a jigsaw's link gets that jigsaw's link preview tags.
+  function page(url: string, html: string) {
+    try {
+      const id = /^\/r\/([^/?#]+)/.exec(new URL(url, 'http://x').pathname)?.[1]
+      const room = id ? rooms.sharing(decodeURIComponent(id)) : null
+      return room ? roomPage(html, room) : html
+    } catch {
+      // A malformed address: the site's own tags.
+      return html
+    }
+  }
+
+  return { middleware, connect, page, setBuild: (b: string | null) => (build = b) }
 }
 
 export default function sqliteApi(options: { file?: string } = {}): Plugin {
@@ -98,6 +111,16 @@ export default function sqliteApi(options: { file?: string } = {}): Plugin {
       // A preview serves a build: pages learn which one, see connect().
       const html = readFileSync(resolve(server.config.root, server.config.build.outDir, 'index.html'), 'utf8')
       api!.setBuild(/<script type="module"[^>]*\ssrc="([^"]+)"/.exec(html)?.[1] || null)
+      // A jigsaw's page, with its link preview tags (while developing, see transformIndexHtml).
+      server.middlewares.use((req, res, next) => {
+        if (req.method !== 'GET' || !req.url?.startsWith('/r/')) return next()
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.end(api!.page(req.url, html))
+      })
     },
+    // While developing, the page Vite serves for a jigsaw's link gets its link preview tags. A build
+    // has no api: the built index.html keeps the site's own.
+    transformIndexHtml: (html, ctx) => (api && ctx.originalUrl ? api.page(ctx.originalUrl, html) : html),
   }
 }
