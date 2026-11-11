@@ -1,9 +1,14 @@
-// Sound effects, made on the fly with Web Audio (no files to load). Off with the Sounds setting.
-let ctx: AudioContext | null = null
-let on = true
+// Sound effects, made on the fly with Web Audio (no files to load). On unless turned off with the
+// Sounds setting, which this browser remembers.
+import { store } from './storage.ts'
 
+let ctx: AudioContext | null = null
+let on = store.get('sound') !== '0'
+
+export const soundOn = () => on
 export const setSound = (v: boolean) => {
   on = v
+  store.set('sound', v ? null : '0')
 }
 
 // The audio context. Browsers only let it play once the player has pressed something on the page,

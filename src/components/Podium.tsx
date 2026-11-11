@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { formatTime } from '../lib/time.ts'
+import { useOverlay } from '../lib/overlays.ts'
+import { PODIUM_ORDER } from '../lib/share.ts'
+import { calmMotion } from '../lib/motion.ts'
+import { formatTime } from '../lib/format.ts'
 import { Clock, Piece, Share } from './icons.tsx'
 import type { RankedPlayer } from './Players.tsx'
 
-// Places in the order they stand, left to right: second, first, third.
-const STANDS = [1, 0, 2]
 // How far the podium turns towards the pointer at most, in degrees.
 const TILT = 16
 
@@ -21,29 +22,23 @@ export function PodiumIcon() {
 }
 
 // The top three players of a finished jigsaw, as a sticker: no dialog box, no dimmed background.
-// Clicking anywhere or Escape puts it away; the button under it opens sharing (onShare), over it
-// (covered: Escape is left to that). It turns a little towards the pointer.
+// Clicking anywhere or Escape puts it away; the button under it opens sharing (onShare). It turns a
+// little towards the pointer.
 interface PodiumProps {
   ranked: RankedPlayer[]
   closing: boolean
-  covered: boolean
   onClose: () => void
   onShare?: () => void
 }
 
-export default function Podium({ ranked, closing, covered, onClose, onShare }: PodiumProps) {
+export default function Podium({ ranked, closing, onClose, onShare }: PodiumProps) {
   const box = useRef<HTMLDivElement>(null)
   const stands = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (closing || covered) return
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [onClose, closing, covered])
+  useOverlay(!closing, onClose, { modal: true })
 
   useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (calmMotion()) return
     const move = (e: PointerEvent) => {
       const el = stands.current
       if (!el || !box.current) return
@@ -65,7 +60,7 @@ export default function Podium({ ranked, closing, covered, onClose, onShare }: P
     <div className={`modal-bg podium-bg${closing ? ' closing' : ''}`} onPointerDown={onClose}>
       <div className="podium" role="dialog" aria-label="Podium" ref={box}>
         <div className="podium-stands" ref={stands}>
-          {STANDS.filter((place) => top[place]).map((place) => {
+          {PODIUM_ORDER.filter((place) => top[place]).map((place) => {
             const p = top[place]
             return (
               <div key={p.id} className={`stand place-${place + 1}`}>

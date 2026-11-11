@@ -1,27 +1,17 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { FormEvent } from 'react'
-import type { AccountMode, Player } from '../App.tsx'
-import { Arrow, Check, Copy } from './icons.tsx'
+import { api } from '../lib/api.ts'
+import { LIMITS } from '../../shared/protocol.ts'
+import type { PlayerLogin } from '../../shared/protocol.ts'
+import { Arrow } from './icons.tsx'
 import TextField from './TextField.tsx'
-import Dialog, { Tabs } from './Dialog.tsx'
+import CopyButton from './CopyButton.tsx'
+import Dialog from './Dialog.tsx'
+import Tabs from './Tabs.tsx'
 
 // The player's passphrase as four word chips, with a button that copies it.
 export function Passphrase({ value }: { value: string | null | undefined }) {
   const text = String(value || '')
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!copied) return
-    const t = setTimeout(() => setCopied(false), 1500)
-    return () => clearTimeout(t)
-  }, [copied])
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-    } catch {}
-  }
 
   return (
     <span className="passphrase">
@@ -32,15 +22,7 @@ export function Passphrase({ value }: { value: string | null | undefined }) {
           <span className="word">{w}</span>
         </Fragment>
       ))}{' '}
-      <button
-        type="button"
-        className={`icon-btn copy-btn${copied ? ' on' : ''}`}
-        onClick={copy}
-        aria-label={copied ? 'Copied' : 'Copy passphrase'}
-        title={copied ? 'Copied' : 'Copy passphrase'}
-      >
-        {copied ? <Check /> : <Copy />}
-      </button>
+      <CopyButton text={text} label="Copy passphrase" />
     </span>
   )
 }
@@ -87,7 +69,7 @@ export function EmailForm({ action, create = false, focus = true, onSubmit }: Em
         autoCapitalize="none"
         autoComplete="email"
         spellCheck={false}
-        maxLength={254}
+        maxLength={LIMITS.email}
         aria-label="Email"
         title="Email"
       />
@@ -96,7 +78,7 @@ export function EmailForm({ action, create = false, focus = true, onSubmit }: Em
         type="password"
         value={password}
         onChange={(e) => (setPassword(e.target.value), setError(''))}
-        placeholder={create ? 'Password, at least 8 characters' : 'Password'}
+        placeholder={create ? `Password, at least ${LIMITS.password} characters` : 'Password'}
         autoComplete={create ? 'new-password' : 'current-password'}
         aria-label="Password"
         title="Password"
@@ -135,20 +117,18 @@ const TABS: { key: TabMode; title: string; hint: string }[] = [
 // email and password ('email'), one tab each, or showing a player's passphrase ('show', with player
 // given). A new player goes straight in; their passphrase is under Account. 'returning' greets
 // someone whose browser knew them only by name (from before passphrases) when that name already has
-// a passphrase: they log in with it, or start fresh. onSignUp, onLogin and onLoginEmail resolve with
-// the player.
+// a passphrase: they log in with it, or start fresh.
+export type AccountMode = 'name' | 'login' | 'email' | 'show' | 'returning'
+
 interface AccountPromptProps {
   mode: AccountMode
   name?: string
-  player?: Player
-  onSignUp: (name: string) => Promise<Player>
-  onLogin: (passphrase: string) => Promise<Player>
-  onLoginEmail: (email: string, password: string) => Promise<Player>
-  onDone: (p: Player) => void
+  player?: PlayerLogin
+  onDone: (p: PlayerLogin) => void
   onCancel: () => void
 }
 
-export default function AccountPrompt({ mode: start, name, player, onSignUp, onLogin, onLoginEmail, onDone, onCancel }: AccountPromptProps) {
+export default function AccountPrompt({ mode: start, name, player, onDone, onCancel }: AccountPromptProps) {
   // Log in opens on the first tab too, New player.
   const [mode, setMode] = useState<AccountMode>(start === 'login' ? 'name' : start)
   const [value, setValue] = useState('')
@@ -159,7 +139,7 @@ export default function AccountPrompt({ mode: start, name, player, onSignUp, onL
   const fresh = async () => {
     setBusy(true)
     try {
-      onDone(await onSignUp(name!))
+      onDone(await api.signUp(name!))
     } catch {
       setError('Could not save your name, try again')
     } finally {
@@ -185,8 +165,8 @@ export default function AccountPrompt({ mode: start, name, player, onSignUp, onL
     setBusy(true)
     setError('')
     try {
-      if (mode !== 'name') onDone(await onLogin(v))
-      else onDone(await onSignUp(v.slice(0, 32)))
+      if (mode !== 'name') onDone(await api.login(v))
+      else onDone(await api.signUp(v.slice(0, LIMITS.name)))
     } catch (err) {
       setError(mode !== 'name' ? (err as Error).message || 'Unknown passphrase' : 'Could not save your name, try again')
     } finally {
@@ -225,7 +205,7 @@ export default function AccountPrompt({ mode: start, name, player, onSignUp, onL
       {mode === 'email' ? (
         <>
           <p className="modal-text">Enter the email and password you switched your account to.</p>
-          <EmailForm action="Log in" onSubmit={async (email, password) => onDone(await onLoginEmail(email, password))} />
+          <EmailForm action="Log in" onSubmit={async (email, password) => onDone(await api.loginEmail(email, password))} />
         </>
       ) : (
         <form className="prompt-form" onSubmit={submit}>
@@ -251,7 +231,7 @@ export default function AccountPrompt({ mode: start, name, player, onSignUp, onL
               }}
               onKeyDown={(e) => blocked && e.key === 'Enter' && e.preventDefault()}
               placeholder={login ? 'four word passphrase' : 'Name'}
-              maxLength={login ? 200 : 32}
+              maxLength={login ? 200 : LIMITS.name}
               autoCapitalize="none"
               autoComplete={login ? 'current-password' : 'nickname'}
               spellCheck={false}

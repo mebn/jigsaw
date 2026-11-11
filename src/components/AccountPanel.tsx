@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import qrcode from 'qrcode-generator'
 import { api } from '../lib/api.ts'
-import { useApp } from '../App.tsx'
-import type { Player } from '../App.tsx'
+import { LIMITS } from '../../shared/protocol.ts'
+import { useApp } from '../lib/app.ts'
+import type { PlayerLogin as Player } from '../../shared/protocol.ts'
 import { EmailForm, looksLikePassphrase, Passphrase, PassphraseWarning } from './Account.tsx'
 import { Key, Logout, User } from './icons.tsx'
 import Confirm from './Confirm.tsx'
@@ -36,7 +37,7 @@ function NameField() {
   const [value, setValue] = useState(name || '')
   useEffect(() => setValue(name || ''), [name])
   const save = () => {
-    const v = value.trim().slice(0, 32)
+    const v = value.trim().slice(0, LIMITS.name)
     if (v && v !== name) setName(v).catch(() => setValue(name || ''))
     else setValue(name || '')
   }
@@ -44,7 +45,7 @@ function NameField() {
     <>
       <TextField
         value={value}
-        maxLength={32}
+        maxLength={LIMITS.name}
         placeholder="Your name"
         onChange={(e) => setValue(e.target.value)}
         onBlur={save}
@@ -108,7 +109,7 @@ function PhoneLink({ player }: { player: Player | null }) {
 }
 
 // Asks before logging out, showing how to log back in. onDone runs either way.
-export function LogoutConfirm({ onDone }: { onDone: () => void }) {
+function LogoutConfirm({ onDone }: { onDone: () => void }) {
   const { player, logout } = useApp()
   if (!player) return null
   return (

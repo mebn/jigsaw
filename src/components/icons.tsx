@@ -26,13 +26,6 @@ export const Rooms = (p: IconProps) => (
   </Svg>
 )
 
-export const Sun = (p: IconProps) => (
-  <Svg {...p}>
-    <circle cx="12" cy="12" r="4" />
-    <path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4" />
-  </Svg>
-)
-
 export const Moon = (p: IconProps) => (
   <Svg {...p}>
     <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
@@ -44,12 +37,6 @@ export const Sound = (p: IconProps) => (
     <path d="M4 9.5h3l4.5-4v13L7 14.5H4v-5Z" />
     <path d="M15 9a4 4 0 0 1 0 6" />
     <path d="M17.5 6.5a7.5 7.5 0 0 1 0 11" />
-  </Svg>
-)
-
-export const Fullscreen = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" />
   </Svg>
 )
 
@@ -147,16 +134,19 @@ export const Copy = (p: IconProps) => (
   </Svg>
 )
 
+// The clock and piece outlines as path data, for drawing them on a canvas too (see share.ts).
+export const CLOCK_PATH = 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17ZM12 7.5V12l3 2'
+export const PIECE_PATH = 'M5 5h4.5a2.5 2.5 0 1 1 5 0H19v4.5a2.5 2.5 0 1 1 0 5V19h-4.5a2.5 2.5 0 1 0-5 0H5v-4.5a2.5 2.5 0 1 0 0-5V5Z'
+
 export const Clock = (p: IconProps) => (
   <Svg {...p}>
-    <circle cx="12" cy="12" r="8.5" />
-    <path d="M12 7.5V12l3 2" />
+    <path d={CLOCK_PATH} />
   </Svg>
 )
 
 export const Piece = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M5 5h4.5a2.5 2.5 0 1 1 5 0H19v4.5a2.5 2.5 0 1 1 0 5V19h-4.5a2.5 2.5 0 1 0-5 0H5v-4.5a2.5 2.5 0 1 0 0-5V5Z" />
+    <path d={PIECE_PATH} />
   </Svg>
 )
 
@@ -273,20 +263,6 @@ export const Pencil = (p: IconProps) => (
 export const Wrench = (p: IconProps) => (
   <Svg {...p}>
     <path d="M14.7 6.3a4 4 0 0 0 5 5L21 10a5.5 5.5 0 0 1-7.4 6.6L7.5 22.7a2.1 2.1 0 0 1-3-3l6.1-6.1A5.5 5.5 0 0 1 17.2 6l-2.5 2.5z" />
-  </Svg>
-)
-
-export const Undo = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M9 14 4 9l5-5" />
-    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
-  </Svg>
-)
-
-export const Redo = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="m15 14 5-5-5-5" />
-    <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
   </Svg>
 )
 

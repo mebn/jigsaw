@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api.ts'
-import type { InvitablePlayer } from '../lib/api.ts'
-import { useApp } from '../App.tsx'
+import type { InvitablePlayer } from '../../shared/protocol.ts'
+import { useApp } from '../lib/app.ts'
 import { Check } from './icons.tsx'
 import TextField from './TextField.tsx'
 

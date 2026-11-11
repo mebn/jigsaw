@@ -1,8 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import TextField from './TextField.tsx'
-import { TRAY_COLORS } from '../lib/engine.ts'
-import type { Engine, MenuKind, Tray } from '../lib/engine.ts'
+import { useMenu } from '../lib/overlays.ts'
+import { TRAY_COLORS } from '../lib/colors.ts'
+import { LIMITS } from '../../shared/protocol.ts'
+import { trayName, trayOrder } from '../lib/engine.ts'
+import type { Engine, MenuKind } from '../lib/engine.ts'
 
 // What a menu is open on, and where: x and y on the board. id is the tray's, image's or note's
 // (none for pieces: the menu acts on the selection). rename: start in a tray's name field.
@@ -60,7 +63,7 @@ export default function ContextMenu({ engine, at, onClose }: ContextMenuProps) {
   }
   const image = at.kind === 'ref' ? engine.refs.find((r) => r.id === at.id) : undefined
   const [opacity, setOpacity] = useState(image?.opacity ?? 1)
-  const trimmed = image && engine.refTrim(image).some((v, k) => v !== (k < 2 ? 0 : 1))
+  const trimmed = image && engine.isTrimmed(image)
   // The opacity being slid to, saved when the slider is let go or the menu closes; null once saved.
   const fade = useRef<number | null>(null)
   const saveOpacity = () => {
@@ -87,14 +90,9 @@ export default function ContextMenu({ engine, at, onClose }: ContextMenuProps) {
     { label: 'Sort into a grid', keys: 'G', run: () => engine.sortSelection(), off: empty },
     { label: 'Sort in random order', keys: 'Shift + G', run: () => engine.sortSelection(true), off: empty },
   ]
-  // Trays to send pieces to: numbered ones first, by number, as "Tray 1 (name)" if they have a name,
-  // then the named ones without a number.
-  const trayName = (t: Tray) => t.name?.trim()
-  const sendTo: MenuItem[] = [
-    ...engine.trays.filter((t) => t.num).sort((a, b) => a.num! - b.num!),
-    ...engine.trays.filter((t) => !t.num && trayName(t)).sort((a, b) => trayName(a)!.localeCompare(trayName(b)!)),
-  ].map((t) => ({
-    label: t.num ? `Tray ${t.num}${trayName(t) ? ` (${trayName(t)})` : ''}` : trayName(t)!,
+  // Trays to send pieces to: numbered ones, as "Tray 1 (name)" if they have a name, and named ones.
+  const sendTo: MenuItem[] = engine.trays.filter((t) => t.num || trayName(t)).sort(trayOrder).map((t) => ({
+    label: t.num ? `Tray ${t.num}${trayName(t) ? ` (${trayName(t)})` : ''}` : trayName(t),
     keys: t.num ? String(t.num) : '',
     run: () => engine.sendToTray(t.id),
   }))
@@ -148,25 +146,11 @@ export default function ContextMenu({ engine, at, onClose }: ContextMenuProps) {
     })
   }, [open, pos])
 
-  useEffect(() => {
-    const away = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && onClose()
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      if (e.target === nameRef.current) draft.current = null
-      e.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('pointerdown', away, true)
-    window.addEventListener('keydown', key, true)
-    window.addEventListener('wheel', onClose, true)
-    window.addEventListener('blur', onClose)
-    return () => {
-      window.removeEventListener('pointerdown', away, true)
-      window.removeEventListener('keydown', key, true)
-      window.removeEventListener('wheel', onClose, true)
-      window.removeEventListener('blur', onClose)
-    }
-  }, [onClose])
+  // Escape in the name field drops what was typed there.
+  useMenu(true, () => {
+    if (document.activeElement === nameRef.current) draft.current = null
+    onClose()
+  }, [ref])
 
   return (
     <div ref={ref} className="context-menu" role="menu" style={{ left: pos.left + r.left, top: pos.top + r.top }} onContextMenu={(e) => e.preventDefault()}>
@@ -176,7 +160,7 @@ export default function ContextMenu({ engine, at, onClose }: ContextMenuProps) {
             ref={nameRef}
             compact
             value={name}
-            maxLength={40}
+            maxLength={LIMITS.trayName}
             placeholder="Name this tray"
             aria-label="Tray name"
             onChange={(e) => {

@@ -1,114 +1,39 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Gallery, { GALLERY_OUT_MS } from './pages/Rooms.tsx'
 import Room from './pages/Room.tsx'
 import Tooltips from './components/Tooltips.tsx'
 import AccountPrompt from './components/Account.tsx'
+import type { AccountMode } from './components/Account.tsx'
 import { api } from './lib/api.ts'
-import type { PlayerLogin } from './lib/api.ts'
+import { AppCtx } from './lib/app.ts'
+import type { AppContext, Theme } from './lib/app.ts'
+import { ERRORS } from '../shared/protocol.ts'
+import type { PlayerLogin } from '../shared/protocol.ts'
 import { useLinger } from './lib/linger.ts'
 import { useNotch } from './lib/fullscreen.ts'
-import { setSound } from './lib/sound.ts'
+import { navigate, isGallery, paths, roomOf, takeLinkLogin, usePath } from './lib/router.ts'
+import { setSound, soundOn } from './lib/sound.ts'
+import { lastRoom, store } from './lib/storage.ts'
 
-const store = {
-  get: (k: string): string | null => {
-    try {
-      return localStorage.getItem(k)
-    } catch {
-      return null
-    }
-  },
-  set: (k: string, v: string | null | undefined) => {
-    try {
-      if (v == null) localStorage.removeItem(k)
-      else localStorage.setItem(k, v)
-    } catch {}
-  },
-}
-export { store }
-
-// The logged in player. For a player with an email, passphrase is this device's login token.
-export type Player = PlayerLogin
-
-export type Theme = 'light' | 'dark'
-// What the sign up or log in prompt shows (see Account.tsx).
-export type AccountMode = 'name' | 'login' | 'email' | 'show' | 'returning'
+const linkLogin = takeLinkLogin()
 
 interface Prompt {
   mode: AccountMode
   name?: string
-  player?: Player
+  player?: PlayerLogin
   resolve: (id: string | null) => void
 }
 
-export interface AppContext {
-  theme: Theme
-  toggleTheme: () => void
-  sound: boolean
-  toggleSound: () => void
-  devMenu: boolean
-  toggleDevMenu: () => void
-  player: Player | null
-  playerId: string | null
-  currentPlayer: () => Player | null
-  name: string | null
-  setName: (v: string) => Promise<void>
-  requireName: () => Promise<string | null>
-  ensureName: () => boolean
-  openLogin: () => Promise<string | null>
-  logout: () => void
-  switchToEmail: (email: string, password: string) => Promise<void>
-  roomId: string | null
-  openRoom: (id: string) => void
-}
-
-const Ctx = createContext<AppContext | null>(null)
-export const useApp = () => useContext(Ctx)!
-
-// Plain paths (/r/<id>), no hash. Every route change goes through here or the back button.
-export function navigate(path: string, replace = false) {
-  if (path === window.location.pathname) return
-  window.history[replace ? 'replaceState' : 'pushState'](null, '', path)
-  window.dispatchEvent(new Event('navigate'))
-}
-
-// Old links used the hash (/#/r/<id>); move them over to the plain path.
-if (window.location.hash.startsWith('#/')) window.history.replaceState(null, '', window.location.hash.slice(1))
-
-// Links from the phone QR code carry a login: /r/<id>#login=<passphrase>. Take it off the address.
-const linkLogin = (() => {
-  const m = /^#login=(.+)$/.exec(window.location.hash)
-  if (!m) return null
-  window.history.replaceState(null, '', window.location.pathname + window.location.search)
-  return decodeURIComponent(m[1])
-})()
-
-// The logged in player, { id, name, passphrase, email }, kept in this browser. For a player who
-// switched to an email and password, passphrase is this device's login token, never shown.
+// The logged in player, kept in this browser. For a player who switched to an email and password,
+// passphrase is this device's login token, never shown.
 function readPlayer() {
-  try {
-    const p: Player | null = JSON.parse(store.get('player')!)
-    return p?.id && p.name ? p : null
-  } catch {
-    return null
-  }
-}
-
-function usePath() {
-  const [path, setPath] = useState(() => window.location.pathname)
-  useEffect(() => {
-    const on = () => setPath(window.location.pathname)
-    window.addEventListener('popstate', on)
-    window.addEventListener('navigate', on)
-    return () => {
-      window.removeEventListener('popstate', on)
-      window.removeEventListener('navigate', on)
-    }
-  }, [])
-  return path
+  const p = store.json<PlayerLogin>('player')
+  return p?.id && p.name ? p : null
 }
 
 const media = window.matchMedia('(prefers-color-scheme: dark)')
 
+// The theme: the system's, unless this browser chose the other one.
 function useTheme() {
   const [choice, setChoice] = useState(() => store.get('theme') as Theme | null)
   const [system, setSystem] = useState<Theme>(media.matches ? 'dark' : 'light')
@@ -126,16 +51,10 @@ function useTheme() {
     const next: Theme = theme === 'dark' ? 'light' : 'dark'
     const value = next === system ? null : next
     store.set('theme', value)
-    if (value) document.documentElement.dataset.theme = value
-    else delete document.documentElement.dataset.theme
     setChoice(value)
   }
   return [theme, toggle] as const
 }
-
-// The jigsaw a path opens, and whether it is the jigsaws page (/rooms, or /new with the new jigsaw form).
-const roomOf = (path: string) => (path.startsWith('/r/') ? path.slice(3) : null)
-const isGallery = (path: string) => path === '/rooms' || path === '/new'
 
 // How long a jigsaw stays on the screen, zooming out, as the jigsaws page comes over it (ms).
 const LEAVE_MS = 900
@@ -172,19 +91,18 @@ export default function App() {
   const [galleryShown, galleryClosing] = useLinger(onGallery || !!arriving, GALLERY_OUT_MS)
   const shownRoom = roomId || leaving
   const [theme, toggleTheme] = useTheme()
-  // Windows over the board keep below a MacBook's notch in fullscreen, like the room's toolbars.
+  // Windows and toolbars keep below a MacBook's notch in fullscreen.
   const notch = useNotch()
   useEffect(() => {
-    document.documentElement.style.setProperty('--notch', `${notch}px`)
+    const root = document.documentElement
+    root.style.setProperty('--notch', `${notch}px`)
+    if (notch) root.dataset.notch = ''
+    else delete root.dataset.notch
   }, [notch])
-  // Sound effects, such as the click when pieces connect. On unless turned off.
-  const [sound, setSoundState] = useState(() => store.get('sound') !== '0')
-  setSound(sound)
+  const [sound, setSoundState] = useState(soundOn)
   const toggleSound = useCallback(() => {
-    setSoundState((v) => {
-      store.set('sound', v ? '0' : null)
-      return !v
-    })
+    setSound(!soundOn())
+    setSoundState(soundOn())
   }, [])
   // The dev menu over the board, only in development (npm run dev). Off unless turned on.
   const [devMenu, setDevMenu] = useState(() => import.meta.env.DEV && store.get('devMenu') === '1')
@@ -197,11 +115,8 @@ export default function App() {
   const [player, setPlayerState] = useState(readPlayer)
   const playerRef = useRef(player)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
-  const savePlayer = useCallback((p: Player | null) => {
-    store.set(
-      'player',
-      p ? JSON.stringify({ id: p.id, name: p.name, passphrase: p.passphrase, email: p.email || null }) : null,
-    )
+  const savePlayer = useCallback((p: PlayerLogin | null) => {
+    store.setJson('player', p && { id: p.id, name: p.name, passphrase: p.passphrase, email: p.email || null })
     playerRef.current = p
     setPlayerState(p)
   }, [])
@@ -210,31 +125,31 @@ export default function App() {
   // over to the player made for that name. The first such browser gets that player and is shown
   // its new passphrase; any later one is asked to log in with it, or start fresh.
   useEffect(() => {
-    if (linkLogin) api.login(linkLogin).then(savePlayer).catch(() => {})
+    if (linkLogin) api.login(linkLogin).then(savePlayer, () => {})
     // Check the saved login still works: a passphrase stops working once its player switches to
     // an email on another device.
     else if (playerRef.current)
-      api
-        .login(playerRef.current.passphrase)
-        .then((p) => playerRef.current && savePlayer(p))
-        .catch((err) => err.message === 'unknown passphrase' && savePlayer(null))
+      api.login(playerRef.current.passphrase).then(
+        (p) => playerRef.current && savePlayer(p),
+        (err: Error) => err.message === ERRORS.unknownPassphrase && savePlayer(null),
+      )
     const old = store.get('name')
     if (!old) return
     if (playerRef.current || linkLogin) return store.set('name', null)
-    const done = () => {}
-    api
-      .claim(old)
-      .then((p) => {
+    // Kept until the server answers, so a network failure tries again next time.
+    api.claim(old).then(
+      (p) => {
         store.set('name', null)
         if (playerRef.current) return
         savePlayer(p)
-        setPrompt({ mode: 'show', player: p, resolve: done })
-      })
-      .catch((err) => {
-        if (err.message !== 'taken') return
+        setPrompt({ mode: 'show', player: p, resolve: () => {} })
+      },
+      (err: Error) => {
+        if (err.message !== ERRORS.nameTaken) return
         store.set('name', null)
-        if (!playerRef.current) setPrompt({ mode: 'returning', name: old, resolve: done })
-      })
+        if (!playerRef.current) setPrompt({ mode: 'returning', name: old, resolve: () => {} })
+      },
+    )
   }, [savePlayer])
 
   const setName = useCallback(
@@ -246,7 +161,6 @@ export default function App() {
     [savePlayer],
   )
   const logout = useCallback(() => savePlayer(null), [savePlayer])
-  // Switch this player's login from their passphrase to an email and password.
   const switchToEmail = useCallback(
     async (email: string, password: string) => {
       const p = playerRef.current
@@ -266,30 +180,20 @@ export default function App() {
       ),
     [],
   )
-
-  // Resolves with the player's id, asking for a name first if needed (null if they cancel).
-  const requireName = useCallback(() => {
-    if (playerRef.current) return Promise.resolve(playerRef.current.id)
-    return ask('name')
-  }, [ask])
+  const requireName = useCallback(() => (playerRef.current ? Promise.resolve(playerRef.current.id) : ask('name')), [ask])
   const openLogin = useCallback(() => ask('login'), [ask])
-
-  // Synchronous check for event handlers: true if logged in, otherwise opens the prompt.
   const ensureName = useCallback(() => {
     if (playerRef.current) return true
     requireName()
     return false
   }, [requireName])
 
-  // /rooms is the jigsaws page and /new the same with the new jigsaw form open. Any other path
-  // goes to the last jigsaw, or the jigsaws page when there isn't one.
+  // Any other path goes to the last jigsaw, or the jigsaws page when there isn't one.
   useEffect(() => {
     if (roomId || onGallery) return
-    const last = store.get('lastRoom')
-    navigate(last ? `/r/${last}` : '/rooms', true)
+    const last = lastRoom.get()
+    navigate(last ? paths.room(last) : paths.rooms, true)
   }, [path, roomId, onGallery])
-
-  const openRoom = useCallback((id: string) => navigate(`/r/${id}`), [])
 
   const ctx: AppContext = {
     theme,
@@ -300,7 +204,6 @@ export default function App() {
     toggleDevMenu,
     player,
     playerId: player?.id || null,
-    // The player right now, for code that runs after an await (state in a closure may be stale).
     currentPlayer: () => playerRef.current,
     name: player?.name || null,
     setName,
@@ -310,25 +213,21 @@ export default function App() {
     logout,
     switchToEmail,
     roomId,
-    openRoom,
   }
 
   return (
-    <Ctx.Provider value={ctx}>
+    <AppCtx.Provider value={ctx}>
       <Tooltips />
       {shownRoom && (
         <Room key={shownRoom} id={shownRoom} leaving={!roomId} arriving={arriving === shownRoom} onArrived={arrived} />
       )}
-      {galleryShown && <Gallery here={onGallery} closing={galleryClosing} newOpen={path === '/new'} />}
+      {galleryShown && <Gallery here={onGallery} closing={galleryClosing} newOpen={path === paths.new} />}
       {prompt && (
         <AccountPrompt
           key={prompt.mode}
           mode={prompt.mode}
           name={prompt.name}
           player={prompt.player}
-          onSignUp={api.signUp}
-          onLogin={api.login}
-          onLoginEmail={api.loginEmail}
           onDone={(p) => {
             savePlayer(p)
             prompt.resolve(p.id)
@@ -340,6 +239,6 @@ export default function App() {
           }}
         />
       )}
-    </Ctx.Provider>
+    </AppCtx.Provider>
   )
 }

@@ -1,9 +1,9 @@
 // Jigsaw geometry: grid sizing, edge shapes, piece outlines and initial scatter.
 
 // A point (x, y), or along an edge profile (u, v).
-export type Point = [number, number]
+type Point = [number, number]
 // A random number generator: each call gives the next number in [0, 1).
-export type Rng = () => number
+type Rng = () => number
 // An edge profile: [u, v] points along an edge (see profiles). len is the edge's length in units of
 // the short side; most ignore it.
 type Profile = (r: Rng, len?: number) => Point[]
@@ -69,14 +69,12 @@ export interface PiecePlacement {
 }
 
 // See longPaths().
-export interface LongPaths {
-  fill: Path2D
-  rim: Path2D
+interface LongPaths {
   pts: number[]
   code: number[]
 }
 
-export function rng(seed: number): Rng {
+function rng(seed: number): Rng {
   let a = seed >>> 0
   return () => {
     a = (a + 0x6d2b79f5) >>> 0
@@ -92,14 +90,14 @@ export function rng(seed: number): Rng {
 export const SHAPES: string[] = ['classic', 'dovetail', 'wave', 'mixed', 'jagged']
 
 // Max perpendicular reach of a tab, in units of the piece's short side.
-export const TAB_REACH = 0.4
+const TAB_REACH = 0.4
 
 // Shapes whose inner corners are moved off the grid, by up to this much (in units of the short
 // side), so every piece has its own size and its edges their own lengths and angles.
 const WARP: Record<string, number> = { classic: 0.05, wobbly: 0.1, mixed: 0.1, jagged: 0.14 }
 
 // How far a piece can reach past the middle of its grid cell's edges, in units of the short side.
-export const reachFor = (shape: string) => TAB_REACH + (WARP[shape] || 0)
+const reachFor = (shape: string) => TAB_REACH + (WARP[shape] || 0)
 
 export function gridFor(count: number, width: number, height: number): { cols: number; rows: number } {
   const aspect = width / height
@@ -499,7 +497,6 @@ export function buildPuzzle({ cols, rows, width, height, shape, seed, longPieces
       const cy = y * h + h / 2
       const i = y * cols + x
       const pts: number[] = []
-      // Where each side starts in the outline, by point, and the last point (the first again).
       const sides: number[] = []
       const add = (edge: Point[], reverse: boolean) => {
         sides.push(Math.max(0, pts.length / 2 - 1))
@@ -512,7 +509,6 @@ export function buildPuzzle({ cols, rows, width, height, shape, seed, longPieces
       add(V[y][x], true)
       sides.push(pts.length / 2 - 1)
       const piece: Piece = { i, col: x, row: y, cx, cy, outline: Float32Array.from(pts), sides }
-      // In a long piece: which sides (top, right, bottom, left) are inside it, not cut.
       if (unit) {
         const inner = [
           y > 0 && inside(i, i - cols)!,
@@ -548,27 +544,21 @@ export function outlinePath(outline: ArrayLike<number>): Path2D {
   return p
 }
 
-// For drawing a cell of a long piece so its cells look like one piece: fill is the outline pushed
-// out a little over the sides inside the piece (grow), so the cells overlap instead of leaving a
-// hairline between them; rim is only the cut sides, for the edge lines; pts is fill's corners as
-// x, y pairs, and code[k] the line from corner k to the next's side code (see sideCodes()). Null
-// for a cell that's a piece of its own.
+// For drawing a cell of a long piece so its cells look like one piece: its outline pushed out a
+// little over the sides inside the piece (grow), so the cells overlap instead of leaving a hairline
+// between them. pts is its corners as x, y pairs, and code[k] the line from corner k to the next's
+// side code (see sideCodes()). Null for a cell that's a piece of its own.
 export function longPaths(p: Piece, grow: number): LongPaths | null {
   if (!p.inner) return null
   const o = p.outline
-  const fill = new Path2D()
-  const rim = new Path2D()
-  // fill's corners, as x, y pairs, and for each line from one to the next which side it's on and
+  // The corners, as x, y pairs, and for each line from one to the next which side it's on and
   // whether that's a cut side (see sideCodes()).
   const pts = [o[0], o[1]]
   const code: number[] = []
   const to = (x: number, y: number, s: number, c: boolean) => {
-    fill.lineTo(x, y)
     pts.push(x, y)
     code.push(s | (c ? 4 : 0))
   }
-  fill.moveTo(o[0], o[1])
-  let pen = false
   for (let s = 0; s < 4; s++) {
     const a = p.sides[s]
     const b = p.sides[s + 1]
@@ -584,18 +574,11 @@ export function longPaths(p: Piece, grow: number): LongPaths | null {
       to(ax + nx * grow, ay + ny * grow, s, false)
       to(bx + nx * grow, by + ny * grow, s, false)
       to(bx, by, s, false)
-      pen = false
       continue
     }
-    if (!pen) rim.moveTo(o[a * 2], o[a * 2 + 1])
-    pen = true
-    for (let k = a + 1; k <= b; k++) {
-      to(o[k * 2], o[k * 2 + 1], s, true)
-      rim.lineTo(o[k * 2], o[k * 2 + 1])
-    }
+    for (let k = a + 1; k <= b; k++) to(o[k * 2], o[k * 2 + 1], s, true)
   }
-  fill.closePath()
-  return { fill, rim, pts, code }
+  return { pts, code }
 }
 
 // Room around a module when laying modules out side by side: enough that tabs don't overlap
@@ -665,14 +648,30 @@ function piecesOf(room: PuzzleSpec): number[][] {
   return [...m.values()]
 }
 
-// Where cell i sits from cell a of the same piece, when the piece is turned k quarter turns.
-function offset(room: PuzzleSpec, a: number, i: number, k: number): Point {
-  const { cols } = room
-  const x = ((i % cols) - (a % cols)) * (room.width / cols)
-  const y = (((i / cols) | 0) - ((a / cols) | 0)) * (room.height / room.rows)
-  const c = [1, 0, -1, 0][k]
-  const s = [0, 1, 0, -1][k]
-  return [x * c - y * s, x * s + y * c]
+// Quarter turns: k of them, any whole number, as 0 to 3.
+export const mod4 = (k: number) => ((k % 4) + 4) % 4
+const COS = [1, 0, -1, 0]
+const SIN = [0, 1, 0, -1]
+// (x, y) turned k quarter turns clockwise (on the screen, y down).
+export function rot(x: number, y: number, k: number): Point {
+  k = mod4(k)
+  return [x * COS[k] - y * SIN[k], x * SIN[k] + y * COS[k]]
+}
+
+// Where cell i sits from cell a in a grid cols wide of cells w by h, when both are turned k quarter
+// turns together (as the cells of one group are).
+export const gridOffset = (cols: number, w: number, h: number, a: number, i: number, k: number) =>
+  rot(((i % cols) - (a % cols)) * w, (((i / cols) | 0) - ((a / cols) | 0)) * h, k)
+
+// The cells next to cell i in a grid of cols by rows: left, right, above and below, those there are.
+export function neighbours(i: number, cols: number, rows: number) {
+  const c = i % cols
+  const out: number[] = []
+  if (c > 0) out.push(i - 1)
+  if (c < cols - 1) out.push(i + 1)
+  if (i >= cols) out.push(i - cols)
+  if (i < (rows - 1) * cols) out.push(i + cols)
+  return out
 }
 
 // Lays the pieces out in shuffled order in the same tight grid as sorting a selection (G) does,
@@ -693,7 +692,7 @@ export function scatter(room: PuzzleSpec, seed = room.seed): PiecePlacement[] {
   let at = 0
   const items = order.map((cells) => {
     const k = Math.floor(r() * 4)
-    const offs = cells.map((i) => offset(room, cells[0], i, k))
+    const offs = cells.map((i) => gridOffset(room.cols, room.width / room.cols, room.height / room.rows, cells[0], i, k))
     const xs = offs.map((o) => o[0])
     const ys = offs.map((o) => o[1])
     const x0 = Math.min(...xs) - e

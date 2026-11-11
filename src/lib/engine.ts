@@ -1,86 +1,50 @@
 // Imperative canvas engine: rendering (with WebGPU, see gpu.ts), camera, dragging, rotation and snapping.
-import { buildPuzzle, outlinePath, pack, packExtent, scatter, unitCells } from './geometry.ts'
-import { mipLevels, shapeOutline, spriteShape, spriteSize } from './sprites.ts'
-import { createGpu, PIECE_FLOATS, REF_FLOATS, TRAY_FLOATS } from './gpu.ts'
+import { buildPuzzle, gridOffset, mod4, neighbours, outlinePath, pack, packExtent, rot, scatter, unitCells } from './geometry.ts'
+import { SpriteBuilder, spriteCorners, spriteFormat } from './spriteBuilder.ts'
+import type { SpriteFormat } from './spriteBuilder.ts'
+import { createGpu, PieceInstances, premul, RefInstances, TrayInstances } from './gpu.ts'
 import type { Box, PuzzleGeometry, PuzzleSpec } from './geometry.ts'
-import type { ShapePixels, SpriteJob, SpriteReply } from './sprites.ts'
-import type { GpuOutline } from './gpu.ts'
-import { clientId } from './api.ts'
+import type { ShapePixels } from './sprites.ts'
+import type { Gpu, GpuOutline, Rgba } from './gpu.ts'
+import { clientId, newId } from './api.ts'
+import type { RoomSocket } from './api.ts'
+import { TRAY_COLORS, cursorColor, trayColor } from './colors.ts'
+import { LIMITS } from '../../shared/protocol.ts'
+import { isTyping, overlays } from './overlays.ts'
+import { Throttle } from './throttle.ts'
+import { store } from './storage.ts'
+import { calmMotion } from './motion.ts'
+import type { ClientMessage, PieceMove, RefInput, ServerMessageOf, Spin, TrayInput } from '../../shared/protocol.ts'
 
 // ---- types ------------------------------------------------------------------
 
 // A point or size, [x, y].
-export type Vec2 = [number, number]
+type Vec2 = [number, number]
 // A screen rectangle, [x0, y0, x1, y1].
-export type Rect4 = [number, number, number, number]
-// A colour as [r, g, b, a], each 0 to 1.
-export type Color4 = [number, number, number, number]
-// The WebGPU renderer, see createGpu().
-export type Gpu = Awaited<ReturnType<typeof createGpu>>
-// The sprite workers working for one jigsaw, see startSprites().
-interface SpriteRun {
-  job: number
-  workers: Worker[]
-  left: number
-}
-
-// What the engine needs to know about a jigsaw: how it is cut, and its id.
-export interface EngineRoom extends PuzzleSpec {
+type Rect4 = [number, number, number, number]
+interface EngineRoom extends PuzzleSpec {
   id: string
-}
-// A piece as saved and sent: cell i at (x, y), turned r quarter turns, in group g, connected by
-// player by, in tray t (since ta, ms).
-export interface PieceState {
-  i: number
-  x: number
-  y: number
-  r: number
-  g: number
-  by?: string | null
-  t?: string | null
-  ta?: number
 }
 // A reference image on the table: centre (x, y) and width w in world units, and the part of the
 // picture it shows (trim*, fractions of it).
-export interface Ref {
-  id: string
-  x: number
-  y: number
-  w: number
-  opacity?: number
-  trimX?: number
-  trimY?: number
-  trimW?: number
-  trimH?: number
-  author?: string
-}
+export type Ref = RefInput
 // A tray on the table: top left corner (x, y) and size in world units, and the pieces in it, in the
 // order they went in.
-export interface Tray {
-  id: string
-  x: number
-  y: number
-  w: number
-  h: number
-  color: string
-  name?: string
-  num?: number
-  auto?: boolean
-  author?: string
-  pieces: number[]
-}
-// A tray as it is saved and sent, with or without its pieces.
-export type TrayInput = Omit<Tray, 'pieces'> & { pieces?: number[] }
+export type Tray = TrayInput & { color: string; pieces: number[] }
+// A tray's name as it shows, if it has one.
+export const trayName = (t: Tray) => t.name?.trim() || ''
+// The order trays are listed in: numbered ones first, by number, then by name.
+export const trayOrder = (a: Tray, b: Tray) => (a.num || 99) - (b.num || 99) || trayName(a).localeCompare(trayName(b))
 // A tray's look, changed with setTrayLook().
-export type TrayLook = Partial<Pick<Tray, 'name' | 'color'>>
+type TrayLook = Partial<Pick<Tray, 'name' | 'color'>>
 // A note as the engine knows it: by its id, at (x, y), its top left corner.
-export interface NoteData {
+interface NoteData {
   id: string
   x: number
   y: number
 }
 // A note's box on the table, see NotesApi.get().
-export interface NoteBox extends NoteData {
+interface NoteBox extends NoteData {
   w: number
   h: number
 }
@@ -93,7 +57,7 @@ export interface Spot {
   tray?: string | null
 }
 // Set by the notes layer, see Engine.notes.
-export interface NotesApi {
+interface NotesApi {
   get(): NoteBox[]
   // The same with each note's text, who wrote it and when, for the search (see Search.tsx).
   find(): (NoteBox & { text: string; author: string; created: number })[]
@@ -112,13 +76,13 @@ export interface NotesApi {
 }
 // A tray lifted off the table while it's moved (see liftTray()): value easing to target, 0 down and
 // 1 up; client: the other player moving it, null for this one.
-export interface TrayLift {
+interface TrayLift {
   value: number
   target: number
   client: string | null
 }
 // The camera: the world point in the middle of the view, and the zoom (screen px per world unit).
-export interface Cam {
+interface Cam {
   x: number
   y: number
   z: number
@@ -131,7 +95,7 @@ export interface View extends Cam {
 // How the screen is cut into panes for split screen: 1, not at all; 2, in halves side by side; 3,
 // a half on the left and two quarters on the right; 4, in quarters. Each pane's [x0, y0, x1, y1] as
 // fractions of the screen, in the order they're numbered.
-export type SplitLayout = 1 | 2 | 3 | 4
+type SplitLayout = 1 | 2 | 3 | 4
 const PANE_LAYOUTS: Record<SplitLayout, [number, number, number, number][]> = {
   1: [[0, 0, 1, 1]],
   2: [[0, 0, 0.5, 1], [0.5, 0, 1, 1]],
@@ -139,7 +103,7 @@ const PANE_LAYOUTS: Record<SplitLayout, [number, number, number, number][]> = {
   4: [[0, 0, 0.5, 0.5], [0.5, 0, 1, 0.5], [0, 0.5, 0.5, 1], [0.5, 0.5, 1, 1]],
 }
 // A pane on the canvas, in CSS pixels and (dx, dy, dw, dh) device pixels.
-export interface PaneRect {
+interface PaneRect {
   x: number
   y: number
   w: number
@@ -150,7 +114,7 @@ export interface PaneRect {
   dh: number
 }
 // Called with the camera and view size whenever the view changes, see addView().
-export type ViewFn = (cam: Cam, vw: number, vh: number) => void
+type ViewFn = (cam: Cam, vw: number, vh: number) => void
 interface CamAnim {
   from: Cam
   to: Cam
@@ -163,7 +127,7 @@ interface CamAnim {
   pane: number
 }
 // The colours the engine draws with, from the page's theme.
-export interface EngineColors {
+interface EngineColors {
   bg: string
   card?: string
   edge?: string
@@ -174,24 +138,24 @@ export interface EngineColors {
   sel: string
 }
 // How many pieces a player connected, see contributors().
-export interface Contributor {
+interface Contributor {
   id: string
   pieces: number
 }
 // What undo and redo can do, see onHistory.
-export interface HistoryState {
+interface HistoryState {
   undo: boolean
   redo: boolean
 }
 // Pieces just joined, see onSnap.
-export interface SnapEvent {
+interface SnapEvent {
   seams: number
   local: boolean
 }
 // What a context menu is opened on.
 export type MenuKind = 'piece' | 'ref' | 'tray' | 'note'
 // A context menu to open at (sx, sy) on the canvas: on piece i, or the image, tray or note id.
-export interface MenuOpen {
+interface MenuOpen {
   kind: MenuKind
   id?: string
   i?: number
@@ -199,41 +163,17 @@ export interface MenuOpen {
   sy: number
   rename?: boolean
 }
-// A spin of pieces around a point, as sent with their moves.
-export interface TurnMsg {
-  ids: number[]
-  cx: number
-  cy: number
-  d: number
-}
 // A piece turning in place on the table: around (cx, cy), or around itself (self), by a (radians)
 // still to go.
 export type Turn = { self: true; a: number } | { self?: false; cx: number; cy: number; a: number }
 
-// Messages this engine sends to the others in the room.
-export type OutMessage =
-  | { type: 'grab'; ids: number[]; ox: number[]; oy: number[]; r0: number[]; px: number; py: number; k?: number; tray?: boolean }
-  | { type: 'live'; px: number; py: number; k: number }
-  | { type: 'moves'; pieces: PieceState[]; turns?: TurnMsg[]; fix?: boolean }
-  | { type: 'marks'; sel: number[]; hl: number[]; refs: string[]; notes: string[]; tray: string | null; player: string }
-  | { type: 'cursor'; hide: true }
-  | { type: 'cursor'; x: number; y: number; name: string; player: string; box?: number[] }
-  | { type: 'react'; kind: string; x: number; y: number }
-  | { type: 'ink'; id: string; pts: number[]; end?: boolean }
-// The same, from another client, as they arrive: anything that isn't checked may be missing.
-export type RemoteMessage =
-  | { type: 'grab'; client: string; ids?: number[]; ox?: number[]; oy?: number[]; r0?: number[]; px: number; py: number; k?: number; tray?: boolean }
-  | { type: 'live'; client: string; px: number; py: number; k?: number }
-  | { type: 'moves'; client: string; pieces?: PieceState[]; turns?: unknown; fix?: boolean }
-  | { type: 'marks'; client: string; sel?: unknown; hl?: unknown; refs?: unknown; notes?: unknown; tray?: unknown; player?: unknown }
-  | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: unknown; box?: unknown; player?: unknown }
-  | { type: 'ink'; client: string; id?: unknown; pts?: unknown; end?: unknown }
-  | { type: 'gone'; client: string }
+// Messages from other pages that the engine handles itself, see connect().
+type RemoteMessage = ServerMessageOf<'grab' | 'live' | 'moves' | 'marks' | 'cursor' | 'ink' | 'gone'>
 
-export interface EngineOptions {
+interface EngineOptions {
   room: EngineRoom
   image: HTMLImageElement
-  pieces: PieceState[]
+  pieces: PieceMove[]
   refs?: Ref[]
   trays?: TrayInput[]
   overlay?: HTMLCanvasElement | null
@@ -242,13 +182,8 @@ export interface EngineOptions {
   nameOf?: (id: string) => string
   guard?: () => boolean
   tooltip?: HTMLElement | null
-  send: (msg: OutMessage) => void
   onStats?: () => void
   onComplete?: () => void
-  onRef?: (ref: Ref, live: boolean) => void
-  onRefDelete?: (id: string) => void
-  onTray?: (tray: Tray, live: boolean) => void
-  onTrayDelete?: (id: string) => void
   onSnap?: (e: SnapEvent) => void
   onMenu?: (sx: number, sy: number, kind: MenuKind, id: string | undefined, opts: { rename: boolean }) => void
   onHistory?: (h: HistoryState) => void
@@ -282,7 +217,7 @@ export interface Drag {
   piece?: number
 }
 // Pieces lifted off the table (carried, or landing), see liftPoses().
-export interface Lift {
+interface Lift {
   ids: number[]
   set: Set<number>
   value: number
@@ -296,7 +231,7 @@ export interface Lift {
   tray?: boolean
 }
 // Another player's drag in progress.
-export interface RemoteDrag {
+interface RemoteDrag {
   ids: number[]
   ox: number[]
   oy: number[]
@@ -304,7 +239,7 @@ export interface RemoteDrag {
   k?: number
 }
 // Pieces another player carries, lifted with a shadow like ours.
-export interface RemoteLift {
+interface RemoteLift {
   ids: number[]
   set: Set<number>
   value: number
@@ -312,7 +247,7 @@ export interface RemoteLift {
   tray: boolean
 }
 // Another player's pointer, easing from (x, y) to (tx, ty), and the selection box they drag out.
-export interface Cursor {
+interface Cursor {
   x: number
   y: number
   tx: number
@@ -323,7 +258,7 @@ export interface Cursor {
   box: number[] | null
 }
 // What another player has selected or hovers over.
-export interface Marks {
+interface Marks {
   sel: number[]
   hl: number[]
   refs: string[]
@@ -331,7 +266,7 @@ export interface Marks {
   tray: string | null
 }
 // Images, notes and trays riding along with a drag, see grabSelection() and startTrayDrag().
-export interface Carry {
+interface Carry {
   pointer: number
   wx: number
   wy: number
@@ -347,10 +282,9 @@ export interface Carry {
   lift?: { wx: number; wy: number; sx: number; sy: number } | null
   at?: Vec2
 }
-// The selection box being dragged out.
 // A stroke drawn in draw mode, by this player or another: its points (x, y, x, y, ... in world units),
 // colour, and when it was finished (ms, 0 while still being drawn), after which it fades away.
-export interface Stroke {
+interface Stroke {
   pts: number[]
   color: string
   done: number
@@ -361,10 +295,13 @@ export interface Stroke {
 interface Inking {
   id: string
   pointer: number
+  // Points not sent yet, and whether the stroke is finished.
   unsent: number[]
+  end?: boolean
 }
 
-export interface Marquee {
+// The selection box being dragged out.
+interface Marquee {
   pointer: number
   wx0: number
   wy0: number
@@ -383,13 +320,13 @@ interface Pan {
   menu?: MenuOpen | null
 }
 // An image under a point, see refHit(): its body (move) or a resize handle on corner (cx, cy).
-export interface RefHit {
+interface RefHit {
   ref: Ref
   mode: 'move' | 'resize'
   cx?: number
   cy?: number
 }
-export interface TrayHit {
+interface TrayHit {
   tray: Tray
 }
 interface RefDrag {
@@ -434,7 +371,7 @@ export interface Trim {
   box: { pointer: number; sx0: number; sy0: number; sx: number; sy: number } | null
 }
 // A highlighted (hovered) piece, with the name of who connected it.
-export interface Highlight {
+interface Highlight {
   key: string
   ids: number[]
   text: string
@@ -445,7 +382,7 @@ export interface Tip {
   sy: number
 }
 // A burst where pieces join, at (x, y) in world units.
-export interface Pop {
+interface Pop {
   x: number
   y: number
   t0: number
@@ -457,7 +394,7 @@ interface ButtonLook {
   s: number
 }
 // The trays that got pieces put in them (into) or taken out (left), see placeInTrays().
-export interface TrayChange {
+interface TrayChange {
   into?: Tray | null
   left?: Tray[]
 }
@@ -465,7 +402,7 @@ export interface TrayChange {
 // ---- undo history ---------------------------------------------------------------
 
 // How a piece looks, as undo remembers it.
-export interface Look {
+interface Look {
   x: number
   y: number
   r: number
@@ -474,40 +411,40 @@ export interface Look {
   t: string | null
 }
 // A piece's change: before (b) and after (a).
-export interface PieceChange {
+interface PieceChange {
   i: number
   b: Look
   a: Look
 }
-export type ObjKind = 'ref' | 'tray' | 'note'
+type ObjKind = 'ref' | 'tray' | 'note'
 // An image, tray or note as undo remembers it.
-export type ObjSnap = Ref | Tray | TrayInput | NoteData
+type ObjSnap = Ref | Tray | TrayInput | NoteData
 // An image's, tray's or note's change: before (b) and after (a), null when it isn't there.
-export interface ObjChange {
+interface ObjChange {
   kind: ObjKind
   id: string
   b: ObjSnap | null
   a: ObjSnap | null
 }
 // What is selected: pieces, images and notes.
-export interface SelSnap {
+interface SelSnap {
   p: Set<number>
   r: Set<string>
   n: Set<string>
 }
 // One step to undo: moves of pieces and changes to images, trays and notes, or a selection.
-export interface MoveStep {
+interface MoveStep {
   items: PieceChange[]
   objs: ObjChange[]
   t: number
   sel?: undefined
   press?: undefined
 }
-export interface SelStep {
+interface SelStep {
   sel: { b: SelSnap; a: SelSnap }
   press: number | null
 }
-export type HistoryStep = MoveStep | SelStep
+type HistoryStep = MoveStep | SelStep
 interface Pending {
   items: PieceChange[]
   objs: ObjChange[]
@@ -543,14 +480,9 @@ type PointerLike = { pointerId: number; clientX: number; clientY: number }
 type LegacyWheelEvent = WheelEvent & { wheelDeltaY?: number }
 
 const Q = Math.PI / 2
-const COS = [1, 0, -1, 0]
-const SIN = [0, 1, 0, -1]
-const mod4 = (k: number) => ((k % 4) + 4) % 4
-const rot = (x: number, y: number, k: number): Vec2 => {
-  k = mod4(k)
-  return [x * COS[k] - y * SIN[k], x * SIN[k] + y * COS[k]]
-}
 const ease = (dt: number, ms: number) => 1 - Math.exp(-dt / ms)
+// Where the world point (x, y) shows in a view of vw by vh seen through cam, in its screen px.
+const project = (cam: Cam, vw: number, vh: number, x: number, y: number): Vec2 => [(x - cam.x) * cam.z + vw / 2, (y - cam.y) * cam.z + vh / 2]
 const r2 = (v: number) => Math.round(v * 100) / 100
 // Live drag updates are throttled to this interval (ms).
 const LIVE_MS = 33
@@ -560,39 +492,10 @@ const POP_DELAY = 80
 const MAX_POPS = 12
 // Pieces held with a finger ride this far (screen px) above it, so the finger doesn't hide them.
 const TOUCH_LIFT = 72
-// At most this many workers work out the pieces' shapes (see startSprites()).
-const SPRITE_WORKERS = 8
-// Those workers, kept from one jigsaw to the next so they're ready at once, and a count that tells
-// one jigsaw's job from the next.
-const spritePool: Worker[] = []
-let spriteJob = 0
-const spriteWorkerCount = () => Math.max(1, Math.min(SPRITE_WORKERS, (navigator.hardwareConcurrency || 2) - 1))
-const canSprite = () => typeof Worker === 'function' && typeof OffscreenCanvas === 'function'
-
-// Starts the sprite workers ahead of time, so they're loaded by the time a jigsaw needs them.
-export function warmSprites() {
-  if (!canSprite()) return
-  try {
-    while (spritePool.length < spriteWorkerCount()) spritePool.push(new Worker(new URL('./sprites.worker.ts', import.meta.url), { type: 'module' }))
-  } catch {
-    // Started when they're needed instead, or not at all.
-  }
-}
-const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)')
 // The size of an empty tray, in piece sizes.
 const TRAY_W = 6
 const TRAY_H = 4
-// Tray colours, by the name stored with each tray.
-export const TRAY_COLORS: Record<string, string> = {
-  blue: '#3b82f6',
-  green: '#22a06b',
-  yellow: '#e0a800',
-  orange: '#f97316',
-  red: '#e5484d',
-  purple: '#8e4ec6',
-  gray: '#8b8d98',
-}
-// How far the table reaches from the middle of the pieces on every side, in jigsaw sizes.
+// How far the table reaches from the middle of the pieces, in multiples of the jigsaw's size (see bounds).
 const TABLE = 10
 // How far a press may move and still count as a click.
 const CLICK_PX = 5
@@ -663,9 +566,9 @@ const makeCanvas = (w: number, h: number) => {
 }
 // A CSS colour as [r, g, b, a], each 0 to 1, read back from a canvas so any colour the browser
 // knows works.
-const colors = new Map<string, Color4>()
+const colors = new Map<string, Rgba>()
 let colorCtx: CanvasRenderingContext2D | null = null
-const rgba = (css: string): Color4 => {
+const rgba = (css: string): Rgba => {
   let c = colors.get(css)
   if (!c) {
     colorCtx ??= makeCanvas(1, 1).getContext('2d', { willReadFrequently: true })!
@@ -678,10 +581,6 @@ const rgba = (css: string): Color4 => {
   }
   return c
 }
-// A colour premultiplied by its alpha, times alpha.
-const pm = ([r, g, b, a]: Color4, alpha = 1) => [r * a * alpha, g * a * alpha, b * a * alpha, a * alpha]
-// a, or a bigger array if it holds fewer than n numbers.
-const grow = (a: Float32Array, n: number) => (a.length >= n ? a : new Float32Array(Math.max(n, a.length * 2)))
 // Arrow keys and WASD move the camera, at this many screen pixels per second, speeding up the
 // longer they are held: up to PAN_BOOST times as fast after PAN_RAMP ms. Holding a piece, tray,
 // image or note within EDGE_PX of the view's edge moves it the same way.
@@ -701,18 +600,12 @@ const PAN_KEYS: Record<string, Vec2> = {
   w: [0, -1],
   s: [0, 1],
 }
-const CURSOR_COLORS = ['#e5484d', '#0090ff', '#30a46c', '#f76b15', '#8e4ec6', '#d6409f', '#12a594', '#ca8a04']
-export const cursorColor = (id: string) => {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
-  return CURSOR_COLORS[Math.abs(h) % CURSOR_COLORS.length]
-}
-
 export class Engine {
   canvas: HTMLCanvasElement
   ctx: CanvasRenderingContext2D
   gpuEl: HTMLCanvasElement
   gpuTop: HTMLCanvasElement
+  // Set once the GPU is started, see startGpu().
   gpu: Gpu | null
   mv: View
   hitCtx: CanvasRenderingContext2D
@@ -725,16 +618,13 @@ export class Engine {
   nameOf: (id: string) => string
   guard: (() => boolean) | undefined
   tooltip: HTMLElement | null | undefined
-  send: (msg: OutMessage) => void
+  // The room's socket, once connect() is given it.
+  sock: RoomSocket | null
   onStats: (() => void) | undefined
   onSnap: ((e: SnapEvent) => void) | undefined
   onMenu: EngineOptions['onMenu']
   onHistory: ((h: HistoryState) => void) | undefined
   onComplete: (() => void) | undefined
-  onRef: (ref: Ref, live: boolean) => void
-  onRefDelete: ((id: string) => void) | undefined
-  onTray: (tray: Tray, live: boolean) => void
-  onTrayDelete: ((id: string) => void) | undefined
   views: Set<ViewFn>
   viewsVer: number
   viewFn?: number
@@ -761,23 +651,16 @@ export class Engine {
   marquee: Marquee | null
   remote: Map<string, RemoteDrag>
   cursors: Map<string, Cursor>
-  lastCursor: number
   marks: Map<string, Marks>
   players: Map<string, string>
-  lastMarks: number
   rlift: Map<string, RemoteLift>
   trayUp: Map<string, TrayLift>
   order: number[]
-  margin: number
   radius: number
-  spriteScale: number
-  spriteW: number
-  spriteH: number
+  sprite: SpriteFormat
+  spriteBuilder: SpriteBuilder
   sprites: (ShapePixels | true | undefined)[]
   built: number
-  buildAt!: number
-  spriteWorker!: SpriteRun | null
-  shapeCtx?: CanvasRenderingContext2D | null
   refs: Ref[]
   refSel: string | null
   refDrag: RefDrag | null
@@ -842,8 +725,17 @@ export class Engine {
   drawMode: boolean
   strokes: Map<string, Stroke>
   ink: Inking | null
-  lastInk?: number
-  inkTimer?: number
+  // The stroke being sent: this one, or the last one until its end is sent.
+  inkOut: Inking | null = null
+  // What goes to the others while something goes on, each at most so often (see Throttle).
+  out = {
+    carry: new Throttle(LIVE_MS, () => this.sendCarry()),
+    marks: new Throttle(MARKS_MS, () => this.sendMarks()),
+    cursor: new Throttle(CURSOR_MS, () => this.sendCursor()),
+    live: new Throttle(LIVE_MS, () => this.sendLive()),
+    ref: new Throttle(LIVE_MS, () => this.sendRefLive()),
+    ink: new Throttle(LIVE_MS, () => this.sendInk()),
+  }
   held: Map<number, number>
   moving: Map<number, Vec2>
   toCheck: Set<number>
@@ -851,22 +743,16 @@ export class Engine {
   pops: Pop[]
   colors: EngineColors
   last: number
-  lastLive: number
-  lastCarry?: number
-  lastRefLive?: number
   done: boolean
   ready: Promise<void>
-  // Set once the GPU is started, see startGpu().
-  gi!: Float32Array
-  giu!: Uint32Array
-  gTrays!: Float32Array
-  gRefs!: Float32Array
-  gn!: number
+  // Per frame: the pieces' instances (still, active, lifted, then the outlined ones again), trays and images.
+  gPieces = new PieceInstances()
+  gTrays = new TrayInstances()
+  gRefs = new RefInstances()
   // Where poseInto() put the last piece.
   qx!: number
   qy!: number
   qa!: number
-  cull?: Box
   raf!: number
   h!: Handlers
   host!: HTMLElement | null
@@ -880,14 +766,10 @@ export class Engine {
   cursorsDrawn?: boolean
   camTimer?: number
   statsTimer?: number
-  carryTimer?: number
-  marksTimer?: number
-  cursorTimer?: number
-  liveTimer?: number
-  refTimer?: number
   idleTimer?: number
+  fitTimer?: number
 
-  constructor(canvas: HTMLCanvasElement, { room, image, pieces, refs, trays, overlay, user, userName, nameOf, guard, tooltip, send, onStats, onComplete, onRef, onRefDelete, onTray, onTrayDelete, onSnap, onMenu, onHistory }: EngineOptions) {
+  constructor(canvas: HTMLCanvasElement, { room, image, pieces, refs, trays, overlay, user, userName, nameOf, guard, tooltip, onStats, onComplete, onSnap, onMenu, onHistory }: EngineOptions) {
     this.canvas = canvas
     // The table is drawn with WebGPU on a canvas stacked under the board (see startGpu() and
     // drawGpu()), the whole of it every frame. The board canvas only holds the small things on
@@ -915,7 +797,7 @@ export class Engine {
     // Called before any action that needs a player name; returns false to block it.
     this.guard = guard
     this.tooltip = tooltip
-    this.send = send
+    this.sock = null
     this.onStats = onStats
     // Pieces just connected, by this player (local) or another: onSnap({ seams, local }). The sound ignores seams.
     this.onSnap = onSnap
@@ -925,18 +807,6 @@ export class Engine {
     // Undo and redo, for this player's own moves: onHistory({ undo, redo }) says what is available.
     this.onHistory = onHistory
     this.onComplete = onComplete
-    // Reference image changes: onRef(ref, live) while and after editing, onRefDelete(id).
-    this.onRef = (ref, live) => {
-      onRef?.(ref, live)
-      if (!live) this.trackObj('ref', ref.id, ref)
-    }
-    this.onRefDelete = onRefDelete
-    // Tray changes: onTray(tray, live) while and after moving it, onTrayDelete(id).
-    this.onTray = (tray, live) => {
-      onTray?.(tray, live)
-      if (!live) this.trackObj('tray', tray.id, tray)
-    }
-    this.onTrayDelete = onTrayDelete
     // Called with (cam, vw, vh) whenever the view changes, see addView().
     this.views = new Set()
     this.viewsVer = 0
@@ -969,7 +839,7 @@ export class Engine {
     this.sel = new Set()
     this.selRefs = new Set()
     this.selNotes = new Set()
-    // Set by the notes layer: { get() -> [{ id, x, y, w, h }], move(list, send), select(ids), focus(id) }.
+    // Set by the notes layer, see NotesApi.
     this.notes = null
     // Images, notes and trays riding along with a drag: { pointer, wx, wy, sx0, sy0, moved, note, refs,
     // notes, trays }. A moved tray also has lift: the pieces in it, picked up once the pointer moves.
@@ -979,13 +849,11 @@ export class Engine {
     this.remote = new Map()
     // Other players' pointers: client -> { x, y, tx, ty, name, color, t }.
     this.cursors = new Map()
-    this.lastCursor = 0
     // What other players have selected or hover over: client -> { sel, hl } (piece ids), outlined in
     // their cursor colour. Ours go out the same way, throttled, see sendMarks().
     this.marks = new Map()
     // The player on each other client, as their cursor and marks say, so a player keeps one colour.
     this.players = new Map()
-    this.lastMarks = 0
     // Pieces other players carry are lifted with a shadow like ours: client -> { ids, set, value, target }.
     this.rlift = new Map()
     for (const p of pieces) {
@@ -1003,20 +871,14 @@ export class Engine {
       (a, b) => sizes.get(this.g[b]) - sizes.get(this.g[a]),
     )
 
-    const { w, h, S, pad } = this.geo
-    this.margin = pad + S * 0.12
-    this.radius = Math.hypot(w / 2 + this.margin, h / 2 + this.margin)
-    const spriteArea = n * (w + 2 * this.margin) * (h + 2 * this.margin)
-    this.spriteScale = Math.min(2, Math.max(0.35, Math.sqrt(16e6 / spriteArea)))
-    // Every sprite has the same size, and is drawn at this size in world units.
-    const [spw, sph] = spriteSize(this.geo, this.margin, this.spriteScale)
-    this.spriteW = spw / this.spriteScale
-    this.spriteH = sph / this.spriteScale
+    this.sprite = spriteFormat(this.geo, n)
+    const { w, h } = this.geo
+    this.radius = Math.hypot(w / 2 + this.sprite.margin, h / 2 + this.sprite.margin)
     // Per piece: its shape (see sprites.ts), made in the background, until it's on the GPU, and true
     // after. The picture around it goes there in one go, see startGpu().
     this.sprites = new Array(n)
     this.built = 0
-    this.startSprites()
+    this.spriteBuilder = new SpriteBuilder(this.geo, this.sprite, (i) => !!this.sprites[i], (i, shape) => this.setSprite(i, shape), () => this.invalidate())
 
     // Reference images, shared by the room: { id, x, y, w, author } in world units (centre and width).
     this.refs = (refs || []).filter((r) => isFinite(r.x) && isFinite(r.y) && r.w > 0)
@@ -1043,7 +905,7 @@ export class Engine {
     // Delete removes it.
     this.trays = (trays || [])
       .filter((t) => isFinite(t.x) && isFinite(t.y) && t.w > 0 && t.h > 0)
-      .map((t) => ({ ...t, auto: !!t.auto, pieces: [] }))
+      .map((t) => ({ ...t, color: t.color || '', auto: !!t.auto, pieces: [] }))
     this.syncTrays()
     this.traySel = null
     this.hist = { undo: [], redo: [] }
@@ -1095,7 +957,6 @@ export class Engine {
     this.pan = null
     this.pointers = new Map()
     this.touches = new Set()
-    // Pan keys held down right now.
     this.panKeys = new Set()
     // When the pan keys were first pressed, for speeding up while held.
     this.panSince = 0
@@ -1114,7 +975,6 @@ export class Engine {
     this.pops = []
     this.colors = { bg: '#f4f4f4', card: '#fafafa', edge: 'rgba(0,0,0,.1)', dot: 'rgba(0,0,0,.12)', shadow: 'rgba(0,0,0,.35)', sel: '#2f6fed' }
     this.last = performance.now()
-    this.lastLive = 0
 
     // Whether the jigsaw is finished, so finishing it is only noticed once.
     this.done = this.isComplete()
@@ -1131,23 +991,18 @@ export class Engine {
   // Starts WebGPU, puts every sprite made so far in its atlas and shows the GPU canvas. Sprites made
   // later go there as they come, see setSprite().
   async startGpu(): Promise<void> {
-    const [spw, sph] = spriteSize(this.geo, this.margin, this.spriteScale)
-    const gpu = await createGpu(this.gpuEl, this.gpuTop, { cells: this.n, spw, sph, levels: mipLevels([spw, sph]) })
+    const { size: [spw, sph], levels, sc } = this.sprite
+    const gpu = await createGpu(this.gpuEl, this.gpuTop, { cells: this.n, spw, sph, levels })
     if (this.raf === -1) return gpu.destroy()
     this.gpu = gpu
-    // Per frame: the pieces' instances (still, active, lifted, then the outlined ones again), trays and images.
-    this.gi = new Float32Array((2 * this.n + 8) * PIECE_FLOATS)
-    this.giu = new Uint32Array(this.gi.buffer)
-    this.gTrays = new Float32Array(0)
-    this.gRefs = new Float32Array(0)
     gpu.onLost = (why) => console.error('WebGPU device lost:', why)
     gpu.setRefImage(this.refImg)
-    gpu.setCorners(this.spriteCorners(spw, sph))
+    gpu.setCorners(spriteCorners(this.geo, this.sprite))
     const mids = new Float32Array(this.n * 2)
     for (const p of this.geo.pieces) mids.set([p.cx, p.cy], p.i * 2)
     const k = this.image.naturalWidth / this.room.width
     gpu.drawPicture(this.image, mids, {
-      sc: this.spriteScale,
+      sc,
       size: [this.room.width, this.room.height],
       uv: [1 / this.room.width, k / this.image.naturalHeight],
     })
@@ -1159,33 +1014,6 @@ export class Engine {
     this.canvas.before(this.gpuEl)
     this.canvas.after(this.gpuTop)
     this.resize()
-  }
-
-  // Every piece's four corners in its sprite, for the GPU to keep them sharp (see PIECE in gpu.ts):
-  // per corner, its place in sprite pixels and the outward normals of the sides into and out of it,
-  // and whether both those sides are cut (not inside a long piece).
-  spriteCorners(spw: number, sph: number) {
-    const out = new Float32Array(this.n * 32)
-    const sc = this.spriteScale
-    const normal = (ax: number, ay: number, bx: number, by: number) => {
-      const l = Math.hypot(bx - ax, by - ay) || 1
-      return [(by - ay) / l, -(bx - ax) / l]
-    }
-    for (const p of this.geo.pieces) {
-      const o = p.outline
-      const last = o.length / 2 - 1
-      for (let s = 0; s < 4; s++) {
-        const at = p.sides[s]
-        const before = at > 0 ? at - 1 : last - 1
-        const vx = o[at * 2]
-        const vy = o[at * 2 + 1]
-        const n1 = normal(o[before * 2], o[before * 2 + 1], vx, vy)
-        const n2 = normal(vx, vy, o[at * 2 + 2], o[at * 2 + 3])
-        const sharp = !p.inner || (!p.inner[s] && !p.inner[(s + 3) % 4])
-        out.set([vx * sc + spw / 2, vy * sc + sph / 2, n1[0], n1[1], n2[0], n2[1], sharp ? 1 : 0, 0], p.i * 32 + s * 8)
-      }
-    }
-    return out
   }
 
   // A piece's shape (every mip level of it, see spriteShape()), sent to the GPU, or kept until it's there.
@@ -1227,11 +1055,11 @@ export class Engine {
         const [sx, sy] = this.pos(e)
         if (sx < 0 || sy < 0 || sx > this.vw || sy > this.vh) return
         this.pointerAt = [sx, sy]
-        this.sendCursor()
+        this.out.cursor.call()
       },
       gone: () => {
         if (this.drag) return
-        clearTimeout(this.cursorTimer)
+        this.out.cursor.cancel()
         this.pointerAt = null
         this.send({ type: 'cursor', hide: true })
       },
@@ -1287,11 +1115,13 @@ export class Engine {
     window.removeEventListener('scroll', this.h.moved, { capture: true })
     window.removeEventListener('resize', this.h.moved)
     this.ro.disconnect()
-    clearTimeout(this.checkTimer)
+    // A camera move not saved yet is saved now, so the jigsaw opens where it was left.
+    if (this.camTimer) this.writeCam()
+    for (const t of [this.checkTimer, this.camTimer, this.statsTimer, this.idleTimer, this.fitTimer]) clearTimeout(t)
+    for (const t of Object.values(this.out)) t.cancel()
     cancelAnimationFrame(this.raf)
     this.raf = -1
-    if (this.spriteWorker) this.dropSpriteWorkers(this.spriteWorker.workers)
-    this.spriteWorker = null
+    this.spriteBuilder.stop()
     this.gpu?.destroy()
     this.gpu = null
     this.gpuEl.remove()
@@ -1324,12 +1154,49 @@ export class Engine {
     this.invalidate()
   }
 
+  // ---- the room ---------------------------------------------------------------
+
+  // Sends to the others in the room, and handles what they send that's about the table. Returns a
+  // function that stops handling it.
+  connect(sock: RoomSocket) {
+    this.sock = sock
+    const remote = (msg: RemoteMessage) => this.remoteMessage(msg)
+    const offs = [
+      ...(['grab', 'live', 'moves', 'marks', 'cursor', 'ink', 'gone'] as const).map((t) => sock.on(t, remote)),
+      sock.on('ref', (msg) => this.remoteRef(msg.ref)),
+      sock.on('ref-delete', (msg) => this.removeRef(msg.id, true)),
+      sock.on('tray', (msg) => this.remoteTray(msg.tray, msg.live, msg.client)),
+      sock.on('tray-delete', (msg) => this.removeTray(msg.id, true)),
+      // A player's name changed: their cursor shows the new one.
+      sock.on('player', () => this.invalidate()),
+    ]
+    return () => {
+      for (const off of offs) off()
+      this.sock = null
+    }
+  }
+
+  send(msg: ClientMessage) {
+    this.sock?.send(msg)
+  }
+
+  // An image this player changed: relayed while live, saved (and undoable) once done.
+  saveRef(ref: Ref, live: boolean) {
+    this.send({ type: 'ref', live, ref })
+    if (!live) this.trackObj('ref', ref.id, ref)
+  }
+
+  // The same for a tray. What's in it goes with the pieces' moves, so it's sent without its list.
+  saveTray(tray: Tray, live: boolean) {
+    this.send({ type: 'tray', live, tray: { ...tray, pieces: undefined } })
+    if (!live) this.trackObj('tray', tray.id, tray)
+  }
+
   setColors(colors: EngineColors) {
     this.colors = colors
     this.invalidate()
   }
 
-  // Asks for a frame.
   invalidate() {
     if (!this.raf) this.raf = requestAnimationFrame(() => this.render())
   }
@@ -1350,9 +1217,7 @@ export class Engine {
     this.cams[0] = this.cam
     for (let k = 1; k < this.panes.length; k++) {
       this.kept[k] = this.cams[k]
-      try {
-        localStorage.setItem(this.camKey(k), JSON.stringify(this.cams[k]))
-      } catch {}
+      store.setJson(this.camKey(k), this.cams[k])
     }
     const old = this.panes.map((p, k) => ({ ...p, cam: this.cams[k] }))
     this.layout = layout
@@ -1415,7 +1280,23 @@ export class Engine {
     const held = this.drag || this.carry || this.refDrag || this.ink
     const own = held && e.pointerId === held.pointer
     if (this.pointers.size && !(own && this.pointers.size === 1)) return
-    this.usePane(this.paneAt(e.clientX - this.rect.left, e.clientY - this.rect.top))
+    this.usePane(this.paneAt(...this.canvasPoint(e.clientX, e.clientY)))
+  }
+
+  // Where the window point (clientX, clientY) is on the canvas (CSS pixels).
+  canvasPoint(clientX: number, clientY: number): Vec2 {
+    return [clientX - this.rect.left, clientY - this.rect.top]
+  }
+
+  // The world point under the window point (clientX, clientY), in whichever pane that is.
+  clientToWorld(clientX: number, clientY: number): Vec2 {
+    return this.worldAt(...this.canvasPoint(clientX, clientY))
+  }
+
+  // Where the pointer is in the window, while it's over the table.
+  pointerClient(): Vec2 | null {
+    const p = this.pointerAt
+    return p && [p[0] + this.ox + this.rect.left, p[1] + this.oy + this.rect.top]
   }
 
   // The world point at (x, y) on the canvas (CSS pixels), in whichever pane that is.
@@ -1431,8 +1312,7 @@ export class Engine {
     const out: Vec2[] = []
     this.panes.forEach((p, k) => {
       const cam = k === this.pane ? this.cam : this.cams[k]
-      const x = (wx - cam.x) * cam.z + p.w / 2
-      const y = (wy - cam.y) * cam.z + p.h / 2
+      const [x, y] = project(cam, p.w, p.h, wx, wy)
       if (x >= 0 && x <= p.w && y >= 0 && y <= p.h) out.push([x + p.x, y + p.y])
     })
     return out
@@ -1458,6 +1338,10 @@ export class Engine {
 
   toWorld(sx: number, sy: number): Vec2 {
     return [(sx - this.vw / 2) / this.cam.z + this.cam.x, (sy - this.vh / 2) / this.cam.z + this.cam.y]
+  }
+
+  toScreen(wx: number, wy: number): Vec2 {
+    return project(this.cam, this.vw, this.vh, wx, wy)
   }
 
   clampCam() {
@@ -1562,11 +1446,12 @@ export class Engine {
   // Each pane's camera is saved, the right one's under a key of its own.
   saveCam() {
     clearTimeout(this.camTimer)
-    this.camTimer = setTimeout(() => {
-      try {
-        for (let k = 0; k < this.panes.length; k++) localStorage.setItem(this.camKey(k), JSON.stringify(k === this.pane ? this.cam : this.cams[k]))
-      } catch {}
-    }, 300)
+    this.camTimer = setTimeout(() => this.writeCam(), 300)
+  }
+
+  writeCam() {
+    this.camTimer = undefined
+    for (let k = 0; k < this.panes.length; k++) store.setJson(this.camKey(k), k === this.pane ? this.cam : this.cams[k])
   }
 
   camKey(k: number) {
@@ -1574,11 +1459,8 @@ export class Engine {
   }
 
   loadCam(k = 0): Cam | null {
-    try {
-      const c = JSON.parse(localStorage.getItem(this.camKey(k))!)
-      if (c && isFinite(c.x) && isFinite(c.y) && c.z > 0) return c
-    } catch {}
-    return null
+    const c = store.json<Cam>(this.camKey(k))
+    return c && isFinite(c.x) && isFinite(c.y) && c.z > 0 ? c : null
   }
 
   // ---- pieces -------------------------------------------------------------
@@ -1627,7 +1509,6 @@ export class Engine {
     this.order = this.order.filter((i) => !set.has(i)).concat([...set])
   }
 
-  // Expands a set of pieces to the whole groups they belong to.
   withGroups(ids: Iterable<number>) {
     const gids = new Set<number>()
     for (const i of ids) gids.add(this.g[i])
@@ -1695,13 +1576,12 @@ export class Engine {
   setSelection(set: Set<number>, refs = new Set<string>(), notes = new Set<string>()) {
     const before = this.noSelHistory ? null : snapSel(this)
     if (this.done && set.size) set = new Set()
-    const same = <T>(a: Set<T>, b: Set<T>) => a.size === b.size && [...a].every((v) => b.has(v))
     this.sel = set
     this.selRefs = refs
-    if (!same(notes, this.selNotes)) this.notes?.select(notes)
+    if (!sameSet(notes, this.selNotes)) this.notes?.select(notes)
     this.selNotes = notes
     if (before) this.recordSel(before)
-    this.sendMarks()
+    this.out.marks.call()
     this.invalidate()
   }
 
@@ -1807,33 +1687,27 @@ export class Engine {
       if (t) Object.assign(t, p)
     }
     if (notes.length) this.notes?.move(notes, null)
-    this.sendCarry()
+    this.out.carry.call()
     this.invalidate()
   }
 
-  sendCarry(force?: boolean) {
-    const now = performance.now()
-    clearTimeout(this.carryTimer)
+  // Where the images, notes and trays being carried are now, for the others while it goes on.
+  sendCarry() {
     const c = this.carry
     if (!c?.at) return
-    if (force || now - (this.lastCarry || 0) >= LIVE_MS) {
-      this.lastCarry = now
-      const { refs, notes, trays } = this.carryAt(...c.at)
-      for (const p of refs) {
-        const ref = this.refs.find((r) => r.id === p.id)
-        if (ref) this.onRef?.(ref, true)
-      }
-      for (const t of this.carriedTrays(trays)) this.onTray?.(t, true)
-      if (notes.length) this.notes?.move(notes, 'live')
-    } else {
-      this.carryTimer = setTimeout(() => this.sendCarry(true), LIVE_MS - (now - this.lastCarry!))
+    const { refs, notes, trays } = this.carryAt(...c.at)
+    for (const p of refs) {
+      const ref = this.refs.find((r) => r.id === p.id)
+      if (ref) this.saveRef(ref, true)
     }
+    for (const t of this.carriedTrays(trays)) this.saveTray(t, true)
+    if (notes.length) this.notes?.move(notes, 'live')
   }
 
   endCarry() {
     const c = this.carry
     this.carry = null
-    clearTimeout(this.carryTimer)
+    this.out.carry.cancel()
     if (!c) return
     for (const t of c.trays) this.liftTray(t.id, false)
     // A click on a selected note without moving selects just that note.
@@ -1842,81 +1716,15 @@ export class Engine {
     const { refs, notes, trays } = this.carryAt(...c.at, c)
     for (const p of refs) {
       const ref = this.refs.find((r) => r.id === p.id)
-      if (ref) this.onRef?.(ref, false)
+      if (ref) this.saveRef(ref, false)
     }
-    for (const t of this.carriedTrays(trays)) this.onTray?.(t, false)
+    for (const t of this.carriedTrays(trays)) this.saveTray(t, false)
     // A note dropped on its own onto a tray sticks to the tray's bottom right corner.
     if (c.alone) {
       const [wx, wy] = c.at
       notes[0].tray = this.trays.findLast((t) => wx >= t.x && wx <= t.x + t.w && wy >= t.y && wy <= t.y + t.h)?.id || null
     }
     if (notes.length) this.notes?.move(notes, 'save')
-  }
-
-  // Pieces' shapes are worked out in a few workers when the browser can, each given a run of
-  // pieces' outlines, and sent back as plain pixels for the GPU. Otherwise, or if a worker fails,
-  // render() works out the rest here a slice of a frame at a time. this.spriteWorker is set only
-  // while they are still sending shapes.
-  startSprites() {
-    this.buildAt = 0
-    this.spriteWorker = null
-    if (!canSprite()) return
-    warmSprites()
-    const parts = Math.min(spritePool.length, Math.ceil(this.n / 100))
-    if (!parts) return
-    const job = ++spriteJob
-    const workers = spritePool.slice(0, parts)
-    const run = { job, workers, left: parts }
-    this.spriteWorker = run
-    // When all are done, or one fails: the main thread works out whatever is still missing.
-    const stop = (failed: boolean) => {
-      if (this.spriteWorker !== run) return
-      this.spriteWorker = null
-      if (failed) this.dropSpriteWorkers(workers)
-      this.invalidate()
-    }
-    const size = spriteSize(this.geo, this.margin, this.spriteScale)
-    const per = Math.ceil(this.n / parts)
-    workers.forEach((worker, part) => {
-      worker.onmessage = ({ data }: MessageEvent<SpriteReply>) => {
-        if (this.spriteWorker !== run || data.job !== job) return
-        if (data.kind === 'front') {
-          for (const { i, shape } of data.items) this.setSprite(i, shape)
-          this.invalidate()
-        } else if (data.kind === 'done') {
-          if (!--run.left) stop(false)
-        } else stop(true)
-      }
-      worker.onerror = () => stop(true)
-      const items: SpriteJob['items'] = []
-      const transfer: Transferable[] = []
-      for (let i = part * per; i < Math.min(this.n, (part + 1) * per); i++) {
-        const o = shapeOutline(this.geo.pieces[i], this.geo)
-        items.push({ i, ...o })
-        transfer.push(o.pts.buffer, o.codes.buffer)
-      }
-      worker.postMessage({ job, size, sc: this.spriteScale, levels: mipLevels(size), items }, transfer)
-    })
-  }
-
-  // Ends sprite workers that failed, or are still busy with a jigsaw that's gone.
-  dropSpriteWorkers(workers: Worker[]) {
-    for (const w of workers) {
-      w.terminate()
-      const k = spritePool.indexOf(w)
-      if (k >= 0) spritePool.splice(k, 1)
-    }
-  }
-
-  // Main thread fallback: works out shapes until the deadline.
-  buildSome(until: number) {
-    if (this.buildAt < this.n) this.shapeCtx ??= makeCanvas(...spriteSize(this.geo, this.margin, this.spriteScale)).getContext('2d', { willReadFrequently: true })
-    while (this.buildAt < this.n && performance.now() < until) {
-      const i = this.buildAt++
-      if (this.sprites[i]) continue
-      const { width, height } = this.shapeCtx!.canvas
-      this.setSprite(i, spriteShape(this.shapeCtx!, this.spriteScale, shapeOutline(this.geo.pieces[i], this.geo), mipLevels([width, height])))
-    }
   }
 
   // What a point on the screen is over: an image (rh, or its resize handle), a tray (th) or a piece (i).
@@ -2206,7 +2014,7 @@ export class Engine {
       d.sy = sy
       if (Math.hypot(sx - d.sx0, sy - d.sy0) > CLICK_PX) d.moved = true
       this.updatePivot()
-      this.sendLive()
+      this.out.live.call()
       this.invalidate()
       return
     }
@@ -2295,12 +2103,12 @@ export class Engine {
     if (this.pan && e.pointerId === this.pan.pointer) {
       const m = this.pan.menu
       this.pan = null
-      this.canvas.style.cursor = this.panMode ? 'grab' : ''
+      this.modeCursor()
       if (m && !this.drag) this.openMenu(m)
     }
     if (this.marquee && e.pointerId === this.marquee.pointer) {
       this.marquee = null
-      this.sendCursor(true)
+      this.out.cursor.call(true)
       this.invalidate()
     }
     if (this.trim?.box && e.pointerId === this.trim.box.pointer) this.applyTrim()
@@ -2317,8 +2125,8 @@ export class Engine {
     if (this.refDrag && e.pointerId === this.refDrag.pointer) {
       const { ref } = this.refDrag
       this.refDrag = null
-      clearTimeout(this.refTimer)
-      this.onRef?.(ref, false)
+      this.out.ref.cancel()
+      this.saveRef(ref, false)
     }
     if (this.pointers.size < 2) this.pinch = null
     // Letting go: the cursor shows what is under it again.
@@ -2333,8 +2141,7 @@ export class Engine {
   // Selects every group with a piece centre inside the box. Also called when the camera moves.
   updateMarquee() {
     const m = this.marquee!
-    m.sx0 = (m.wx0 - this.cam.x) * this.cam.z + this.vw / 2
-    m.sy0 = (m.wy0 - this.cam.y) * this.cam.z + this.vh / 2
+    ;[m.sx0, m.sy0] = this.toScreen(m.wx0, m.wy0)
     const [ax, ay] = this.toWorld(Math.min(m.sx0, m.sx), Math.min(m.sy0, m.sy))
     const [bx, by] = this.toWorld(Math.max(m.sx0, m.sx), Math.max(m.sy0, m.sy))
     const hit: number[] = []
@@ -2352,8 +2159,7 @@ export class Engine {
     const notes = new Set(m.baseNotes)
     for (const n of this.notes?.get() || []) if (inside(n.x + n.w / 2, n.y + n.h / 2)) notes.add(n.id)
     // Most moves change nothing but the box itself, which is cheap to draw.
-    const same = <T>(a: Set<T>, b: Set<T>) => a.size === b.size && [...a].every((v) => b.has(v))
-    if (same(next, this.sel) && same(refs, this.selRefs) && same(notes, this.selNotes)) return this.invalidate()
+    if (sameSet(next, this.sel) && sameSet(refs, this.selRefs) && sameSet(notes, this.selNotes)) return this.invalidate()
     this.setSelection(next, refs, notes)
   }
 
@@ -2388,17 +2194,29 @@ export class Engine {
     }
   }
 
-  onKey(e: KeyboardEvent) {
-    if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) return
-    // Dialogs over the board keep the keyboard.
-    if (document.querySelector('.modal-bg')) return
-    if (e.key === 'Escape' && this.trim) return this.endTrim()
-    if (e.key === 'Escape' && !this.drag) {
-      if (this.selCount) this.setSelection(new Set())
-      this.selectRef(null)
-      this.selectTray(null)
-      return
+  // Escape, with nothing open over the table: stops trimming, or clears the selection. Returns
+  // whether it was for the table (it is while pieces are held, though it does nothing then).
+  escape() {
+    if (this.trim) {
+      this.endTrim()
+      return true
     }
+    if (this.drag) return true
+    if (!this.selCount && !this.refSel && !this.traySel && !this.selRefs.size && !this.selNotes.size) return false
+    if (this.selCount) this.setSelection(new Set())
+    this.selectRef(null)
+    this.selectTray(null)
+    return true
+  }
+
+  // Whether R renames the selected tray, rather than doing what it does elsewhere.
+  renamesOnR() {
+    return !!this.traySel && !this.sel.size
+  }
+
+  onKey(e: KeyboardEvent) {
+    // Windows over the board keep the keyboard.
+    if (isTyping(e) || overlays.modalOpen()) return
     if ((e.key === 'Delete' || e.key === 'Backspace') && !this.refDrag && !this.drag && !this.carry) {
       if (!this.refSel && !this.traySel && !this.selRefs.size && !this.selNotes.size) return
       e.preventDefault()
@@ -2438,9 +2256,9 @@ export class Engine {
       return
     }
     // R with a tray selected opens its menu with the name ready to type over.
-    if (key === 'r' && this.traySel && !this.sel.size) {
+    if (key === 'r' && this.renamesOnR()) {
       e.preventDefault()
-      if (!e.repeat) this.renameTray(this.traySel)
+      if (!e.repeat) this.renameTray(this.traySel!)
       return
     }
     // With a selection on the table (or a tray selected), space turns the pieces where they lie
@@ -2454,12 +2272,9 @@ export class Engine {
   // Groups only form through grid neighbours, so a piece is connected iff a neighbour shares its
   // group. The other cells of a long piece don't count: they came that way.
   connected(i: number) {
-    const { cols, rows } = this.room
-    const c = i % cols
     const g = this.g[i]
     const u = this.unit
-    const joined = (q: number) => this.g[q] === g && (!u || u[q] !== u[i])
-    return (c > 0 && joined(i - 1)) || (c < cols - 1 && joined(i + 1)) || (i >= cols && joined(i - cols)) || (i < (rows - 1) * cols && joined(i + cols))
+    return neighbours(i, this.room.cols, this.room.rows).some((q) => this.g[q] === g && (!u || u[q] !== u[i]))
   }
 
   // Hovering a connected piece shows who connected it.
@@ -2481,7 +2296,6 @@ export class Engine {
       this.setHovered(null)
       return this.showTip(null)
     }
-    const [wx, wy] = this.toWorld(sx, sy)
     let { rh, th, i } = this.pick(sx, sy)
     // With shift, a press on a tray takes the tray, not the piece under the pointer.
     if (this.shift && th) i = -1
@@ -2525,7 +2339,6 @@ export class Engine {
     this.showTip(text ? { text, sx, sy } : null)
   }
 
-  // The pointer over a piece (i), an image's handles (rh) or a tray's name strip (th).
   // Shift pressed or let go: the cursor over an image changes with it, if nothing is being held.
   setShift(e: KeyboardEvent) {
     if (e.key !== 'Shift' || this.shift === e.shiftKey) return
@@ -2542,7 +2355,7 @@ export class Engine {
   setHighlight(hl: Highlight | null) {
     if (hl?.key === this.hl?.key) return
     this.hl = hl
-    this.sendMarks()
+    this.out.marks.call()
     this.invalidate()
   }
 
@@ -2616,7 +2429,7 @@ export class Engine {
     this.setHighlight(null)
     const d = this.drag
     this.send({ type: 'grab', ids, ox: d.ox.map(r2), oy: d.oy.map(r2), r0: d.r0, px: r2(wx), py: r2(wy), tray: tray || undefined })
-    this.lastLive = performance.now()
+    this.out.live.ran()
     this.invalidate()
   }
 
@@ -2671,10 +2484,6 @@ export class Engine {
     this.invalidate()
   }
 
-  get packExtent() {
-    return packExtent(this.geo)
-  }
-
   // G while holding several groups: pulls them together in a grid around the pointer, none overlapping.
   // With shuffle (shift), the groups go in random order.
   gather(shuffle = false) {
@@ -2683,7 +2492,7 @@ export class Engine {
     const at = new Map(d.ids.map((i, j) => [i, j]))
     const mods = this.modules(d.ids).map((m) => m.map((i) => at.get(i)!))
     if (mods.length < 2) return
-    const e = this.packExtent
+    const e = packExtent(this.geo)
     const boxes = mods.map((js) => {
       const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity }
       for (const j of js) {
@@ -2734,25 +2543,21 @@ export class Engine {
   // After pieces moved (ids) and the groups were g0 before: finds every new seam, where two
   // neighbours that were apart are now in one group, and marks it with a burst and a sound.
   joined(g0: Int32Array, ids: Iterable<number>, local: boolean) {
-    const { cols } = this.room
     const set: Set<number> = ids instanceof Set ? ids : new Set(ids)
-    // Where a piece is going, if it's still easing there.
-    const at = (i: number) => this.moving.get(i) || [this.x[i], this.y[i]]
     const seams: Vec2[] = []
     for (const i of set) {
-      const c = i % cols
-      for (const q of [c > 0 ? i - 1 : -1, c < cols - 1 ? i + 1 : -1, i - cols, i + cols]) {
-        if (q < 0 || q >= this.n || this.g[q] !== this.g[i] || g0[q] === g0[i]) continue
+      for (const q of neighbours(i, this.room.cols, this.room.rows)) {
+        if (this.g[q] !== this.g[i] || g0[q] === g0[i]) continue
         // Both moved: count the seam once.
         if (q < i && set.has(q)) continue
-        const [x1, y1] = at(i)
-        const [x2, y2] = at(q)
+        const [x1, y1] = this.target(i)
+        const [x2, y2] = this.target(q)
         seams.push([(x1 + x2) / 2, (y1 + y2) / 2])
       }
     }
     if (!seams.length) return
     this.onSnap?.({ seams: seams.length, local })
-    if (calm?.matches) return
+    if (calmMotion()) return
     // A long edge joining at once gets a few bursts spread along it, not one per seam.
     const step = Math.max(1, seams.length / MAX_POPS)
     const t0 = performance.now() + POP_DELAY
@@ -2771,7 +2576,7 @@ export class Engine {
     if (!ids.length) return
     this.settle(ids)
     const mods = this.modules(ids)
-    const turned: TurnMsg[] = []
+    const turned: Spin[] = []
     for (const m of whole ? [ids] : mods) {
       const b = this.bbox(m, 0)
       const cx = (b.x0 + b.x1) / 2
@@ -2805,7 +2610,7 @@ export class Engine {
     const all = this.bbox(ids, 0)
     const cx = (all.x0 + all.x1) / 2
     const cy = (all.y0 + all.y1) / 2
-    const boxes = mods.map((m) => this.bbox(m, this.packExtent))
+    const boxes = mods.map((m) => this.bbox(m, packExtent(this.geo)))
     const spots = pack(boxes, this.geo.S, shuffle)
     const x0 = this.x.slice()
     const y0 = this.y.slice()
@@ -2832,7 +2637,7 @@ export class Engine {
 
   // Tells everyone where these pieces ended up (after a drop, turn or sort) and updates the rest.
   // turns: the spins around a point that got them there ({ ids, cx, cy, d }), so others can show them.
-  commit(changed: Iterable<number>, turns?: TurnMsg[], record = true) {
+  commit(changed: Iterable<number>, turns?: Spin[], record = true) {
     // Pieces that only changed tray go too.
     if (this.trayChanged.size) {
       changed = new Set([...changed, ...this.trayChanged])
@@ -3028,27 +2833,23 @@ export class Engine {
     if (kind === 'ref') {
       if (cur) Object.assign(cur, v)
       else this.refs.push({ ...(v as Ref) })
-      this.onRef((cur as Ref) || this.refs[this.refs.length - 1], false)
+      this.saveRef((cur as Ref) || this.refs[this.refs.length - 1], false)
       return
     }
     const { pieces, ...rest } = v as Tray
     if (cur) {
       Object.assign(cur, rest)
-      this.onTray(cur as Tray, false)
+      this.saveTray(cur as Tray, false)
       return
     }
     // A tray that was removed comes back with its number if that is still free. Its pieces come back
     // with the rest of the step (those nobody moved since), see stepHistory().
     const t: Tray = { ...rest, pieces: [] }
-    if (t.num && this.trays.some((x) => x.num === t.num)) {
-      const used = new Set(this.trays.map((x) => x.num))
-      t.num = 0
-      for (let n = 1; n <= 9 && !t.num; n++) if (!used.has(n)) t.num = n
-    }
+    if (t.num && this.trays.some((x) => x.num === t.num)) t.num = this.freeTrayNum()
     this.trays.push(t)
     this.syncTrays()
     if (t.pieces.length) this.fitTray(t)
-    this.onTray(t, false)
+    this.saveTray(t, false)
   }
 
   // Takes the latest entry off one stack and puts it back, onto the other. Pieces, images, trays
@@ -3131,7 +2932,8 @@ export class Engine {
     if (done && !was) {
       this.onComplete?.()
       if (local) this.finish()
-      setTimeout(() => this.fit(), 900)
+      // Once the last pieces have eased into place.
+      this.fitTimer = setTimeout(() => this.fit(), 900)
     }
   }
 
@@ -3192,22 +2994,15 @@ export class Engine {
     if (!this.sel.size) return
     const n = this.sel.size
     this.sel = this.withGroups(this.sel)
-    if (this.sel.size !== n) this.sendMarks()
+    if (this.sel.size !== n) this.out.marks.call()
   }
 
   // Tells the others what we have selected and hover over, so they can outline it in our colour.
-  sendMarks(force?: boolean) {
-    const now = performance.now()
-    clearTimeout(this.marksTimer)
-    if (force || now - this.lastMarks >= MARKS_MS) {
-      this.lastMarks = now
-      const hl = this.hl && !this.drag ? this.hl.ids : []
-      const refs = new Set(this.selRefs)
-      if (this.refSel) refs.add(this.refSel)
-      this.send({ type: 'marks', sel: [...this.sel], hl, refs: [...refs], notes: [...this.selNotes], tray: this.traySel, player: this.user || '' })
-    } else {
-      this.marksTimer = setTimeout(() => this.sendMarks(true), MARKS_MS - (now - this.lastMarks))
-    }
+  sendMarks() {
+    const hl = this.hl && !this.drag ? this.hl.ids : []
+    const refs = new Set(this.selRefs)
+    if (this.refSel) refs.add(this.refSel)
+    this.send({ type: 'marks', sel: [...this.sel], hl, refs: [...refs], notes: [...this.selNotes], tray: this.traySel, player: this.user || '' })
   }
 
   // Not playing (a dialog is open): others see no cursor from us until we're back.
@@ -3215,43 +3010,28 @@ export class Engine {
     if (this.away === away) return
     this.away = away
     if (away) {
-      clearTimeout(this.cursorTimer)
+      this.out.cursor.cancel()
       this.send({ type: 'cursor', hide: true })
-    } else this.sendCursor(true)
+    } else this.out.cursor.call(true)
   }
 
-  sendCursor(force?: boolean) {
-    const now = performance.now()
-    clearTimeout(this.cursorTimer)
+  sendCursor() {
     if (!this.pointerAt || this.away) return
-    if (force || now - this.lastCursor >= CURSOR_MS) {
-      this.lastCursor = now
-      const [x, y] = this.toWorld(...this.pointerAt)
-      // While dragging out a selection box, its corners go along (in world units).
-      const m = this.marquee
-      const box = m && Math.abs(m.sx - m.sx0) + Math.abs(m.sy - m.sy0) > 2 ? [...this.toWorld(m.sx0, m.sy0), ...this.toWorld(m.sx, m.sy)].map(r2) : undefined
-      this.send({ type: 'cursor', x: r2(x), y: r2(y), name: this.userName || '', player: this.user || '', box })
-    } else {
-      this.cursorTimer = setTimeout(() => this.sendCursor(true), CURSOR_MS - (now - this.lastCursor))
-    }
+    const [x, y] = this.toWorld(...this.pointerAt)
+    // While dragging out a selection box, its corners go along (in world units).
+    const m = this.marquee
+    const box = m && Math.abs(m.sx - m.sx0) + Math.abs(m.sy - m.sy0) > 2 ? [...this.toWorld(m.sx0, m.sy0), ...this.toWorld(m.sx, m.sy)].map(r2) : undefined
+    this.send({ type: 'cursor', x: r2(x), y: r2(y), name: this.userName || '', player: this.user || '', box })
   }
 
   // While dragging only the pivot and rotation go over the wire; the offsets were sent with "grab".
-  sendLive(force?: boolean) {
-    const now = performance.now()
-    clearTimeout(this.liveTimer)
-    if (!this.drag) return
-    if (force || now - this.lastLive >= LIVE_MS) {
-      this.lastLive = now
-      const d = this.drag
-      this.send({ type: 'live', px: r2(d.px), py: r2(d.py), k: d.k })
-    } else {
-      this.liveTimer = setTimeout(() => this.sendLive(true), LIVE_MS - (now - this.lastLive))
-    }
+  sendLive() {
+    const d = this.drag
+    if (d) this.send({ type: 'live', px: r2(d.px), py: r2(d.py), k: d.k })
   }
 
   drop() {
-    clearTimeout(this.liveTimer)
+    this.out.live.cancel()
     const d = this.drag!
     const state = this.dragState()
     for (const p of state) {
@@ -3350,23 +3130,12 @@ export class Engine {
     const now = performance.now()
     const held = new Set<number>()
     for (const [i, t] of this.held) if (t > now) held.add(this.g[i])
-    const nbrs = (i: number) => {
-      const c = i % cols
-      const r = (i / cols) | 0
-      const out: number[] = []
-      if (c > 0) out.push(i - 1)
-      if (c < cols - 1) out.push(i + 1)
-      if (r > 0) out.push(i - cols)
-      if (r < rows - 1) out.push(i + cols)
-      return out.filter((q) => !held.has(this.g[q]))
-    }
+    const nbrs = (i: number) => neighbours(i, cols, rows).filter((q) => !held.has(this.g[q]))
     // Measured between where the pieces are going, so a group still easing into place (moved by
     // someone else a moment ago) is snapped onto where it ends up, not where it is passing through.
     const gap = (p: number, q: number) => {
       if (this.r[p] !== this.r[q]) return null
-      const dc = (q % cols) - (p % cols)
-      const dr = ((q / cols) | 0) - ((p / cols) | 0)
-      const [ex, ey] = rot(dc * w, dr * h, this.r[p])
+      const [ex, ey] = gridOffset(cols, w, h, p, q, this.r[p])
       const [px, py] = this.target(p)
       const [qx, qy] = this.target(q)
       const dx = qx - (px + ex)
@@ -3461,9 +3230,8 @@ export class Engine {
     const { cols } = this.room
     const { w, h } = this.geo
     const from = ids.map((i): Vec2 => [this.x[i], this.y[i]])
-    const now = performance.now()
     for (const i of ids) {
-      const [ex, ey] = rot(((i % cols) - (a % cols)) * w, (((i / cols) | 0) - ((a / cols) | 0)) * h, this.r[a])
+      const [ex, ey] = gridOffset(cols, w, h, a, i, this.r[a])
       this.x[i] = this.x[a] + ex
       this.y[i] = this.y[a] + ey
       this.r[i] = this.r[a]
@@ -3529,7 +3297,6 @@ export class Engine {
   devRestart() {
     if (this.drag) return
     const layout = scatter(this.room, (Math.random() * 2 ** 31) | 0)
-    const now = performance.now()
     this.turns.clear()
     this.held.clear()
     this.remote.clear()
@@ -3542,30 +3309,38 @@ export class Engine {
     this.setSelection(new Set())
     this.refitTrays(this.setTray(layout.map((p) => p.i), null))
     this.commit(layout.map((p) => p.i), undefined, false)
-    setTimeout(() => this.fit(), 250)
+    this.fitTimer = setTimeout(() => this.fit(), 250)
   }
-
-  // ---- remote -------------------------------------------------------------
 
   // ---- draw mode ----------------------------------------------------------
 
-  // Draw mode on or off (see drawMode).
+  setPanMode(on: boolean) {
+    this.panMode = on
+    this.modeCursor()
+    this.setHighlight(null)
+  }
+
+  // The cursor over the table for the mode it's in.
+  modeCursor() {
+    this.canvas.style.cursor = this.panMode ? 'grab' : this.drawMode ? 'crosshair' : ''
+  }
+
   setDrawMode(on: boolean) {
     if (on === this.drawMode) return
     this.drawMode = on
     if (!on && this.ink) this.endInk()
-    this.canvas.style.cursor = on && !this.panMode ? 'crosshair' : this.panMode ? 'grab' : ''
+    this.modeCursor()
     this.setHighlight(null)
     this.setHovered(null)
     this.showTip(null)
   }
 
   startInk(pointer: number, sx: number, sy: number) {
-    const id = Math.random().toString(36).slice(2, 10)
+    const id = newId()
     const [x, y] = this.toWorld(sx, sy)
     this.strokes.set(`me:${id}`, { pts: [x, y], color: cursorColor(this.user || clientId), done: 0, t: performance.now() })
-    this.ink = { id, pointer, unsent: [r2(x), r2(y)] }
-    this.sendInk()
+    this.ink = this.inkOut = { id, pointer, unsent: [r2(x), r2(y)] }
+    this.out.ink.call()
     this.invalidate()
   }
 
@@ -3579,7 +3354,7 @@ export class Engine {
     s.pts.push(x, y)
     s.t = performance.now()
     k.unsent.push(r2(x), r2(y))
-    this.sendInk()
+    this.out.ink.call()
     this.invalidate()
   }
 
@@ -3588,29 +3363,23 @@ export class Engine {
     this.ink = null
     const s = this.strokes.get(`me:${k.id}`)
     if (s) s.done = performance.now()
-    this.sendInk(k, true)
+    k.end = true
+    this.out.ink.call(true)
     this.invalidate()
   }
 
-  // Sends the new points of this player's stroke, at most every LIVE_MS while drawing, and at the end.
-  sendInk(k = this.ink, end = false) {
-    if (!k) return
-    clearTimeout(this.inkTimer)
-    const now = performance.now()
-    if (!end && this.lastInk && now - this.lastInk < LIVE_MS) {
-      this.inkTimer = setTimeout(() => this.sendInk(), LIVE_MS - (now - this.lastInk))
-      return
-    }
-    if (!k.unsent.length && !end) return
-    this.lastInk = now
-    this.send({ type: 'ink', id: k.id, pts: k.unsent, end: end || undefined })
+  // Sends the new points of this player's stroke (see out.ink), and the end of it once it's done.
+  sendInk() {
+    const k = this.inkOut
+    if (!k || (!k.unsent.length && !k.end)) return
+    this.send({ type: 'ink', id: k.id, pts: k.unsent, end: k.end || undefined })
     k.unsent = []
   }
 
   // Another player's stroke grew or was finished.
   remoteInk(msg: Extract<RemoteMessage, { type: 'ink' }>, now: number) {
     if (typeof msg.id !== 'string' || !msg.id) return
-    const key = `${msg.client}:${msg.id.slice(0, 16)}`
+    const key = `${msg.client}:${msg.id.slice(0, LIMITS.inkId)}`
     const pts = Array.isArray(msg.pts) ? msg.pts.filter((v): v is number => typeof v === 'number' && isFinite(v)) : []
     let s = this.strokes.get(key)
     if (!s) {
@@ -3618,7 +3387,7 @@ export class Engine {
       s = { pts: [], color: this.colorOf(msg.client), done: 0, t: now }
       this.strokes.set(key, s)
     }
-    for (let k = 0; k + 1 < pts.length && s.pts.length < 20000; k += 2) s.pts.push(pts[k], pts[k + 1])
+    for (let k = 0; k + 1 < pts.length && s.pts.length < LIMITS.strokePoints; k += 2) s.pts.push(pts[k], pts[k + 1])
     s.t = now
     if (msg.end) s.done = now
     this.invalidate()
@@ -3645,13 +3414,15 @@ export class Engine {
       ctx.strokeStyle = s.color
       ctx.beginPath()
       for (let k = 0; k < s.pts.length; k += 2) {
-        const x = (s.pts[k] - cam.x) * cam.z + vw / 2
-        const y = (s.pts[k + 1] - cam.y) * cam.z + vh / 2
+        const [x, y] = project(cam, vw, vh, s.pts[k], s.pts[k + 1])
         if (k) ctx.lineTo(x, y)
         else ctx.moveTo(x, y)
       }
       // A single point shows as a dot.
-      if (s.pts.length === 2) ctx.lineTo((s.pts[0] - cam.x) * cam.z + vw / 2 + 0.01, (s.pts[1] - cam.y) * cam.z + vh / 2)
+      if (s.pts.length === 2) {
+        const [x, y] = project(cam, vw, vh, s.pts[0], s.pts[1])
+        ctx.lineTo(x + 0.01, y)
+      }
       ctx.stroke()
     }
     ctx.globalAlpha = 1
@@ -3663,6 +3434,7 @@ export class Engine {
     if (msg.type === 'grab') {
       const n = msg.ids?.length
       if (!n || msg.ox?.length !== n || msg.oy?.length !== n || msg.r0?.length !== n) return
+      if (!msg.ids!.every((i) => Number.isInteger(i) && i >= 0 && i < this.n)) return
       const d: RemoteDrag = { ids: msg.ids!, ox: msg.ox, oy: msg.oy, r0: msg.r0 }
       // A fresh grab for the pieces they already hold means they turned some: ease each one round.
       const prev = this.remote.get(msg.client)
@@ -3705,7 +3477,7 @@ export class Engine {
       if (msg.hide) this.cursors.delete(msg.client)
       else if (isFinite(msg.x!) && isFinite(msg.y!)) {
         const c = this.cursors.get(msg.client)
-        const name = String(msg.name || '').slice(0, 32) || 'Guest'
+        const name = String(msg.name || '').slice(0, LIMITS.name) || 'Guest'
         const box = Array.isArray(msg.box) && msg.box.length === 4 && msg.box.every(isFinite) ? msg.box : null
         if (c) Object.assign(c, { tx: msg.x!, ty: msg.y!, name, t: now, box })
         else {
@@ -3755,7 +3527,7 @@ export class Engine {
     this.invalidate()
   }
 
-  applyRemote(list: PieceState[], turns?: unknown) {
+  applyRemote(list: PieceMove[], turns?: unknown) {
     const g0 = this.g.slice()
     const touched = new Set<number>()
     let trays = false
@@ -3813,7 +3585,7 @@ export class Engine {
   }
 
   // After a reconnect: catch up on whatever changed while the socket was down.
-  resync(pieces: PieceState[]) {
+  resync(pieces: PieceMove[]) {
     const list = pieces.filter(
       (p) =>
         p.x !== this.x[p.i] || p.y !== this.y[p.i] || p.r !== this.r[p.i] || p.g !== this.g[p.i] || (p.t || null) !== this.tray[p.i],
@@ -3855,7 +3627,7 @@ export class Engine {
     this.toCheck.clear()
     const later: number[] = []
     const fixed: number[] = []
-    const grid = (i: number, a: number) => rot(((i % cols) - (a % cols)) * w, (((i / cols) | 0) - ((a / cols) | 0)) * h, this.r[a])
+    const grid = (i: number, a: number) => gridOffset(cols, w, h, a, i, this.r[a])
     // Pieces moved to the tray most of their group is in, and the trays that changed.
     const moved: number[] = []
     const trays = new Set<string | null>()
@@ -3939,22 +3711,26 @@ export class Engine {
     return [ref.trimX ?? 0, ref.trimY ?? 0, ref.trimW ?? 1, ref.trimH ?? 1]
   }
 
+  // Whether only part of the picture shows.
+  isTrimmed(ref: Ref) {
+    return this.refTrim(ref).some((v, k) => v !== (k < 2 ? 0 : 1))
+  }
+
   // An image's size on the table, of the part that shows: w is its width.
   refSize(ref: Ref): Vec2 {
     const [, , tw, th] = this.refTrim(ref)
     return [ref.w, (ref.w * this.refAspect * th) / tw]
   }
 
-  // Adds the reference image centred on a canvas point, or the middle of the view.
-  addRef(sx = this.vw / 2, sy = this.vh / 2) {
+  // Puts the picture on the table at the world point at, or in the middle of the view.
+  addRef([x, y] = this.toWorld(this.vw / 2, this.vh / 2)) {
     if (this.guard && !this.guard()) return
-    const [x, y] = this.toWorld(sx, sy)
     // Fit comfortably in the current view.
     const w = Math.min(this.room.width, ((Math.min(this.vw, this.vh / this.refAspect) * 0.6) / this.cam.z))
-    const ref: Ref = { id: Math.random().toString(36).slice(2, 10), x, y, w, opacity: 1, trimX: 0, trimY: 0, trimW: 1, trimH: 1, author: this.user || '' }
+    const ref: Ref = { id: newId(), x, y, w, opacity: 1, trimX: 0, trimY: 0, trimW: 1, trimH: 1, author: this.user || '' }
     this.refs.push(ref)
     this.selectRef(ref.id)
-    this.onRef?.(ref, false)
+    this.saveRef(ref, false)
   }
 
   // Delete or Backspace: removes the selected images, notes and tray (pieces stay).
@@ -3981,7 +3757,7 @@ export class Engine {
     if (this.trim?.id === id) this.endTrim()
     this.selRefs.delete(id)
     if (this.refDrag?.ref.id === id) this.refDrag = null
-    if (!remote) this.onRefDelete?.(id)
+    if (!remote) this.send({ type: 'ref-delete', id })
     this.invalidate()
   }
 
@@ -4004,31 +3780,34 @@ export class Engine {
     this.invalidate()
   }
 
-  sendRefLive(force?: boolean) {
-    const now = performance.now()
-    clearTimeout(this.refTimer)
-    const d = this.refDrag
-    if (!d) return
-    if (force || now - (this.lastRefLive || 0) >= LIVE_MS) {
-      this.lastRefLive = now
-      this.onRef?.(d.ref, true)
-    } else {
-      this.refTimer = setTimeout(() => this.sendRefLive(true), LIVE_MS - (now - this.lastRefLive!))
-    }
+  sendRefLive() {
+    if (this.refDrag) this.saveRef(this.refDrag.ref, true)
+  }
+
+  selectOnly(kind: 'note' | 'tray', id: string) {
+    this.selectRef(null)
+    this.selectTray(kind === 'tray' ? id : null)
+    this.setSelection(new Set(), new Set(), kind === 'note' ? new Set([id]) : new Set())
   }
 
   selectRef(id: string | null) {
     if (this.refSel === id) return
     this.refSel = id
-    this.sendMarks()
+    this.out.marks.call()
     this.invalidate()
+  }
+
+  // The size of the buttons and number on trays and images, in screen px: they grow with the zoom,
+  // but never get too small to use.
+  trayTag() {
+    return Math.max(14, this.geo.S * 0.4 * this.cam.z)
   }
 
   // The screen rectangle, [x0, y0, x1, y1], of an image's menu button on its top right corner,
   // standing out over the edges a little, like a note's. That corner has no resize handle. Null when
   // the image is too small on the screen to hold it.
   refButton(ref: Ref) {
-    const tag = Math.max(14, this.geo.S * 0.4 * this.cam.z)
+    const tag = this.trayTag()
     const [x0, y0, x1, y1] = this.refRect(ref)
     if (x1 - x0 < tag * 2 || y1 - y0 < tag * 2) return null
     return cornerButton(x1, y0, tag)
@@ -4050,8 +3829,8 @@ export class Engine {
     const ref = this.refs.find((r) => r.id === id)
     if (!ref) return
     if (this.guard && !this.guard()) return
-    ref.opacity = Math.min(1, Math.max(0.1, opacity))
-    this.onRef?.(ref, live)
+    ref.opacity = Math.min(1, Math.max(LIMITS.minOpacity, opacity))
+    this.saveRef(ref, live)
     this.invalidate()
   }
 
@@ -4103,13 +3882,13 @@ export class Engine {
     Object.assign(ref, {
       trimX: tx + a * tw,
       trimY: ty + c * th,
-      trimW: Math.max(0.01, (b - a) * tw),
-      trimH: Math.max(0.01, (d - c) * th),
+      trimW: Math.max(LIMITS.minTrim, (b - a) * tw),
+      trimH: Math.max(LIMITS.minTrim, (d - c) * th),
       x: (wx0 + wx1) / 2,
       y: (wy0 + wy1) / 2,
       w: wx1 - wx0,
     })
-    this.onRef?.(ref, false)
+    this.saveRef(ref, false)
     this.invalidate()
   }
 
@@ -4131,19 +3910,16 @@ export class Engine {
       trimW: 1,
       trimH: 1,
     })
-    this.onRef?.(ref, false)
+    this.saveRef(ref, false)
     this.invalidate()
   }
 
   // Screen-space corners of a reference image: [x0, y0, x1, y1].
   refRect(ref: Ref): Rect4 {
     const [w, h] = this.refSize(ref)
-    const { cam, vw, vh } = this
     return [
-      (ref.x - w / 2 - cam.x) * cam.z + vw / 2,
-      (ref.y - h / 2 - cam.y) * cam.z + vh / 2,
-      (ref.x + w / 2 - cam.x) * cam.z + vw / 2,
-      (ref.y + h / 2 - cam.y) * cam.z + vh / 2,
+      ...this.toScreen(ref.x - w / 2, ref.y - h / 2),
+      ...this.toScreen(ref.x + w / 2, ref.y + h / 2),
     ]
   }
 
@@ -4174,7 +3950,6 @@ export class Engine {
     if (this.guard && !this.guard()) return
     this.selectRef(ref.id)
     if (this.selCount) this.setSelection(new Set())
-    // Bring to front.
     this.refs = this.refs.filter((r) => r !== ref).concat(ref)
     const [w, h] = this.refSize(ref)
     this.refDrag = {
@@ -4209,7 +3984,7 @@ export class Engine {
       ref.x = d.ax + (d.sx * w) / 2
       ref.y = d.ay + (d.sy * w * a) / 2
     }
-    this.sendRefLive()
+    this.out.ref.call()
     this.invalidate()
   }
 
@@ -4217,11 +3992,10 @@ export class Engine {
 
   // Adds a tray in a random colour (one no other tray has, while there are some left). With pieces
   // selected, it's made around them, taking them out of any tray they were in. Otherwise it's empty,
-  // centred on a canvas point or the middle of the view.
-  addTray(sx = this.vw / 2, sy = this.vh / 2) {
+  // centred on the world point at or the middle of the view.
+  addTray([x, y] = this.toWorld(this.vw / 2, this.vh / 2)) {
     if (this.guard && !this.guard()) return
     const ids = this.sel.size ? this.freeSelection() : []
-    const [x, y] = this.toWorld(sx, sy)
     const w = this.geo.S * TRAY_W
     const h = this.geo.S * TRAY_H
     const keys = Object.keys(TRAY_COLORS)
@@ -4229,12 +4003,9 @@ export class Engine {
     const free = keys.filter((k) => !used.has(k))
     const pick = free.length ? free : keys
     const color = pick[Math.floor(Math.random() * pick.length)]
-    // The lowest of 1 to 9 no tray has; none once all are taken.
-    const taken = new Set(this.trays.map((t) => t.num))
-    let num = 0
-    for (let n = 1; n <= 9 && !num; n++) if (!taken.has(n)) num = n
+    const num = this.freeTrayNum()
     const tray: Tray = {
-      id: Math.random().toString(36).slice(2, 10),
+      id: newId(),
       x: x - w / 2,
       y: y - h / 2,
       w,
@@ -4254,7 +4025,7 @@ export class Engine {
     if (this.selCount) this.setSelection(new Set())
     this.selectRef(null)
     this.selectTray(tray.id)
-    this.onTray?.(tray, false)
+    this.saveTray(tray, false)
     // The pieces say which tray they're in now, after the tray itself.
     if (this.trayChanged.size) this.commit(new Set())
     // New trays sort themselves, so the pieces it was made from are laid out in a grid at once.
@@ -4264,7 +4035,7 @@ export class Engine {
   selectTray(id: string | null) {
     if (this.traySel === id) return
     this.traySel = id
-    this.sendMarks()
+    this.out.marks.call()
     this.invalidate()
   }
 
@@ -4283,7 +4054,7 @@ export class Engine {
     this.trayUp.delete(id)
     if (this.traySel === id) this.traySel = null
     if (this.carry) this.carry.trays = this.carry.trays.filter((t) => t.id !== id)
-    if (!remote) this.onTrayDelete?.(id)
+    if (!remote) this.send({ type: 'tray-delete', id })
     // Undo replays the pieces itself, see stepHistory().
     if (remote || this.replaying) this.trackTrays()
     else if (this.trayChanged.size) this.commit(new Set())
@@ -4315,7 +4086,7 @@ export class Engine {
       if ([x, y, w, h].every(isFinite)) this.trayTo.set(cur.id, { x, y, w, h })
       else Object.assign(cur, { x, y, w, h })
     } else {
-      this.trays.push({ ...rest, pieces: [] })
+      this.trays.push({ ...rest, color: rest.color || '', pieces: [] })
       this.syncTrays()
     }
     this.seen('tray', tray.id, cur ? { ...cur, ...rest } : rest)
@@ -4324,7 +4095,7 @@ export class Engine {
   }
 
   setTrays(trays: TrayInput[]) {
-    this.trays = trays.map(({ pieces, ...t }) => ({ ...t, auto: !!t.auto, pieces: [] }))
+    this.trays = trays.map(({ pieces, ...t }) => ({ ...t, color: t.color || '', auto: !!t.auto, pieces: [] }))
     this.syncTrays()
     this.trayTo.clear()
     if (this.traySel && !this.trays.some((t) => t.id === this.traySel)) this.traySel = null
@@ -4353,6 +4124,13 @@ export class Engine {
   // Where a piece is going, if it's still easing there.
   target(i: number): Vec2 {
     return this.moving.get(i) || [this.x[i], this.y[i]]
+  }
+
+  // The lowest tray number no tray has, or 0 (none) once all are taken.
+  freeTrayNum() {
+    const taken = new Set(this.trays.map((t) => t.num))
+    for (let n = 1; n <= LIMITS.trayNum; n++) if (!taken.has(n)) return n
+    return 0
   }
 
   // The margin between a tray's edge and the middles of its outermost pieces.
@@ -4424,7 +4202,7 @@ export class Engine {
     if (!t || !!t.auto === on) return
     if (this.guard && !this.guard()) return
     t.auto = on
-    this.onTray?.(t, false)
+    this.saveTray(t, false)
     this.invalidate()
     this.autoSort({ into: t })
   }
@@ -4432,10 +4210,9 @@ export class Engine {
   // The screen rectangles, [x0, y0, x1, y1], of a tray's buttons along its top edge, standing out over
   // it a little like a note's: its menu on the top right corner and its auto sort switch beside it.
   trayButtons(t: Tray): { menu: Rect4; auto: Rect4; tag: number } {
-    const { cam, vw, vh } = this
-    const tag = Math.max(14, this.geo.S * 0.4 * cam.z)
+    const tag = this.trayTag()
     const gap = tag * 0.3
-    const menu = cornerButton((t.x + t.w - cam.x) * cam.z + vw / 2, (t.y - cam.y) * cam.z + vh / 2, tag)
+    const menu = cornerButton(...this.toScreen(t.x + t.w, t.y), tag)
     const x0 = menu[0] - gap * 0.6
     return { menu, auto: [x0 - tag, menu[1], x0, menu[3]], tag }
   }
@@ -4443,7 +4220,7 @@ export class Engine {
   // Whether a tray is big enough on the screen to hold its number and buttons along its top edge.
   // Zoomed far out it isn't, and they are left out.
   trayTagsFit(t: Tray) {
-    const tag = Math.max(14, this.geo.S * 0.4 * this.cam.z)
+    const tag = this.trayTag()
     const gap = tag * 0.3
     const w = (t.num ? tag + gap : 0) + tag * 2 + gap
     return t.w * this.cam.z >= w && t.h * this.cam.z >= tag * 1.5
@@ -4469,7 +4246,7 @@ export class Engine {
     if (!t || (Object.keys(look) as (keyof TrayLook)[]).every((k) => t[k] === look[k])) return
     if (this.guard && !this.guard()) return
     Object.assign(t, look)
-    this.onTray?.(t, false)
+    this.saveTray(t, false)
     this.invalidate()
   }
 
@@ -4484,7 +4261,7 @@ export class Engine {
     if (!ids.length) return
     this.settle(ids)
     const mods = this.modules(ids)
-    const boxes = mods.map((m) => this.bbox(m, this.packExtent))
+    const boxes = mods.map((m) => this.bbox(m, packExtent(this.geo)))
     const moved = this.withGroups(ids)
     const rest = t.pieces.filter((i) => !moved.has(i))
     let spots: Vec2[]
@@ -4536,7 +4313,7 @@ export class Engine {
   appendSpots(rest: number[], boxes: Box[]) {
     const S = this.geo.S
     const gap = S * 0.12
-    const have = this.modules(rest).map((m) => this.bbox(m, this.packExtent))
+    const have = this.modules(rest).map((m) => this.bbox(m, packExtent(this.geo)))
     const all = have.concat(boxes)
     const left = Math.min(...have.map((b) => b.x0))
     const avg = all.reduce((a, b) => a + b.x1 - b.x0 + gap, 0) / all.length
@@ -4551,7 +4328,7 @@ export class Engine {
     // The top of the new row being filled, once the bottom row is full; boxes line up along it.
     let top: number | null = null
     // In reading order of where they lie now.
-    const order = boxes.map((b, k) => k).sort((a, b) => {
+    const order = boxes.map((_, k) => k).sort((a, b) => {
       const p = boxes[a]
       const q = boxes[b]
       return Math.round((mid(p) - mid(q)) / S) || p.x0 - q.x0
@@ -4582,7 +4359,7 @@ export class Engine {
   refitTrays(trays: Iterable<Tray> & { size?: number; length?: number }) {
     for (const t of trays) {
       this.fitTray(t)
-      this.onTray?.(t, false)
+      this.saveTray(t, false)
     }
     if (trays.size || trays.length) this.invalidate()
   }
@@ -4687,7 +4464,7 @@ export class Engine {
     if (this.drag) {
       this.drag.moved = true
       this.updatePivot()
-      this.sendLive()
+      this.out.live.call()
     } else if (this.carry?.moved) {
       const p = this.pointers.get(this.carry.pointer)
       if (p) this.moveCarry(...this.toWorld(...p))
@@ -4708,8 +4485,8 @@ export class Engine {
     this.last = now
     let again = false
 
-    if (!this.spriteWorker && this.built < this.n) {
-      this.buildSome(now + 12)
+    if (this.built < this.n && this.spriteBuilder.behind) {
+      this.spriteBuilder.buildSome(now + 12)
       again = true
     }
 
@@ -4801,7 +4578,7 @@ export class Engine {
       } else again = true
       if (this.drag?.touch && this.lift === l) {
         this.updatePivot()
-        this.sendLive()
+        this.out.live.call()
       }
     }
 
@@ -4937,30 +4714,22 @@ export class Engine {
     this.usePane(active)
   }
 
-  // The world rectangle a view shows, grown by e on every side, into this.cull.
-  cullRect(v: View, e: number) {
-    const c = (this.cull ??= {} as Box)
-    const hw = v.w / 2 / v.z + e
-    const hh = v.h / 2 / v.z + e
-    c.x0 = v.x - hw
-    c.y0 = v.y - hh
-    c.x1 = v.x + hw
-    c.y1 = v.y + hh
-    return c
-  }
-
   // Builds a frame for the GPU (see gpu.ts) for view v, in device pixels: the trays and reference
   // images in view, the pieces lying on the table in table order, the lifted pieces, and the
   // selected and hovered pieces once more for their outlines.
-  drawGpu(v: View, pane = 0) {
+  drawGpu(v: View, pane: number) {
     const { dpr } = this
     const z = v.z * dpr
     const sx = (wx: number) => ((wx - v.x) * v.z + v.w / 2) * dpr
     const sy = (wy: number) => ((wy - v.y) * v.z + v.h / 2) * dpr
-    const { x0: wx0, y0: wy0, x1: wx1, y1: wy1 } = this.cullRect(v, 0)
+    // The part of the table in view, in world units.
+    const wx0 = v.x - v.w / 2 / v.z
+    const wx1 = v.x + v.w / 2 / v.z
+    const wy0 = v.y - v.h / 2 / v.z
+    const wy1 = v.y + v.h / 2 / v.z
 
-    this.gTrays = grow(this.gTrays, this.trays.length * TRAY_FLOATS)
-    let trays = 0
+    const gTrays = this.gTrays
+    gTrays.reset(this.trays.length)
     const markedTrays = this.markedBy('tray')
     const markedRefs = this.markedBy('refs')
     const radius = Math.min(this.geo.S * 0.25, 10 / v.z) * z
@@ -4968,49 +4737,51 @@ export class Engine {
     // Trays lying on the table first, then lifted ones (see liftTray()), which go over them.
     const trayInto = (t: Tray, up: number) => {
       if (t.x + t.w < wx0 || t.x > wx1 || t.y + t.h < wy0 || t.y > wy1) return
-      const color = rgba(TRAY_COLORS[t.color] || TRAY_COLORS.gray)
+      const color = rgba(trayColor(t.color))
       const on = t.id === this.traySel
       const mark = !on && markedTrays.get(t.id)
       const rect = [sx(t.x), sy(t.y), sx(t.x + t.w), sy(t.y + t.h)]
       const r = Math.min(radius, (rect[2] - rect[0]) / 2, (rect[3] - rect[1]) / 2)
       // Lifting, its see-through fill turns solid, the same colour over the table, so it hides its own
       // shadow and what it's carried over.
-      const fill = pm(color, 0.16)
+      const fill = premul(color, 0.16)
       const solid = [0, 1, 2].map((k) => fill[k] + bg[k] * 0.84).concat(1)
       const f = fill.map((c, k) => c + (solid[k] - c) * up)
-      this.gTrays.set([...rect, ...f, ...pm(on ? rgba(this.colors.sel) : mark ? rgba(mark) : color, on || mark ? 1 : 0.7), r, (on || mark ? 2.5 : 1.25) * dpr, up, 0], trays++ * TRAY_FLOATS)
+      const stroke = premul(on ? rgba(this.colors.sel) : mark ? rgba(mark) : color, on || mark ? 1 : 0.7)
+      gTrays.put(rect, f, stroke, r, (on || mark ? 2.5 : 1.25) * dpr, up)
     }
     const trayUp = (t: Tray) => this.trayUp.get(t.id)?.value || 0
     for (const t of this.trays) if (!trayUp(t)) trayInto(t, 0)
-    const traysDown = trays
+    const traysDown = gTrays.count
     for (const t of this.trays) if (trayUp(t)) trayInto(t, trayUp(t))
 
-    this.gRefs = grow(this.gRefs, this.refs.length * REF_FLOATS)
-    let refs = 0
+    const gRefs = this.gRefs
+    gRefs.reset(this.refs.length)
     for (const ref of this.refs) {
       const [w, h] = this.refSize(ref)
       if (ref.x + w / 2 < wx0 || ref.x - w / 2 > wx1 || ref.y + h / 2 < wy0 || ref.y - h / 2 > wy1) continue
       const on = this.selRefs.has(ref.id)
       const mark = !on && markedRefs.get(ref.id)
       const rect = [sx(ref.x - w / 2), sy(ref.y - h / 2), sx(ref.x + w / 2), sy(ref.y + h / 2)]
-      this.gRefs.set([...rect, ...pm(rgba(on ? this.colors.sel : mark || this.colors.dot)), (on || mark ? 3 : 1) * dpr, ref.opacity ?? 1, 0, 0, ...this.refTrim(ref)], refs++ * REF_FLOATS)
+      gRefs.put(rect, premul(rgba(on ? this.colors.sel : mark || this.colors.dot)), (on || mark ? 3 : 1) * dpr, ref.opacity ?? 1, this.refTrim(ref))
     }
 
     const R = this.radius
     const seen = (x: number, y: number, e: number) => x + e >= wx0 && x - e <= wx1 && y + e >= wy0 && y - e <= wy1
-    this.gn = 0
+    const gp = this.gPieces
+    gp.reset(2 * this.n + 8)
     const lifted = this.lift?.set
     const rlifted = this.rlift.size ? new Set([...this.rlift.values()].flatMap((rl) => rl.ids)) : null
     // Trays lie above the pieces on the table, and the pieces in them above the trays. Pieces in a
     // lifted tray go over it, after the trays lying down.
     const inTray = this.trays.length ? new Set(this.trays.flatMap((t) => t.pieces)) : null
-    const inUp = traysDown < trays ? new Set(this.trays.filter(trayUp).flatMap((t) => t.pieces)) : null
+    const inUp = traysDown < gTrays.count ? new Set(this.trays.filter(trayUp).flatMap((t) => t.pieces)) : null
     for (const i of this.order) {
       if (lifted?.has(i) || rlifted?.has(i) || inTray?.has(i)) continue
       this.poseInto(i)
       if (seen(this.qx, this.qy, R)) this.gpuPiece(i, this.qx, this.qy, this.qa, 1, v)
     }
-    const still = [0, this.gn]
+    const still = [0, gp.count]
     const trayedIn = (up: boolean) => {
       if (!inTray) return
       for (const i of this.order) {
@@ -5020,11 +4791,11 @@ export class Engine {
       }
     }
     trayedIn(false)
-    const trayed = [still[1], this.gn - still[1]]
-    const trayedUp = [this.gn, 0]
+    const trayed = [still[1], gp.count - still[1]]
+    const trayedUp = [gp.count, 0]
     trayedIn(true)
-    trayedUp[1] = this.gn - trayedUp[0]
-    const lift = [this.gn, 0]
+    trayedUp[1] = gp.count - trayedUp[0]
+    const lift = [gp.count, 0]
     // Carried pieces (ours and others'), as they're drawn: id -> [x, y, angle, scale]. Outlines use
     // these, so they fit the pieces while they're lifted, carried and put down again. Those riding
     // in a moved tray come first, lying flat in it; then those lifted themselves, which cast a shadow.
@@ -5053,14 +4824,14 @@ export class Engine {
     }
     ours(true)
     theirs(true)
-    const shade = [this.gn, 0]
+    const shade = [gp.count, 0]
     ours(false)
     theirs(false)
-    shade[1] = this.gn - shade[0]
-    lift[1] = this.gn - lift[0]
+    shade[1] = gp.count - shade[0]
+    lift[1] = gp.count - lift[0]
     // The outlined pieces exactly as they're drawn, and the box around them on the screen.
     const outlined = (ids: Iterable<number>, box: number[]) => {
-      const first = this.gn
+      const first = gp.count
       for (const i of ids) {
         let p = drawn.get(i)
         if (!p) {
@@ -5077,7 +4848,7 @@ export class Engine {
         box[2] = Math.max(box[2], X + e)
         box[3] = Math.max(box[3], Y + e)
       }
-      return [first, this.gn - first]
+      return [first, gp.count - first]
     }
     // While carrying pieces, the selection outline goes under them, and leaves them out.
     const selBox = [Infinity, Infinity, -Infinity, -Infinity]
@@ -5122,11 +4893,11 @@ export class Engine {
       H: this.ph,
       pane: this.split ? { x: this.panes[pane].dx, y: this.panes[pane].dy, clear: !pane } : undefined,
       cam: [v.x, v.y, z],
-      sprite: [this.spriteW, this.spriteH],
+      sprite: this.sprite.world,
       bg: rgba(this.colors.bg),
-      trays: { data: this.gTrays, count: trays, down: traysDown },
-      refs: { data: this.gRefs, count: refs },
-      pieces: { data: this.gi, count: this.gn },
+      trays: { data: gTrays.data, count: gTrays.count, down: traysDown },
+      refs: gRefs,
+      pieces: gp,
       seg: { still, trayed, trayedUp, lift, shade, sel, hl },
       selBox,
       hlBox,
@@ -5143,19 +4914,9 @@ export class Engine {
   // Adds piece i at (x, y), turned a and scaled s, to the frame's instances for view v, like a 2D
   // drawImage with the transform (a b c d e f). False while its sprite isn't on the GPU yet.
   gpuPiece(i: number, x: number, y: number, a: number, s: number, v: View) {
-    if (!this.sprites[i] || !this.gpu!.has[i] || (this.gn + 1) * PIECE_FLOATS > this.gi.length) return false
-    const z = v.z * this.dpr * s
-    const c = Math.cos(a) * z
-    const sn = Math.sin(a) * z
-    const k = this.gn++ * PIECE_FLOATS
-    const f = this.gi
-    f[k] = c
-    f[k + 1] = sn
-    f[k + 2] = -sn
-    f[k + 3] = c
-    f[k + 4] = ((x - v.x) * v.z + v.w / 2) * this.dpr
-    f[k + 5] = ((y - v.y) * v.z + v.h / 2) * this.dpr
-    this.giu[k + 6] = i
+    if (this.sprites[i] !== true) return false
+    const [px, py] = project(v, v.w, v.h, x, y)
+    this.gPieces.put(i, a, v.z * this.dpr * s, px * this.dpr, py * this.dpr)
     return true
   }
 
@@ -5258,7 +5019,6 @@ export class Engine {
     }
   }
 
-  // Other players' pointers, each with their name in a tag of their colour.
   // A ring and a few sparks growing out of each new seam, fading as they go. White with a soft
   // shadow, so they show on any picture.
   drawPops() {
@@ -5267,7 +5027,6 @@ export class Engine {
     this.paintPops(this.ctx, this.cam, this.vw, this.vh, this.pops, this.dpr)
   }
 
-  // The bursts that are still showing.
   livePops() {
     const now = performance.now()
     return (this.pops = this.pops.filter((p) => now - p.t0 < POP_MS))
@@ -5286,8 +5045,7 @@ export class Engine {
       const t = (now - p.t0) / POP_MS
       if (t < 0) continue
       const e = 1 - (1 - t) ** 3
-      const sx = (p.x - cam.x) * cam.z + vw / 2
-      const sy = (p.y - cam.y) * cam.z + vh / 2
+      const [sx, sy] = project(cam, vw, vh, p.x, p.y)
       ctx.globalAlpha = (1 - t) ** 1.5
       ctx.lineWidth = 2.5 * (1 - t) + 0.5
       ctx.beginPath()
@@ -5403,17 +5161,16 @@ export class Engine {
   drawTrayTags(mine: boolean) {
     const octx = this.octx!
     const { dpr, cam, vw, vh } = this
-    const tag = Math.max(14, this.geo.S * 0.4 * cam.z)
+    const tag = this.trayTag()
     const gap = tag * 0.3
     // Names cut short to fit, by tray id: { rect, text }, so hovering one shows it in full.
     const names = new Map<string, { rect: Rect4; text: string }>()
     if (mine) this.trayNames = names
     const shown = this.trays.filter((t) => this.trayTagsFit(t))
     for (const t of shown) {
-      const x = (t.x - cam.x) * cam.z + vw / 2
-      const y = (t.y - cam.y) * cam.z + vh / 2
+      const [x, y] = project(cam, vw, vh, t.x, t.y)
       if (x > vw || y > vh || x + t.w * cam.z < 0 || y + t.h * cam.z < 0) continue
-      const color = TRAY_COLORS[t.color] || TRAY_COLORS.gray
+      const color = trayColor(t.color)
       octx.setTransform(dpr, 0, 0, dpr, this.ox * dpr, this.oy * dpr)
       octx.textBaseline = 'middle'
       // The number and the name, each in a tag in the tray's colour on its top left corner, standing
@@ -5456,7 +5213,7 @@ export class Engine {
       const [x0, y0, x1, y1] = b.auto
       const right = b.menu[2]
       if (x0 > vw || y0 > vh || right < 0 || y1 < 0) continue
-      const color = TRAY_COLORS[t.color] || TRAY_COLORS.gray
+      const color = trayColor(t.color)
       // Both buttons grow and fade in together: the switch from the middle of the two, the menu button
       // from its own.
       this.scaleAbout(octx, look.s, (x0 + right) / 2, (y0 + y1) / 2)
@@ -5528,8 +5285,7 @@ export class Engine {
     for (const c of this.cursors.values()) {
       if (!c.box) continue
       const [ax, ay, bx, by] = c.box
-      const x = (Math.min(ax, bx) - cam.x) * cam.z + vw / 2
-      const y = (Math.min(ay, by) - cam.y) * cam.z + vh / 2
+      const [x, y] = project(cam, vw, vh, Math.min(ax, bx), Math.min(ay, by))
       const w = Math.abs(bx - ax) * cam.z
       const h = Math.abs(by - ay) * cam.z
       ctx.globalAlpha = 0.1
@@ -5541,8 +5297,7 @@ export class Engine {
       ctx.strokeRect(x + 0.5, y + 0.5, w, h)
     }
     for (const c of this.cursors.values()) {
-      const x = (c.x - cam.x) * cam.z + vw / 2
-      const y = (c.y - cam.y) * cam.z + vh / 2
+      const [x, y] = project(cam, vw, vh, c.x, c.y)
       if (x < -150 || y < -40 || x > vw + 10 || y > vh + 10) continue
       ctx.beginPath()
       ctx.moveTo(x, y)

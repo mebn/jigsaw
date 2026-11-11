@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api } from '../lib/api.ts'
-import type { PlayerProfile } from '../lib/api.ts'
-import { useApp } from '../App.tsx'
-import { formatTime } from '../lib/time.ts'
+import type { PlayerProfile } from '../../shared/protocol.ts'
+import { useApp } from '../lib/app.ts'
+import { navigate, paths } from '../lib/router.ts'
+import { formatTime, plural } from '../lib/format.ts'
 import { Card, CardGhosts } from './Card.tsx'
 import Dialog from './Dialog.tsx'
 import { Dot, presence } from './Players.tsx'
 import type { RankedPlayer } from './Players.tsx'
 import { Clock, Crown, Piece, User } from './icons.tsx'
 
-const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`
 
 // A player's window, from their circle in the header: who they are, what they did in this jigsaw,
 // and the other jigsaws they've played. Private jigsaws only show if this player has them too (the
@@ -27,7 +27,7 @@ interface PlayerDialogProps {
 }
 
 export default function PlayerDialog({ p, here, owner, me, seen, onAccount, onClose, closing }: PlayerDialogProps) {
-  const { player, roomId, openRoom } = useApp()
+  const { player, roomId } = useApp()
   const [info, setInfo] = useState<PlayerProfile | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -50,7 +50,7 @@ export default function PlayerDialog({ p, here, owner, me, seen, onAccount, onCl
   const since = info?.created ? new Date(info.created).toLocaleDateString(undefined, { dateStyle: 'medium' }) : ''
   const open = (id: string) => {
     onClose()
-    openRoom(id)
+    navigate(paths.room(id))
   }
 
   return (
@@ -101,7 +101,7 @@ export default function PlayerDialog({ p, here, owner, me, seen, onAccount, onCl
         {failed ? (
           <p className="profile-empty">Couldn't load their other jigsaws.</p>
         ) : !info ? (
-          <CardGhosts count={4} className="profile-rooms" caption />
+          <CardGhosts count={4} />
         ) : !others.length ? (
           <p className="profile-empty">No other jigsaws you can see.</p>
         ) : (

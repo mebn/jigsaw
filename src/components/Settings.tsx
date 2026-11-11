@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
-import { useApp } from '../App.tsx'
+import { useApp } from '../lib/app.ts'
 import {
   Changelog as ChangelogIcon,
   External,
@@ -19,22 +19,21 @@ import { AccountPanel } from './AccountPanel.tsx'
 import HelpPanel from './Help.tsx'
 import { useLinger } from '../lib/linger.ts'
 import PrivateRoom from './PrivateRoom.tsx'
+import { isPlainKey, useEscapeFallback } from '../lib/overlays.ts'
 
 // Header button that opens the settings dialog, with its panels in a list down the side:
 // general (dark mode, sounds, changelog and source link), account, and in a jigsaw (help) how to play.
 // In development (npm run dev) general also has the dev menu switch.
 // In a private jigsaw general also has a button that shows its link.
 // openRef.current(panel) opens it on that panel, as H does with how to play (see Room).
-// Escape opens it when it has nothing else to do: no field being typed in, nothing open over the
-// page, and nothing in escTaken (the jigsaw's selection and the like). The dialog closes on Escape.
-export type SettingsPanel = 'general' | 'account' | 'help'
+// Escape opens it when nothing else takes it (see overlays.ts). The dialog closes on Escape.
+type SettingsPanel = 'general' | 'account' | 'help'
 // What Settings puts in openRef: opens the dialog on a panel.
 export type OpenSettings = (panel: SettingsPanel) => void
 
 interface SettingsProps {
   privateRoom?: boolean
   help?: boolean
-  escTaken?: () => boolean
   openRef?: RefObject<OpenSettings | null>
 }
 
@@ -45,11 +44,11 @@ interface PanelRow {
   shortcut?: string
 }
 
-export default function Settings({ privateRoom = false, help = false, escTaken, openRef }: SettingsProps) {
+export default function Settings({ privateRoom = false, help = false, openRef }: SettingsProps) {
   const { theme, toggleTheme, sound, toggleSound, devMenu, toggleDevMenu, roomId } = useApp()
   const [sharing, setSharing] = useState(false)
   const closeSharing = useCallback(() => setSharing(false), [])
-  // The panel showing, or null when closed. The last one stays up while the dialog closes.
+  // Null when closed. The last panel stays up while the dialog closes.
   const [panel, setPanel] = useState<SettingsPanel | null>(null)
   const close = useCallback(() => setPanel(null), [])
   const [shown, closing] = useLinger(panel)
@@ -72,36 +71,18 @@ export default function Settings({ privateRoom = false, help = false, escTaken, 
     }
   }, [openRef])
 
-  // In the capture phase, so it sees what is open or selected before other handlers clear it.
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
-      if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable]')) return
-      if (document.querySelector('.modal-bg, .context-menu, .players-menu:not(.closing), .podium, .react-pick [aria-pressed="true"], .draw-btn[aria-pressed="true"]')) return
-      if (escTaken?.()) return
-      // The dialog starts listening for Escape while this press is still on its way, so it ends
-      // here, or the dialog would close again at once.
-      e.stopImmediatePropagation()
-      setPanel('general')
-    }
-    window.addEventListener('keydown', key, true)
-    return () => window.removeEventListener('keydown', key, true)
-  }, [escTaken])
+  useEscapeFallback((e) => {
+    if (e.repeat || e.shiftKey) return false
+    setPanel('general')
+    return true
+  }, 0)
 
-  // While it's open, H goes to how to play, and from there closes it. A press that opened it
-  // (see Room) has its default prevented, so it doesn't count here.
-  useEffect(() => {
-    if (!panel || !help) return
-    const key = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() !== 'h' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return
-      if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable]')) return
-      if (document.querySelectorAll('.modal-bg').length > 1) return
-      e.preventDefault()
-      setPanel((p) => (p === 'help' ? null : 'help'))
-    }
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [panel, help])
+  // While it's open, H goes to how to play, and from there closes it.
+  const helpKey = (e: KeyboardEvent) => {
+    if (!help || e.key.toLowerCase() !== 'h' || !isPlainKey(e)) return
+    e.preventDefault()
+    setPanel((p) => (p === 'help' ? null : 'help'))
+  }
 
   // Closes the dialog, then opens what the row is for.
   const then = (fn: () => void) => () => {
@@ -123,7 +104,7 @@ export default function Settings({ privateRoom = false, help = false, escTaken, 
         <Gear />
       </button>
       {shown && (
-        <Dialog title="Settings" className="settings-dialog" bodyClass="settings-body" onClose={close} closing={closing}>
+        <Dialog title="Settings" className="settings-dialog" bodyClass="settings-body" onClose={close} closing={closing} onKey={helpKey}>
           <nav className="settings-nav" aria-label="Settings">
             {panels.map((p) => (
               <button

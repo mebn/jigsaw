@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { api } from '../lib/api.ts'
-import type { RoomSummary } from '../lib/api.ts'
-import { navigate, store, useApp } from '../App.tsx'
+import type { RoomSummary } from '../../shared/protocol.ts'
+import { useApp } from '../lib/app.ts'
+import { lastRoom, store } from '../lib/storage.ts'
+import { navigate, paths } from '../lib/router.ts'
 import { Back, Lock, Plus, Trash } from '../components/icons.tsx'
-import Dialog, { Tabs } from '../components/Dialog.tsx'
+import Dialog from '../components/Dialog.tsx'
+import Tabs from '../components/Tabs.tsx'
 import Settings from '../components/Settings.tsx'
 import Confirm from '../components/Confirm.tsx'
 import NewRoom from './NewRoom.tsx'
 import { useLinger } from '../lib/linger.ts'
+import { isTyping, overlays } from '../lib/overlays.ts'
 
 // The jigsaws page: a gallery on a canvas that drags and scrolls up and down (but doesn't zoom), the
 // jigsaws' pictures in columns. Jigsaws in progress come first, with how far along they are under
@@ -135,7 +139,7 @@ function took(seconds: number) {
   return h ? `${h} h ${m % 60} min` : `${m} min`
 }
 
-// A finished jigsaw: its picture, the small one first and the full one over it once loaded.
+// A jigsaw's picture, the small one first and the full one over it once loaded.
 function Art({ r, w, h }: { r: RoomSummary; w: number; h: number }) {
   const [full, setFull] = useState(false)
   return (
@@ -149,7 +153,6 @@ function Art({ r, w, h }: { r: RoomSummary; w: number; h: number }) {
 interface TileProps {
   r: RoomSummary
   i: number
-  kind: 'art'
   mine: boolean
   onPick: (e: MouseEvent<HTMLAnchorElement>, id: string) => void
   onDelete: (r: RoomSummary) => void
@@ -176,11 +179,11 @@ function untilt(e: ReactPointerEvent<HTMLElement>) {
   el.style.setProperty('--rx', '0deg')
 }
 
-function Tile({ r, i, kind, mine, onPick, onDelete, children, below }: TileProps) {
+function Tile({ r, i, mine, onPick, onDelete, children, below }: TileProps) {
   return (
     <a
-      className={`tile ${kind}`}
-      href={`/r/${r.id}`}
+      className="tile art"
+      href={paths.room(r.id)}
       draggable={false}
       style={{ '--i': Math.min(i, 14) } as CSSProperties}
       onClick={(e) => onPick(e, r.id)}
@@ -211,7 +214,7 @@ function Tile({ r, i, kind, mine, onPick, onDelete, children, below }: TileProps
 // The canvas: scrolled, moved with the arrow keys, or on a touch screen dragged with a finger (with
 // a little glide after), up and down only, and not zoomed. The mouse doesn't drag it. The jigsaws are in the middle across, and when they don't fit on the
 // screen they can be moved until a gap past their top or bottom reaches the screen's.
-// render(r, w, h) makes the jigsaw for each place.
+// render(p) makes the jigsaw for each place.
 function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; gap: number; render: (p: Placed) => ReactNode }) {
   const field = useRef<HTMLDivElement>(null)
   const cells = useRef<(HTMLDivElement | null)[]>([])
@@ -362,8 +365,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       dragged = false
     }
     const key = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || document.querySelector('.modal-bg')) return
-      if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) return
+      if (e.ctrlKey || e.metaKey || e.altKey || overlays.modalOpen() || isTyping(e)) return
       const d = ({ ArrowUp: -1, ArrowDown: 1, PageUp: -4, PageDown: 4 } as Record<string, number>)[e.key]
       if (!d) return
       e.preventDefault()
@@ -431,12 +433,13 @@ interface GalleryProps {
 }
 
 export default function Gallery({ here, closing, newOpen }: GalleryProps) {
-  const { openRoom, player, playerId, openLogin } = useApp()
-  const [rooms, setRooms] = useState<RoomSummary[] | null>(null)
+  const { player, playerId, openLogin } = useApp()
+  // The jigsaws, null while they load, or 'failed'.
+  const [rooms, setRooms] = useState<RoomSummary[] | 'failed' | null>(null)
   const small = useSmall()
   // The jigsaw to go back to, as it was when the page opened: it stays while the page fades over a
   // jigsaw that is opening, so the bar in the top left doesn't change before it goes.
-  const [last, setLast] = useState(() => store.get('lastRoom'))
+  const [last, setLast] = useState(lastRoom.get)
   // Which jigsaws show, kept in this browser.
   const [tab, setTabState] = useState(() =>
     TABS.some((t) => t.key === store.get('roomsTab')) ? (store.get('roomsTab') as TabKey) : 'all',
@@ -452,7 +455,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
       api
         .rooms(player?.passphrase)
         .then(setRooms)
-        .catch(() => setRooms([])),
+        .catch(() => setRooms('failed')),
     [player?.passphrase],
   )
   useEffect(() => {
@@ -463,7 +466,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
   const pick = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
     if (!plainClick(e)) return
     e.preventDefault()
-    if (here) openRoom(id)
+    if (here) navigate(paths.room(id))
   }
 
   // The jigsaw waiting for a yes in the delete dialog.
@@ -476,18 +479,19 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
     } catch {
       return load()
     }
-    if (store.get('lastRoom') === room.id) store.set('lastRoom', null)
+    lastRoom.forget(room.id)
     if (last === room.id) setLast(null)
     load()
   }
 
-  const closeNew = useCallback(() => navigate('/rooms'), [])
+  const closeNew = useCallback(() => navigate(paths.rooms), [])
   const [newShown, newClosing] = useLinger(newOpen)
   // Where in the new jigsaw window's header its Create button goes (see NewRoom).
   const [createSlot, setCreateSlot] = useState<HTMLDivElement | null>(null)
 
-  const progress = rooms?.filter((r) => shown(r) && !r.done) || []
-  const finished = rooms?.filter((r) => shown(r) && r.done) || []
+  const list = Array.isArray(rooms) ? rooms : []
+  const progress = list.filter((r) => shown(r) && !r.done)
+  const finished = list.filter((r) => shown(r) && r.done)
   const col = small ? COL_SMALL : COL
   const gap = small ? GAP_SMALL : GAP
   // Each jigsaw's picture, with how long it took under it when finished, or how far along it is.
@@ -495,7 +499,6 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
     <Tile
       r={p.r}
       i={p.i}
-      kind="art"
       mine={!!playerId && p.r.owner === playerId}
       onPick={pick}
       onDelete={setDoomed}
@@ -526,7 +529,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
       <header className="gallery-head">
         <div className="float">
           {last && (
-            <button className="icon-btn" onClick={() => openRoom(last)} aria-label="Back to the jigsaw" data-tip="Back to the jigsaw">
+            <button className="icon-btn" onClick={() => navigate(paths.room(last))} aria-label="Back to the jigsaw" data-tip="Back to the jigsaw">
               <Back />
             </button>
           )}
@@ -539,7 +542,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
               Log in
             </button>
           )}
-          <button className="primary new-btn" onClick={() => navigate('/new')}>
+          <button className="primary new-btn" onClick={() => navigate(paths.new)}>
             <span>New jigsaw</span>
             <Plus />
           </button>
@@ -553,10 +556,17 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
         <div className="gallery-empty" aria-busy="true" aria-label="Loading jigsaws">
           <span className="spin" />
         </div>
+      ) : rooms === 'failed' ? (
+        <section className="gallery-empty">
+          <p>Couldn't load the jigsaws.</p>
+          <button className="secondary" onClick={load}>
+            Try again
+          </button>
+        </section>
       ) : !rooms.length ? (
         <section className="gallery-empty">
           <p>No jigsaws yet.</p>
-          <button className="primary" onClick={() => navigate('/new')}>
+          <button className="primary" onClick={() => navigate(paths.new)}>
             Make the first one
           </button>
         </section>

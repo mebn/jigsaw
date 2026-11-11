@@ -4,6 +4,8 @@
 // nothing: with no button held, no dialog open and no text field focused, right away in a
 // background tab and otherwise once the player has been idle for a moment.
 
+import { overlays } from './overlays.ts'
+
 // How long (ms) without a press, key, wheel or pointer move counts as idle.
 const IDLE_MS = 3000
 
@@ -21,7 +23,7 @@ window.addEventListener('blur', () => (down = false))
 
 const busy = () => {
   const a = document.activeElement
-  return down || !!document.querySelector('.modal-bg') || (a as HTMLElement | null)?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a?.tagName || '')
+  return down || overlays.modalOpen() || (a as HTMLElement | null)?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a?.tagName || '')
 }
 
 let pending = false

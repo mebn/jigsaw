@@ -1,30 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
-import { api } from '../lib/api.ts'
-import type { NoteReaction, NoteReply, NoteRow, RoomSocket, TimeRow } from '../lib/api.ts'
-import { Engine, cursorColor, warmSprites } from '../lib/engine.ts'
-import { navigate, store, useApp } from '../App.tsx'
-import {
-  Hand,
-  Pencil,
-  Picture,
-  Rooms,
-  Share,
-} from '../components/icons.tsx'
+import { api, openRoomSocket } from '../lib/api.ts'
+import type { RoomSocket } from '../lib/api.ts'
+import type { PlayerRef, RefRow, RoomDetails } from '../../shared/protocol.ts'
+import { LIMITS } from '../../shared/protocol.ts'
+import { Engine } from '../lib/engine.ts'
+import { warmSprites } from '../lib/spriteBuilder.ts'
+import { cursorColor } from '../lib/colors.ts'
+import { useApp } from '../lib/app.ts'
+import { lastRoom, roomOnce, store } from '../lib/storage.ts'
+import { navigate, paths } from '../lib/router.ts'
+import { useTimes } from '../lib/times.ts'
+import { isPlainKey, isTyping, onTable, overlays, useEscapeFallback, useOverlay } from '../lib/overlays.ts'
+import { Hand, Pencil, Picture, Rooms, Share } from '../components/icons.tsx'
 import Settings from '../components/Settings.tsx'
 import type { OpenSettings } from '../components/Settings.tsx'
 import Players, { rankPlayers } from '../components/Players.tsx'
 import type { NameOf, Stats } from '../components/Players.tsx'
 import Podium, { PodiumIcon } from '../components/Podium.tsx'
 import Reactions from '../components/Reactions.tsx'
-import type { ReactMessage } from '../components/Reactions.tsx'
-import Timers from '../components/Timers.tsx'
-import type { Times } from '../components/Timers.tsx'
 import Celebration from '../components/Celebration.tsx'
 import DevMenu from '../components/DevMenu.tsx'
 import { useLinger } from '../lib/linger.ts'
 import { NoteButton, NotesLayer } from '../components/Notes.tsx'
-import type { CreateNote, NoteMessage } from '../components/Notes.tsx'
+import type { CreateNote } from '../components/Notes.tsx'
 import ContextMenu from '../components/ContextMenu.tsx'
 import type { MenuAt } from '../components/ContextMenu.tsx'
 import { TrayButton } from '../components/Trays.tsx'
@@ -34,7 +33,7 @@ import ShareDialog from '../components/ShareDialog.tsx'
 import PictureMap from '../components/PictureMap.tsx'
 import Search from '../components/Search.tsx'
 import { playSnap } from '../lib/sound.ts'
-import { canFullscreen, toggleFullscreen, useNotch } from '../lib/fullscreen.ts'
+import { canFullscreen, toggleFullscreen } from '../lib/fullscreen.ts'
 
 // No browser menu on a right click in the bar along the top, except in a text field.
 const noMenu = (e: MouseEvent) => {
@@ -53,7 +52,7 @@ function useIdle() {
     let timer = 0
     let over = false
     let touch = false
-    const busy = () => over || touch || document.querySelector('.modal-bg, .players-menu, .float :focus-visible, .players :focus-visible')
+    const busy = () => over || touch || overlays.count() > 0 || document.querySelector('.float :focus-visible, .players :focus-visible')
     const sleep: () => void = () => (busy() ? (timer = setTimeout(sleep, IDLE_MS)) : setIdle(true))
     const wake = (e: Event) => {
       if (e.type !== 'keydown') over = !!(e.target as Element | null)?.closest?.('.float, .players, .podium-btn, .share-btn')
@@ -89,28 +88,18 @@ function readColors() {
 }
 
 // Reference images used to be kept per browser; these get uploaded to the room once.
-function takeLocalRefs(id: string) {
-  try {
-    const list = JSON.parse(store.get(`refs:${id}`)!)
-    store.set(`refs:${id}`, null)
-    return Array.isArray(list) ? list.filter((r) => r && r.id && r.w > 0) : []
-  } catch {
-    return []
-  }
+function takeLocalRefs(id: string): RefRow[] {
+  const list = store.json<RefRow[]>(`refs:${id}`)
+  store.set(`refs:${id}`, null)
+  return Array.isArray(list) ? list.filter((r) => r && r.id && r.w > 0) : []
 }
 
-// What the room needs once the jigsaw is loaded, besides the engine.
-interface RoomData {
-  notes: NoteRow[]
-  noteReactions: NoteReaction[]
-  noteReplies: NoteReply[]
-  times: TimeRow[]
-  private: boolean
-  owner: string | null
+// An open jigsaw: its engine, the room's socket and the room as last loaded (again after a reconnect).
+interface Session {
+  engine: Engine
+  sock: RoomSocket
+  room: RoomDetails
 }
-
-// A player as the room learns their name: from the room, the socket or this browser.
-type Named = { id?: string | null; name?: string | null } | null | undefined
 
 // leaving: the jigsaws page is coming over it, so it zooms out. arriving: it was opened from the
 // jigsaws page, which waits over it until it is ready (onArrived), and then it zooms in.
@@ -122,36 +111,29 @@ interface RoomProps {
 }
 
 export default function Room({ id, leaving = false, arriving = false, onArrived }: RoomProps) {
-  const { name, player, playerId, theme, ensureName, requireName, devMenu } = useApp()
-  const me = useRef(playerId)
-  me.current = playerId
-  const sockRef = useRef<RoomSocket | null>(null)
+  const { name, player, playerId, theme, ensureName, devMenu } = useApp()
+  const passphrase = useRef(player?.passphrase ?? null)
+  passphrase.current = player?.passphrase ?? null
   // Player names by id. Names aren't unique, so everything is stored by player id and looked up here.
   const names = useRef(new Map<string, string>())
   const [, setNamesVer] = useState(0)
-  const learn = useCallback((list: Named[] | null | undefined) => {
-    for (const p of list || []) if (p?.id) names.current.set(p.id, String(p.name || '').slice(0, 32))
+  const learn = useCallback((list: (PlayerRef | null)[]) => {
+    for (const p of list) if (p?.id) names.current.set(p.id, String(p.name || '').slice(0, LIMITS.name))
     setNamesVer((v) => v + 1)
   }, [])
   const nameOf: NameOf = useCallback((pid) => (pid ? names.current.get(pid) || 'Someone' : ''), [])
   const canvas = useRef<HTMLCanvasElement>(null)
   const tip = useRef<HTMLDivElement>(null)
   const cursors = useRef<HTMLCanvasElement>(null)
-  const [engine, setEngine] = useState<Engine | null>(null)
-  const [data, setData] = useState<RoomData | null>(null)
+  const [session, setSession] = useState<Session | null>(null)
+  const engine = session?.engine ?? null
   const [done, setDone] = useState(false)
-  const timeBus = useRef<((msg: TimeRow) => void) | null>(null)
-  const noteBus = useRef<((msg: NoteMessage) => void) | null>(null)
-  const reactBus = useRef<((msg: ReactMessage) => void) | null>(null)
   const createNote = useRef<CreateNote | null>(null)
   const openPlayers = useRef<(() => void) | null>(null)
-  // Escape clears these, so it doesn't open the settings then.
-  const escTaken = useCallback(
-    () => !!engine && !!(engine.drag || engine.trim || engine.selCount || engine.refSel || engine.traySel || engine.selRefs.size || engine.selNotes.size),
-    [engine],
-  )
+  // Escape with nothing open over the table is for the table first, then for the settings.
+  useEscapeFallback(engine && (() => engine.escape()), 1)
   const [stats, setStats] = useState<Stats>(() => new Map())
-  const [times, setTimes] = useState<Times>({})
+  const times = useTimes(id, session?.sock ?? null, player, session?.room.times, done)
   // Player ids in the room right now, and when the others were last here (ms by id).
   const [online, setOnline] = useState(() => new Set<string>())
   const [seen, setSeen] = useState<Record<string, number>>({})
@@ -159,12 +141,11 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const openAccount = useCallback(() => openSettings.current?.('account'), [])
   // How to play opens by itself the first time this player opens each jigsaw, once it has arrived.
   useEffect(() => {
-    if (arriving || store.get(`help:${id}`)) return
-    store.set(`help:${id}`, '1')
+    const help = roomOnce('help', id)
+    if (arriving || help.done()) return
+    help.mark()
     openSettings.current?.('help')
   }, [id, arriving])
-  const onTimes = useCallback((t: Times) => setTimes(t), [])
-  const notch = useNotch()
   const idle = useIdle()
   const [error, setError] = useState(false)
   // Why the table can't be drawn here (WebGPU didn't start), shown instead of it.
@@ -214,6 +195,14 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     let dead = false
     let eng: Engine | null = null
     let sock: RoomSocket | null = null
+    let disconnect = () => {}
+    const celebrated = roomOnce('celebrated', id)
+    // The room as it is now, on the table and in the lists.
+    const show = (room: RoomDetails) => {
+      learn(room.players)
+      setOnline(new Set(room.online))
+      setSeen(room.seen)
+    }
     ;(async () => {
       try {
         // The workers that cut the pieces start loading, and the picture with the jigsaw.
@@ -225,33 +214,27 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         const room = await api.room(id)
         await decoded
         if (dead) return
-        store.set('lastRoom', id)
+        lastRoom.set(id)
         eng = new Engine(canvas.current!, {
           room,
           image,
           pieces: room.pieces,
-          refs: room.refs || [],
-          trays: room.trays || [],
+          refs: room.refs,
+          trays: room.trays,
           overlay: cursors.current,
           user: playerId,
           userName: name,
           nameOf,
           guard: ensureName,
           tooltip: tip.current!,
-          send: (msg) => sock?.send(msg),
-          onRef: (ref, live) => api.saveRef(id, ref, live),
-          onRefDelete: (refId) => api.deleteRef(id, refId),
-          // What's in a tray goes with the pieces' moves, so the tray is sent without its list.
-          onTray: (tray, live) => api.saveTray(id, { ...tray, pieces: undefined }, live),
-          onTrayDelete: (trayId) => api.deleteTray(id, trayId),
           onStats: () => setStats(eng!.contributors()),
           onSnap: playSnap,
           onMenu: (x, y, kind, id, opts) => setMenu({ x, y, kind, id, rename: !!opts?.rename }),
           onComplete: () => {
             setDone(true)
             // Celebrate once per player and jigsaw, whoever placed the last piece.
-            if (store.get(`celebrated:${id}`)) return
-            store.set(`celebrated:${id}`, '1')
+            if (celebrated.done()) return
+            celebrated.mark()
             setParty(true)
           },
         })
@@ -262,88 +245,82 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           return
         }
         if (dead) return
-        learn(room.players)
-        setOnline(new Set(room.online || []))
-        setSeen(room.seen || {})
+        show(room)
         eng.setColors(readColors())
         setStats(eng.contributors())
         setDone(eng.isComplete())
         // Already finished before this player opened it: nothing left to celebrate.
-        if (eng.isComplete()) store.set(`celebrated:${id}`, '1')
-        setData({ notes: room.notes || [], noteReactions: room.noteReactions || [], noteReplies: room.noteReplies || [], times: room.times || [], private: !!room.private, owner: room.owner })
-        setEngine(eng)
-        sock = sockRef.current = api.socket(id, {
-          player: () => me.current,
-          onMessage: (msg) => {
-            if (msg.type === 'deleted') {
-              if (store.get('lastRoom') === id) store.set('lastRoom', null)
-              navigate('/rooms')
-            }
-            else if (msg.type === 'player') {
-              learn([msg.player])
-              eng!.invalidate()
-            } else if (msg.type === 'presence') {
-              setOnline(new Set(msg.online || []))
-              setSeen((s) => ({ ...s, ...msg.seen }))
-            } else if (msg.type === 'time') timeBus.current?.(msg)
-            else if (msg.type === 'note' || msg.type === 'note-delete' || msg.type === 'note-react' || msg.type === 'note-reply' || msg.type === 'note-reply-delete') noteBus.current?.(msg)
-            else if (msg.type === 'react') reactBus.current?.(msg)
-            else if (msg.type === 'ref') eng!.remoteRef(msg.ref)
-            else if (msg.type === 'ref-delete') eng!.removeRef(msg.id, true)
-            else if (msg.type === 'tray') eng!.remoteTray(msg.tray, msg.live, msg.client)
-            else if (msg.type === 'tray-delete') eng!.removeTray(msg.id, true)
-            else eng!.remoteMessage(msg)
-          },
-          onOpen: async (reconnect) => {
+        if (eng.isComplete()) celebrated.mark()
+        const e = eng
+        sock = openRoomSocket(
+          id,
+          () => passphrase.current,
+          async (reconnect) => {
             if (!reconnect) return
             const fresh = await api.room(id).catch(() => null)
             if (!fresh || dead) return
-            eng!.resync(fresh.pieces)
-            eng!.checkGroups()
-            eng!.setRefs(fresh.refs || [])
-            eng!.setTrays(fresh.trays || [])
-            learn(fresh.players)
-            setOnline(new Set(fresh.online || []))
-            setSeen(fresh.seen || {})
-            noteBus.current?.({ type: 'notes-reset', notes: fresh.notes || [], reactions: fresh.noteReactions || [], replies: fresh.noteReplies || [] })
+            e.resync(fresh.pieces)
+            e.checkGroups()
+            e.setRefs(fresh.refs)
+            e.setTrays(fresh.trays)
+            show(fresh)
+            setSession((s) => s && { ...s, room: fresh })
           },
-        })
+        )
+        const offEngine = e.connect(sock)
+        const offs = [
+          sock.on('deleted', () => {
+            lastRoom.forget(id)
+            navigate(paths.rooms)
+          }),
+          sock.on('player', (msg) => learn([msg.player])),
+          sock.on('presence', (msg) => {
+            setOnline(new Set(msg.online))
+            setSeen((s) => ({ ...s, ...msg.seen }))
+          }),
+        ]
+        disconnect = () => {
+          offEngine()
+          offs.forEach((off) => off())
+        }
+        setSession({ engine: e, sock, room })
         // Pieces left out of line in their group (see Engine.repair) are put right, now that it can say so.
-        eng.checkGroups()
+        e.checkGroups()
         for (const ref of takeLocalRefs(id)) {
-          eng.remoteRef(ref)
-          api.saveRef(id, ref)
+          e.remoteRef(ref)
+          e.saveRef(ref, false)
         }
       } catch {
         if (!dead) {
-          if (store.get('lastRoom') === id) store.set('lastRoom', null)
+          lastRoom.forget(id)
           setError(true)
         }
       }
     })()
     return () => {
       dead = true
+      disconnect()
       sock?.close()
-      sockRef.current = null
       eng?.destroy()
     }
   }, [id])
 
   // Logging in, out or renaming: act as the new player from here on, and tell the room.
   useEffect(() => {
-    if (playerId) learn([{ id: playerId, name }])
+    if (playerId) learn([{ id: playerId, name: name || '' }])
     if (!engine) return
     engine.user = playerId
     engine.userName = name
     engine.invalidate()
   }, [engine, playerId, name, learn])
-  useEffect(() => {
-    if (engine) sockRef.current?.send({ type: 'hello', player: playerId })
-  }, [engine, playerId])
+  const sock = session?.sock
+  const passphraseNow = player?.passphrase
+  useEffect(() => sock?.hello(), [sock, passphraseNow])
   // Opening a private jigsaw's link (or logging in while here) adds it to this player's list.
+  const isPrivate = !!session?.room.private
   useEffect(() => {
-    if (data?.private && player?.passphrase) api.join(id, player.passphrase).catch(() => {})
-  }, [id, data?.private, player?.passphrase])
+    if (isPrivate && player?.passphrase) api.join(id, player.passphrase).catch(() => {})
+  }, [id, isPrivate, player?.passphrase])
 
   useEffect(() => {
     engine?.setColors(readColors())
@@ -352,22 +329,14 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   useEffect(() => {
     store.set('panMode', panMode ? '1' : '0')
     if (!engine) return
-    engine.panMode = panMode
-    engine.canvas.style.cursor = panMode ? 'grab' : ''
-    engine.setHighlight(null)
+    engine.setPanMode(panMode)
   }, [engine, panMode])
 
   useEffect(() => {
     engine?.setDrawMode(drawMode)
   }, [engine, drawMode])
 
-  // Escape stops drawing.
-  useEffect(() => {
-    if (!drawMode) return
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setDrawMode(false)
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [drawMode])
+  useOverlay(drawMode, () => setDrawMode(false), { keepTyping: true })
 
   useEffect(() => {
     store.set('split', split ? '1' : '0')
@@ -377,7 +346,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   }, [engine, split, splitPanes])
 
   useEffect(() => {
-    if (error) navigate('/rooms')
+    if (error) navigate(paths.rooms)
   }, [error])
 
   // Off to the jigsaws page: the table zooms out under it.
@@ -404,33 +373,30 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   // Other players only see our cursor while we're playing, not while a dialog is open.
   useEffect(() => {
     if (!engine) return
-    const check = () => engine.setAway(!!document.querySelector('.modal-bg'))
-    const mo = new MutationObserver(check)
-    mo.observe(document.body, { childList: true, subtree: true })
+    const check = () => engine.setAway(overlays.modalOpen())
     check()
-    return () => mo.disconnect()
+    return overlays.watch(check)
   }, [engine])
 
   // H help, V view mode, N note, T tray, I image, Q the picture as a map, + and - zoom, C fits to screen, F fullscreen. Arrow keys and WASD pan (see the engine). New notes, trays and images go under the pointer when it's on the table.
   useEffect(() => {
     if (!engine) return
     const key = (e: KeyboardEvent) => {
-      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) return
-      // While holding pieces, G gathers them (see the engine), and dialogs keep the keyboard.
-      if (engine.drag || document.querySelector('.modal-bg')) return
-      const r = engine.canvas.getBoundingClientRect()
-      const p = engine.pointerAt
-      const el = p && document.elementFromPoint(p[0] + engine.ox + r.left, p[1] + engine.oy + r.top)
-      const over = el && !el.closest('.float, .players') ? p : null
+      if (!isPlainKey(e) || isTyping(e)) return
+      // While holding pieces, the keys are the engine's, and windows keep the keyboard.
+      if (engine.drag || overlays.modalOpen()) return
+      // Where the pointer is, if it's on the table and not over the toolbars.
+      const p = engine.pointerClient()
+      const over = p && onTable(...p) ? p : null
+      const there = over ? engine.clientToWorld(...over) : undefined
       const k = e.key.toLowerCase()
       if (k === 'h') openSettings.current?.('help')
       else if (k === 'v') setPanMode((v) => !v)
       else if (k === 'x') setSplit((v) => !v)
       else if (k === 'e') setDrawMode((v) => !v)
-      else if (k === 'n') createNote.current?.(over ? over[0] + engine.ox + r.left : null, over ? over[1] + engine.oy + r.top : null)
-      else if (k === 't') (over ? engine.addTray(...over) : engine.addTray())
-      else if (k === 'i') (over ? engine.addRef(...over) : engine.addRef())
+      else if (k === 'n') createNote.current?.(over?.[0] ?? null, over?.[1] ?? null)
+      else if (k === 't') engine.addTray(there)
+      else if (k === 'i') engine.addRef(there)
       else if (k === 'q') setMap(true)
       else if (k === '+' || k === '=') engine.zoomBy(1.4)
       else if (k === '-' || k === '_') engine.zoomBy(1 / 1.4)
@@ -449,27 +415,27 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     if (!engine) return
     const key = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'f') return
-      if (document.querySelector('.modal-bg:not(.search-bg)')) return
+      // Another window keeps the keyboard.
+      if (overlays.modalOpen() && !search) return
       e.preventDefault()
       setMenu(null)
       setSearch((v) => !v)
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-  }, [engine])
+  }, [engine, search])
 
   // The toolbar: all jigsaws and settings on the top left, the play tools at the top middle in one
   // bar, in two groups split by lines, and the players on the top right.
   const nav = (
     <>
-      <button className="icon-btn" onClick={() => navigate('/rooms')} aria-label="All jigsaws" data-tip="All jigsaws">
+      <button className="icon-btn" onClick={() => navigate(paths.rooms)} aria-label="All jigsaws" data-tip="All jigsaws">
         <Rooms />
       </button>
-      {engine && <Timers roomId={id} me={playerId} initial={data!.times} busRef={timeBus} stopped={done} onTimes={onTimes} />}
-      <Settings privateRoom={!!data?.private} help escTaken={escTaken} openRef={openSettings} />
+      <Settings privateRoom={isPrivate} help openRef={openSettings} />
     </>
   )
-  const play = engine && (
+  const play = session && engine && (
     <>
       <button
         className={`icon-btn view-btn${panMode ? ' on' : ''}`}
@@ -490,7 +456,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           setSplitPanes(n)
           setSplit(true)
         }}
-       
       />
       <button
         className={`icon-btn draw-btn${drawMode ? ' on' : ''}`}
@@ -503,7 +468,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       >
         <Pencil />
       </button>
-      <Reactions engine={engine} busRef={reactBus} />
+      <Reactions engine={engine} sock={session.sock} />
       <span className="bar-sep" />
       <TrayButton engine={engine} />
       <button
@@ -519,9 +484,11 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       <NoteButton createRef={createNote} />
     </>
   )
+  // The players by rank, for the podium and the picture to share.
+  const ranked = (podiumShown || shareShown) && rankPlayers({ stats, times, nameOf })
   return (
     <div
-      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${notch ? ' notch' : ''}${leaving ? ' leaving' : ''}`}
+      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${leaving ? ' leaving' : ''}`}
     >
       <canvas ref={canvas} className="board" tabIndex={0} />
       <div ref={tip} className="tip" />
@@ -539,19 +506,14 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       )}
       {engine && split && <div className="split-line" />}
       {engine && split && splitPanes > 2 && <div className="split-line across" />}
-      {engine && (
+      {session && (
         <div className="notes-clip">
           <NotesLayer
-            engine={engine}
-            roomId={id}
+            engine={session.engine}
+            sock={session.sock}
+            room={session.room}
             me={playerId}
             nameOf={nameOf}
-            initial={data!.notes}
-            initialReactions={data!.noteReactions}
-            initialReplies={data!.noteReplies}
-            busRef={noteBus}
-            ensureName={ensureName}
-            requireName={requireName}
             createRef={createNote}
           />
         </div>
@@ -567,7 +529,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       )}
       {engine && (
         <div className="tr" onContextMenu={noMenu}>
-          <Players stats={stats} times={times} me={playerId} owner={data?.owner} nameOf={nameOf} online={online} seen={seen} openRef={openPlayers} onAccount={openAccount} />
+          <Players stats={stats} times={times} me={playerId} owner={session?.room.owner} nameOf={nameOf} online={online} seen={seen} openRef={openPlayers} onAccount={openAccount} />
         </div>
       )}
       {menu && engine && <ContextMenu key={`${menu.kind}:${menu.id}:${menu.x}:${menu.y}`} engine={engine} at={menu} onClose={closeMenu} />}
@@ -577,14 +539,13 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           onConnect={() => engine.devConnect()}
           onRestart={() => {
             engine.devRestart()
-            store.set(`celebrated:${id}`, null)
+            roomOnce('celebrated', id).reset()
             setDone(false)
             setParty(false)
             setPodium(false)
           }}
           onSolve={() => {
-            // Celebrate as if for the first time.
-            store.set(`celebrated:${id}`, null)
+            roomOnce('celebrated', id).reset()
             engine.devSolve()
           }}
           onCelebrate={() => {
@@ -603,19 +564,18 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           <Share />
         </button>
       )}
-      {podiumShown && (
+      {podiumShown && ranked && (
         <Podium
-          ranked={rankPlayers({ stats, times, nameOf })}
+          ranked={ranked}
           closing={podiumClosing}
           onClose={closePodium}
-          covered={sharing}
           onShare={() => setSharing(true)}
         />
       )}
-      {engine && shareShown && (
+      {engine && shareShown && ranked && (
         <ShareDialog
           engine={engine}
-          ranked={rankPlayers({ stats, times, nameOf })}
+          ranked={ranked}
           onClose={closeShare}
           closing={shareClosing}
         />

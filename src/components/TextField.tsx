@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 
-export interface TextFieldProps extends ComponentProps<'input'> {
+interface TextFieldProps extends ComponentProps<'input'> {
   bad?: boolean
   compact?: boolean
 }

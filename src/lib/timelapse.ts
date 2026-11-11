@@ -2,10 +2,10 @@ import { GIFEncoder, applyPalette, quantize } from 'gifenc'
 import { shapeOutline } from './sprites.ts'
 import { drawAddress } from './share.ts'
 import type { PuzzleGeometry, Units } from './geometry.ts'
-import type { Snapshot } from './api.ts'
+import type { Snapshot } from '../../shared/protocol.ts'
 
 // A timelapse of a jigsaw being put together, as a looping GIF: one frame each time its biggest group
-// grew (saved by the server, see snapshot() in server/api.ts), the group cut out of the picture on
+// grew (saved by the server, see snapshot() in server/table.ts), the group cut out of the picture on
 // a plain background, with the site's address in the bottom right corner.
 
 // The longest side of the GIF, in pixels.
@@ -47,7 +47,7 @@ function thin(frames: number[][]) {
 // Resolves with the GIF as a Blob. room: { width, height }; geo: from buildPuzzle(); image: the
 // picture (an image or canvas); frames: from framesFor(). Yields now and then so the page stays
 // responsive, and gives up (resolving with null) once stopped() is true.
-export interface TimelapseOptions {
+interface TimelapseOptions {
   room: { width: number; height: number }
   geo: PuzzleGeometry
   image: CanvasImageSource

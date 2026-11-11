@@ -29,25 +29,19 @@ function frame(op: number, payload: Buffer) {
 }
 
 export class Socket {
-  sock: NetSocket
-  buf: Buffer
-  parts: Buffer[]
-  open: boolean
-  onMessage: (text: string) => void
-  onClose: () => void
-  heard: number
-  // Set by whoever gets the socket from onConnect.
-  handler?: (text: string) => void
-  onclose?: () => void
+  private sock: NetSocket
+  private buf: Buffer = Buffer.alloc(0)
+  private parts: Buffer[] = []
+  private open = true
+  private heard = Date.now()
+  private gone: () => void
+  // Set by whoever gets the socket from onConnect, before it reads anything.
+  onMessage?: (text: string) => void
+  onClose?: () => void
 
-  constructor(sock: NetSocket, onMessage: (text: string) => void, onClose: () => void) {
+  constructor(sock: NetSocket, gone: () => void) {
     this.sock = sock
-    this.buf = Buffer.alloc(0)
-    this.parts = []
-    this.open = true
-    this.onMessage = onMessage
-    this.onClose = onClose
-    this.heard = Date.now()
+    this.gone = gone
     sock.setNoDelay(true)
     sock.on('data', (d: Buffer) => {
       this.heard = Date.now()
@@ -71,7 +65,8 @@ export class Socket {
     if (!this.open) return
     this.open = false
     this.sock.destroy()
-    this.onClose()
+    this.gone()
+    this.onClose?.()
   }
 
   read(data: Buffer) {
@@ -102,13 +97,15 @@ export class Socket {
       this.buf = b.subarray(o + n)
 
       if (op === 8) return this.closed()
+      // A message in many parts is held to the same size as one in a single frame.
+      if (op === 0 && this.parts.reduce((t, p) => t + p.length, n) > 16 * 1024 * 1024) return this.closed()
       if (op === 9) this.sock.write(frame(10, payload))
       else if (op === 0 || op === 1 || op === 2) {
         this.parts.push(payload)
         if (fin) {
           const text = Buffer.concat(this.parts).toString('utf8')
           this.parts = []
-          this.onMessage(text)
+          this.onMessage?.(text)
         }
       }
     }
@@ -136,14 +133,7 @@ export function attachWebSocket(httpServer: HttpServer, path: string, onConnect:
         'Connection: Upgrade\r\n' +
         `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     )
-    const ws: Socket = new Socket(
-      sock as NetSocket,
-      (text) => ws.handler?.(text),
-      () => {
-        all.delete(ws)
-        ws.onclose?.()
-      },
-    )
+    const ws: Socket = new Socket(sock as NetSocket, () => all.delete(ws))
     all.add(ws)
     onConnect(ws, url)
     if (head?.length) ws.read(head)

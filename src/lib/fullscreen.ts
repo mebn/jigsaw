@@ -6,7 +6,7 @@ type WebkitElement = HTMLElement & { webkitRequestFullscreen?: (options?: Fullsc
 type KeyboardNavigator = Navigator & { keyboard?: { lock?: (keys?: string[]) => Promise<void>; unlock?: () => void } }
 
 // Fullscreen for the whole page (Safari still only has the prefixed version).
-export const fullscreenEl = () => document.fullscreenElement || (document as WebkitDocument).webkitFullscreenElement || null
+const fullscreenEl = () => document.fullscreenElement || (document as WebkitDocument).webkitFullscreenElement || null
 export const canFullscreen = () => {
   const el: WebkitElement = document.documentElement
   return !!(el.requestFullscreen || el.webkitRequestFullscreen)
@@ -30,7 +30,7 @@ function notchHeight() {
   return extra > screen.height * 0.025 && extra < screen.height * 0.055 ? Math.round(extra) : 0
 }
 
-export function useFullscreen() {
+function useFullscreen() {
   const [on, setOn] = useState(() => !!fullscreenEl())
   useEffect(() => {
     const change = () => {

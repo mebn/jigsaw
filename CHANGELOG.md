@@ -8,6 +8,16 @@
 - **The picture as a map**: press `Q` to see the jigsaw's picture over the table, with the table greyed out and blurred behind it. Scroll or pinch to zoom, drag to move it around, and pick the pencil (or press `E`) to draw on it in your colour. The drawing is only for you and stays until you clear it. `Ctrl+Z` undoes a line or a clear and `Ctrl+Shift+Z` redoes it (`⌘Z` and `⌘⇧Z` on a Mac), apart from undo on the table, and still works after closing and opening the map again. Press `Q` or `Esc`, or click beside the picture, to close it. It opens again where you left it, zoomed in just as far.
 - The undo and redo buttons and the map button are gone from the bar at the top. Press `Q` to open the map. Undo and redo still work with `Ctrl+Z` and `Ctrl+Shift+Z` (`⌘Z` and `⌘⇧Z` on a Mac).
 - On wide screens the jigsaws page keeps its jigsaws and the bar along the top together in the middle, with at most five columns of jigsaws, instead of spreading them across the whole screen. A section with only a few jigsaws now keeps them side by side in the middle, in order, instead of leaving wide gaps between them.
+- `Esc` now closes one thing at a time, whatever was opened last: a window, a menu, the map, drawing or throwing reactions. With nothing open, it clears your selection, and with nothing selected it opens the settings.
+- In split screen, a tray dragged from the toolbar into any view now lands where you drop it, not off to one side.
+- The crosshair stays while drawing after you move the table with the right button.
+- If the picture or the timelapse to share can't be made, the share window now says so instead of spinning forever, and a timelapse that fails no longer claims the jigsaw was started before timelapses were recorded.
+- The time you spend on a jigsaw, your reactions and your replies now count only for the player who is really logged in, and new notes, images and trays are always yours.
+- `H` in the settings switches to How to play again while drawing or throwing reactions.
+- Dragging a note or tray from the toolbar onto the players in the top right no longer drops it on the table underneath.
+- If the jigsaws can't be loaded, the jigsaws page says so, with a button to try again, instead of saying there are none. If making a jigsaw fails, it now says so.
+- The names of players who only made trays, replied to notes or reacted to them now show as soon as a jigsaw opens.
+- When a jigsaw is deleted, everyone in it is taken back to the jigsaws page right away.
 
 ## 10 November 2026
 

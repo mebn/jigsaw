@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { onTable } from '../lib/overlays.ts'
 
 // A toolbar button that makes something on the table: drag it onto the board to put it there, or
 // click to put it in the middle. onPlace(clientX, clientY) gets null for the middle. ghost is the
@@ -31,8 +32,7 @@ export default function PlaceButton({ onPlace, ghost, label, shortcut, title, ch
       window.removeEventListener('pointerup', up)
       setAt(null)
       if (!moved) return onPlace(null, null)
-      const el = document.elementFromPoint(ev.clientX, ev.clientY)
-      if (el && !el.closest('.float')) onPlace(ev.clientX, ev.clientY)
+      if (onTable(ev.clientX, ev.clientY)) onPlace(ev.clientX, ev.clientY)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)

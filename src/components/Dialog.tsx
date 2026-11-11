@@ -1,12 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Back, Close } from './icons.tsx'
+import { isTyping, useOverlay } from '../lib/overlays.ts'
 
 // Every window over the board: a title with actions (buttons) and close at the top, an optional
 // bar under it (for tabs and buttons that stay put), and a body that scrolls. Rendered on the
 // body, so a panel it opens from can't contain it. Without onClose it can't be dismissed.
 // Escape closes it, except in a text field with keepTyping (so a half filled form isn't lost).
+// onKey gets the keys pressed while it is on top, outside text fields.
 interface DialogProps {
   title?: string
   label?: string
@@ -19,6 +21,7 @@ interface DialogProps {
   closing?: boolean
   closeButton?: boolean
   keepTyping?: boolean
+  onKey?: (e: KeyboardEvent) => void
   actions?: ReactNode
   bar?: ReactNode
   footer?: ReactNode
@@ -37,21 +40,22 @@ export default function Dialog({
   closing,
   closeButton = true,
   keepTyping = false,
+  onKey,
   actions,
   bar,
   footer,
   children,
 }: DialogProps) {
+  const onTop = useOverlay(!closing, () => onClose?.(), { modal: true, keepTyping })
+  const key = useRef(onKey)
+  key.current = onKey
+  const hasKeys = !!onKey
   useEffect(() => {
-    if (!onClose || closing) return
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      if (keepTyping && (e.target as Element | null)?.closest?.('input, textarea')) return
-      onClose()
-    }
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [onClose, closing, keepTyping])
+    if (!hasKeys || closing) return
+    const down = (e: KeyboardEvent) => onTop() && !isTyping(e) && key.current?.(e)
+    window.addEventListener('keydown', down)
+    return () => window.removeEventListener('keydown', down)
+  }, [hasKeys, closing, onTop])
 
   return createPortal(
     <div
@@ -83,32 +87,5 @@ export default function Dialog({
       </div>
     </div>,
     document.body,
-  )
-}
-
-// Tabs in a row, one of them on. tabs is a list of { key, title, hint }.
-export interface Tab<K extends string = string> {
-  key: K
-  title: string
-  hint?: string
-}
-
-export function Tabs<K extends string>({ tabs, value, onChange, label }: { tabs: readonly Tab<K>[]; value: K; onChange: (key: K) => void; label?: string }) {
-  return (
-    <div className="tabs" role="tablist" aria-label={label}>
-      {tabs.map((t) => (
-        <button
-          key={t.key}
-          type="button"
-          className={`tab${t.key === value ? ' on' : ''}`}
-          role="tab"
-          aria-selected={t.key === value}
-          onClick={() => onChange(t.key)}
-          title={t.hint || t.title}
-        >
-          {t.title}
-        </button>
-      ))}
-    </div>
   )
 }

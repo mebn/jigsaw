@@ -1,19 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, RefObject } from 'react'
-import { cursorColor } from '../lib/engine.ts'
-import { formatTime, timeAgo } from '../lib/time.ts'
+import { cursorColor } from '../lib/colors.ts'
+import { formatTime, plural, timeAgo } from '../lib/format.ts'
 import { useLinger } from '../lib/linger.ts'
 import { Clock, Crown, Piece, Users } from './icons.tsx'
 import PlayerDialog from './PlayerDialog.tsx'
-import type { Times } from './Timers.tsx'
+import { useMenu } from '../lib/overlays.ts'
+import type { Times } from '../lib/times.ts'
 
 // At most this many circles in the header; everyone is in the menu behind the players button.
 const SHOWN = 5
 // How long the pointer rests on a circle before its card shows (ms).
 const HOVER_MS = 250
 
-// Everyone who has done something in this jigsaw, most pieces connected first, then most time.
-// Players are kept apart by id, since two of them can share a name.
 // A player with what they've done in this jigsaw.
 export interface RankedPlayer {
   id: string
@@ -25,7 +24,6 @@ export interface RankedPlayer {
 // How many pieces a player connected, by player id (see Engine.contributors()).
 export type Stats = Map<string, { id: string; pieces: number }>
 
-// Looks up a player's name by id.
 export type NameOf = (id: string | null | undefined) => string
 
 interface RankInput {
@@ -34,6 +32,8 @@ interface RankInput {
   nameOf: NameOf
 }
 
+// Everyone who has done something in this jigsaw, most pieces connected first, then most time.
+// Players are kept apart by id, since two of them can share a name.
 export function rankPlayers({ stats, times, nameOf }: RankInput) {
   const map = new Map<string, RankedPlayer>()
   const get = (id: string) => {
@@ -51,7 +51,6 @@ export function rankPlayers({ stats, times, nameOf }: RankInput) {
   )
 }
 
-const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`
 
 // A player's circle: the first two letters of their name on their cursor colour, ringed while
 // they're here. With you, it carries a You tag.
@@ -91,7 +90,7 @@ interface HoverCardProps {
   seen: number | undefined
   owner: string | null | undefined
   me: string | null | undefined
-  at?: { top: number; left: number }
+  at?: { top: number; right: number }
 }
 
 function HoverCard({ p, here, seen, owner, me, at }: HoverCardProps) {
@@ -176,18 +175,7 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
   const list = [...here, ...away]
   const shown = here.slice(0, SHOWN)
 
-  // Close on a press anywhere else, or Escape.
-  useEffect(() => {
-    if (!open) return
-    const away = (e: PointerEvent) => !wrap.current?.contains(e.target as Node) && setOpen(false)
-    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
-    window.addEventListener('pointerdown', away, true)
-    window.addEventListener('keydown', key)
-    return () => {
-      window.removeEventListener('pointerdown', away, true)
-      window.removeEventListener('keydown', key)
-    }
-  }, [open])
+  useMenu(open, () => setOpen(false), [wrap], { closeOnScroll: false })
   useEffect(() => () => clearTimeout(timer.current), [])
 
   const show = (id: string, now = false) => {
@@ -201,12 +189,12 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
   }
   // The card beside a row of the players list, which scrolls, so it's placed in the window: to the
   // left of the list, level with the row.
-  const [rowHover, setRowHover] = useState<{ p: RankedPlayer; at: { top: number; left: number } } | null>(null)
+  const [rowHover, setRowHover] = useState<{ p: RankedPlayer; at: { top: number; right: number } } | null>(null)
   const showRow = (p: RankedPlayer, row: HTMLElement) => {
     clearTimeout(timer.current)
     const r = row.getBoundingClientRect()
     const menu = row.closest('.players-menu')!.getBoundingClientRect()
-    const at = { top: Math.max(8, r.top - 6), left: menu.left - 12 - 220 }
+    const at = { top: Math.max(8, r.top - 6), right: window.innerWidth - menu.left + 12 }
     if (rowHover) setRowHover({ p, at })
     else timer.current = setTimeout(() => setRowHover({ p, at }), HOVER_MS)
   }
@@ -247,19 +235,17 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
           </li>
         ))}
       </ul>
-      {list.length > 0 && (
-        <button
-          className={`icon-btn more-btn${open ? ' on' : ''}`}
-          onClick={() => setOpen((o) => !o)}
-          aria-label="All players"
-          aria-expanded={open}
-          aria-keyshortcuts="P"
-          data-tip={`All players (${list.length})`}
-          data-key="P"
-        >
-          <Users />
-        </button>
-      )}
+      <button
+        className={`icon-btn more-btn${open ? ' on' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-label="All players"
+        aria-expanded={open}
+        aria-keyshortcuts="P"
+        data-tip={`All players (${list.length})`}
+        data-key="P"
+      >
+        <Users />
+      </button>
       {menuShown && (
         <div className={`players-menu${menuClosing ? ' closing' : ''}`}>
           <p className="players-total" title="Time spent by all players together">

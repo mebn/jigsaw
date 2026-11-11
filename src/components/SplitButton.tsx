@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useMenu } from '../lib/overlays.ts'
 import { Chevron, Split, Split3, Split4 } from './icons.tsx'
 
 // How a split screen is cut up: in halves, a half and two quarters, or quarters (see the engine).
@@ -40,28 +41,19 @@ export default function SplitButton({ on, panes, onToggle, onPanes }: SplitButto
     })
   }, [open])
 
+  useMenu(open, () => setOpen(false), [menu, group])
+  // Focus goes to the chosen layout once the menu is in place (hidden until then), and back to the
+  // button as it closes.
+  const placed = !!pos
   useEffect(() => {
-    if (!open) return
-    const close = () => setOpen(false)
-    const away = (e: PointerEvent) => !menu.current?.contains(e.target as Node) && !group.current?.contains(e.target as Node) && close()
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopImmediatePropagation()
-      close()
-      btn.current?.focus()
-    }
-    window.addEventListener('pointerdown', away, true)
-    window.addEventListener('keydown', key, true)
-    window.addEventListener('wheel', close, true)
-    window.addEventListener('blur', close)
-    requestAnimationFrame(() => menu.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus())
+    if (!open || !placed) return
+    const m = menu.current
+    m?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus()
+    const b = btn.current
     return () => {
-      window.removeEventListener('pointerdown', away, true)
-      window.removeEventListener('keydown', key, true)
-      window.removeEventListener('wheel', close, true)
-      window.removeEventListener('blur', close)
+      if (m?.contains(document.activeElement)) b?.focus()
     }
-  }, [open])
+  }, [open, placed])
 
   return (
     <span

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { store } from '../App.tsx'
+import { isPlainKey, isTyping, useOverlay } from '../lib/overlays.ts'
+import { store } from '../lib/storage.ts'
 import { Close, Hand, Pencil, Trash } from './icons.tsx'
 
 // The jigsaw's picture over the table, like a map: Q opens and closes it (see Room). It belongs to
 // this player only. Wheel or pinch zooms, dragging pans, and with the pencil on dragging draws on the
 // picture instead. Drawings are kept per jigsaw in this browser, until cleared.
 //
-// It is a .modal-bg, so the table, settings and the other shortcuts leave the keyboard to it.
+// It is a window over the page (see overlays.ts), so the table and its shortcuts leave the keyboard to it.
 // Its own keys: Q and Escape close, E switches between panning and drawing, C fits the picture to the
 // screen, Cmd/Ctrl+Z undoes a line or a clear, Cmd/Ctrl+Shift+Z (or Ctrl+Y) redoes it, with the
 // map's own undo queue (see histories).
@@ -64,12 +65,8 @@ interface Spot {
 }
 const spotKey = (roomId: string) => `mapView:${roomId}`
 function loadSpot(roomId: string): Spot | null {
-  try {
-    const v = JSON.parse(store.get(spotKey(roomId)) || 'null') as Partial<Spot> | null
-    return v && [v.cx, v.cy, v.z].every((n) => typeof n === 'number' && isFinite(n)) && v.z! > 0 ? (v as Spot) : null
-  } catch {
-    return null
-  }
+  const v = store.json<Partial<Spot>>(spotKey(roomId))
+  return v && [v.cx, v.cy, v.z].every((n) => typeof n === 'number' && isFinite(n)) && v.z! > 0 ? (v as Spot) : null
 }
 const historyOf = (roomId: string) => {
   let h = histories.get(roomId)
@@ -78,12 +75,8 @@ const historyOf = (roomId: string) => {
 }
 
 function loadLines(roomId: string): Line[] {
-  try {
-    const v: unknown = JSON.parse(store.get(key(roomId)) || '[]')
-    return Array.isArray(v) ? (v as Line[]).filter((l) => Array.isArray(l?.pts) && typeof l.w === 'number') : []
-  } catch {
-    return []
-  }
+  const v = store.json<unknown>(key(roomId))
+  return Array.isArray(v) ? (v as Line[]).filter((l) => Array.isArray(l?.pts) && typeof l.w === 'number') : []
 }
 
 const path = (pts: number[]) => {
@@ -128,7 +121,7 @@ export default function PictureMap({ roomId, src, color, closing, onClose }: Pic
   }
 
   useEffect(() => {
-    store.set(key(roomId), lines.length ? JSON.stringify(lines) : null)
+    store.setJson(key(roomId), lines.length ? lines : null)
   }, [roomId, lines])
 
   // The view that fits the whole picture on the screen.
@@ -164,7 +157,7 @@ export default function PictureMap({ roomId, src, color, closing, onClose }: Pic
       cy: Math.round((el.clientHeight / 2 - view.y) / view.s),
       z: Math.round((view.s / fv.s) * 1000) / 1000,
     }
-    store.set(spotKey(roomId), JSON.stringify(spot))
+    store.setJson(spotKey(roomId), spot)
   }, [view, fitView, roomId])
 
   // Zooms by f around a point on the screen (relative to the overlay), within limits.
@@ -181,18 +174,19 @@ export default function PictureMap({ roomId, src, color, closing, onClose }: Pic
     [fitView],
   )
 
+  useOverlay(!closing, onClose, { modal: true })
   useEffect(() => {
     if (closing) return
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as Element | null)?.closest?.('input, textarea, [contenteditable]')) return
+      if (isTyping(e)) return
       const k = e.key.toLowerCase()
       if ((e.metaKey || e.ctrlKey) && !e.altKey && (k === 'z' || k === 'y')) {
         e.preventDefault()
         step(k === 'z' && !e.shiftKey)
         return
       }
-      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return
-      if (k === 'q' || e.key === 'Escape') onClose()
+      if (!isPlainKey(e)) return
+      if (k === 'q') onClose()
       else if (k === 'e') setDraw((d) => !d)
       else if (k === 'c') fit()
       else if (k === '+' || k === '=' || k === '-' || k === '_') {

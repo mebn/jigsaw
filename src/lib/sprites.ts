@@ -23,13 +23,13 @@ import { longPaths, sideCodes } from './geometry.ts'
 import type { Piece, PuzzleGeometry } from './geometry.ts'
 
 // What a piece's shape is made from (see shapeOutline()).
-export interface ShapeOutline {
+interface ShapeOutline {
   pts: Float64Array
   codes: Uint8Array
 }
 
 // One mip level of a piece's shape as pixels, two bytes each (see spriteShape()), w by h.
-export interface ShapeLevel {
+interface ShapeLevel {
   w: number
   h: number
   data: Uint8Array
@@ -38,7 +38,7 @@ export interface ShapeLevel {
 export type ShapePixels = ShapeLevel[]
 
 // A 2D context to work out shapes on: a canvas's on the main thread, an offscreen one in a worker.
-export type ShapeContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+type ShapeContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
 // What sprites.worker.ts is sent: a job's number, the sprite size [w, h] in pixels, sprite pixels
 // per world unit, how many mip levels (see mipLevels()) and the pieces to work out.
@@ -72,7 +72,7 @@ export function shapeOutline(p: Piece, geo: Pick<PuzzleGeometry, 'S'>): ShapeOut
   const long = longPaths(p, geo.S * GROW)
   return {
     pts: long ? Float64Array.from(long.pts) : Float64Array.from(p.outline),
-    codes: Uint8Array.from(long ? long.code : sideCodes(p), (c) => c ?? 4),
+    codes: Uint8Array.from(long ? long.code : sideCodes(p)),
   }
 }
 

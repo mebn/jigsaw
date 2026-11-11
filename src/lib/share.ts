@@ -1,10 +1,11 @@
-import { formatTime } from './time.ts'
+import { formatTime } from './format.ts'
+import { CLOCK_PATH, PIECE_PATH } from '../components/icons.tsx'
 
 // A picture to draw from: an image element or a canvas.
 export type Picture = (HTMLImageElement | HTMLCanvasElement) & { naturalWidth?: number; naturalHeight?: number }
 
 // A player on the podium: their name, how many pieces they connected and how long they played.
-export interface SharePlayer {
+interface SharePlayer {
   name: string
   pieces: number
   seconds: number
@@ -23,26 +24,30 @@ const PODIUM_H = 0.5
 // The picture behind the podium is blurred and dimmed like the page is behind it in the game.
 const BLUR = 4
 const DIM = 'rgba(0, 0, 0, 0.35)'
-const GOLD = '#f5c542'
-const SILVER = '#cfd6de'
-const BRONZE = '#dd9358'
-const INK = '#1c1a0e'
 const FONT = 'ui-sans-serif, system-ui, -apple-system, sans-serif'
 
-// Stands in the order they stand, left to right: second, first, third. Sizes as in the game.
-const STANDS = [
-  { place: 1, color: SILVER, height: 170 },
-  { place: 0, color: GOLD, height: 220 },
-  { place: 2, color: BRONZE, height: 135 },
-]
-const STAND_W = 150
+// The places on the podium in the order they stand, left to right: second, first, third.
+export const PODIUM_ORDER = [1, 0, 2]
+
+// The podium's colours and sizes, as the page has them (see --gold and the rest in styles.css).
+function podiumLook() {
+  const css = getComputedStyle(document.documentElement)
+  const v = (name: string) => css.getPropertyValue(name).trim()
+  const px = (name: string) => parseFloat(v(name))
+  const colors = [v('--gold'), v('--silver'), v('--bronze')]
+  return {
+    ink: v('--podium-ink'),
+    width: px('--stand-w'),
+    stands: PODIUM_ORDER.map((place) => ({ place, color: colors[place], height: px(`--stand-${place + 1}`) })),
+  }
+}
 const STAND_GAP = 10
 const NAME_H = 40
 const NAME_GAP = 10
 
-// The two little icons beside the numbers, as in icons.tsx.
-const PIECE = new Path2D('M5 5h4.5a2.5 2.5 0 1 1 5 0H19v4.5a2.5 2.5 0 1 1 0 5V19h-4.5a2.5 2.5 0 1 0-5 0H5v-4.5a2.5 2.5 0 1 0 0-5V5Z')
-const CLOCK = new Path2D('M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17ZM12 7.5V12l3 2')
+// The two little icons beside the numbers.
+const PIECE = new Path2D(PIECE_PATH)
+const CLOCK = new Path2D(CLOCK_PATH)
 
 const round = (ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number | number[]) => {
   ctx.beginPath()
@@ -76,7 +81,7 @@ const stat = (ctx: CanvasRenderingContext2D, icon: Path2D, text: string, x: numb
   ctx.lineWidth = 1.6
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  ctx.strokeStyle = INK
+  ctx.strokeStyle = ctx.fillStyle
   ctx.stroke(icon)
   ctx.restore()
   ctx.textAlign = 'left'
@@ -137,11 +142,13 @@ export function renderShare({ image, ranked }: { image: Picture; ranked: SharePl
   drawAddress(ctx, px + WIDTH - 14, py + ph - 14)
 
   // The podium in the middle, smaller if the picture is short.
-  const stands = STANDS.filter((st) => top[st.place])
+  const look = podiumLook()
+  const stands = look.stands.filter((st) => top[st.place])
   if (!stands.length) return toBlob(canvas)
-  const K = Math.min(K_MAX, (ph * PODIUM_H) / (220 + NAME_GAP + NAME_H), (WIDTH * 0.8) / (stands.length * STAND_W + (stands.length - 1) * STAND_GAP))
-  const podiumH = (220 + NAME_GAP + NAME_H) * K
-  const sw = STAND_W * K
+  const tallest = Math.max(...look.stands.map((st) => st.height))
+  const K = Math.min(K_MAX, (ph * PODIUM_H) / (tallest + NAME_GAP + NAME_H), (WIDTH * 0.8) / (stands.length * look.width + (stands.length - 1) * STAND_GAP))
+  const podiumH = (tallest + NAME_GAP + NAME_H) * K
+  const sw = look.width * K
   const gap = STAND_GAP * K
   const total = stands.length * sw + (stands.length - 1) * gap
   const base = py + ph / 2 + podiumH / 2
@@ -154,7 +161,7 @@ export function renderShare({ image, ranked }: { image: Picture; ranked: SharePl
     const bw = 5 * K
     round(ctx, x + bw, y + bw, sw - 2 * bw, h - 2 * bw, [13 * K, 13 * K, 3 * K, 3 * K])
     sticker(ctx, bw, st.color)
-    ctx.fillStyle = INK
+    ctx.fillStyle = look.ink
     const size = (st.place === 0 ? 60 : 44) * K
     ctx.font = `800 ${size}px ${FONT}`
     const rankY = y + bw + 12 * K + size / 2
@@ -174,7 +181,7 @@ export function renderShare({ image, ranked }: { image: Picture; ranked: SharePl
     const nb = 4 * K
     const ny = y - NAME_GAP * K - nh
     round(ctx, x + (sw - nw) / 2 + nb, ny + nb, nw - 2 * nb, nh - 2 * nb, nh / 2)
-    sticker(ctx, nb, INK)
+    sticker(ctx, nb, look.ink)
     ctx.fillStyle = '#fff'
     ctx.fillText(name, x + sw / 2, ny + nh / 2 + 1)
   })
@@ -186,19 +193,23 @@ const toBlob = (canvas: HTMLCanvasElement) => new Promise<Blob>((resolve, reject
 // Puts the picture on the clipboard. Where the browser won't allow that, it is saved as a file.
 // Returns 'copied' or 'saved'.
 // It takes the picture as a promise, so the copy still counts as the click that asked for it.
-export async function shareImage(promise: Promise<Blob>, name = 'jigsaw'): Promise<'copied' | 'saved'> {
+export async function shareImage(promise: Promise<Blob>): Promise<'copied' | 'saved'> {
   try {
     if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') throw new Error('No clipboard')
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': promise })])
     return 'copied'
   } catch {
-    const blob = await promise
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${name.replace(/[^\w-]+/g, '-').toLowerCase() || 'jigsaw'}.png`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    saveFile(await promise, 'jigsaw.png')
     return 'saved'
   }
+}
+
+export function saveFile(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  // Once the download has started with it.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
 }

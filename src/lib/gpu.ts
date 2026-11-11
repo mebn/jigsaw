@@ -18,7 +18,7 @@ import type { ShapePixels } from './sprites.ts'
 
 // The atlases' layout (see Gpu): how many sprites (cells), their size in pixels (spw, sph), and how
 // many mip levels each comes with (the sprite and its halved copies).
-export interface GpuAtlasLayout {
+interface GpuAtlasLayout {
   cells: number
   spw: number
   sph: number
@@ -27,12 +27,12 @@ export interface GpuAtlasLayout {
 // A colour, [r, g, b, a], each 0 to 1, not premultiplied.
 export type Rgba = readonly number[]
 // A run of piece instances, [first, count].
-export type GpuRange = readonly number[]
+type GpuRange = readonly number[]
 // A box on the screen, [x0, y0, x1, y1] in device pixels.
-export type ScreenBox = readonly number[]
+type ScreenBox = readonly number[]
 // Instances for one kind of thing: count of them, each PIECE_FLOATS, TRAY_FLOATS or REF_FLOATS
 // floats in data.
-export interface GpuInstances {
+interface GpuInstances {
   data: Float32Array
   count: number
 }
@@ -44,7 +44,7 @@ export interface GpuOutline {
   over?: boolean
 }
 // What frame() draws (see there).
-export interface GpuFrame {
+interface GpuFrame {
   W: number
   H: number
   cam: readonly number[]
@@ -91,11 +91,79 @@ interface ExtraMask {
   group: GPUBindGroup
 }
 
-// Floats per instance: pieces [m00 m01 m10 m11 x y cell -], trays [rect fill stroke (radius width - -)],
-// images [rect border (width opacity - -)].
-export const PIECE_FLOATS = 8
-export const TRAY_FLOATS = 16
-export const REF_FLOATS = 16
+// Floats per instance: pieces [m00 m01 m10 m11 x y cell -], trays [rect fill stroke (radius width
+// lift -)], images [rect border (width opacity - -) part]. The instance classes below write them.
+const PIECE_FLOATS = 8
+const TRAY_FLOATS = 16
+const REF_FLOATS = 16
+
+// A colour premultiplied by its alpha, and by alpha on top.
+export const premul = ([r, g, b, a]: Rgba, alpha = 1) => [r * a * alpha, g * a * alpha, b * a * alpha, a * alpha]
+
+// The instances of one kind of thing for a frame, written one after another in the layout its
+// shader reads. Colours given to them are premultiplied (see premul()).
+class Instances implements GpuInstances {
+  data = new Float32Array(0)
+  u32 = new Uint32Array(0)
+  count = 0
+  private floats: number
+  constructor(floats: number) {
+    this.floats = floats
+  }
+  // Starts over, with room for n of them (more can still be added).
+  reset(n: number) {
+    this.count = 0
+    this.room(n)
+  }
+  private room(n: number) {
+    if (this.data.length >= n * this.floats) return
+    const data = new Float32Array(Math.max(n * this.floats, this.data.length * 2))
+    data.set(this.data)
+    this.data = data
+    this.u32 = new Uint32Array(data.buffer)
+  }
+  protected next() {
+    this.room(this.count + 1)
+    return this.count++ * this.floats
+  }
+}
+
+export class PieceInstances extends Instances {
+  constructor() {
+    super(PIECE_FLOATS)
+  }
+  // The piece in atlas cell, turned a (radians) and scaled z (device px per sprite unit), its middle
+  // at (x, y) in device px.
+  put(cell: number, a: number, z: number, x: number, y: number) {
+    const k = this.next()
+    const c = Math.cos(a) * z
+    const s = Math.sin(a) * z
+    this.data.set([c, s, -s, c, x, y], k)
+    this.u32[k + 6] = cell
+  }
+}
+
+export class TrayInstances extends Instances {
+  constructor() {
+    super(TRAY_FLOATS)
+  }
+  // A tray's box (device px) with rounded corners, its fill and its border, and how far it's lifted
+  // (0 to 1, how strong its shadow is).
+  put(rect: readonly number[], fill: readonly number[], stroke: readonly number[], radius: number, width: number, lift: number) {
+    this.data.set([...rect, ...fill, ...stroke, radius, width, lift, 0], this.next())
+  }
+}
+
+export class RefInstances extends Instances {
+  constructor() {
+    super(REF_FLOATS)
+  }
+  // An image's box (device px), its border, how see-through it is and the part of the picture that
+  // shows ([x, y, w, h] as fractions of it).
+  put(rect: readonly number[], border: readonly number[], width: number, opacity: number, part: readonly number[]) {
+    this.data.set([...rect, ...border, width, opacity, 0, 0, ...part], this.next())
+  }
+}
 
 // The shadow mask's resolution, as a fraction of the screen's.
 const SHADOW_K = 3
@@ -293,9 +361,6 @@ fn cover(d: f32, grow: f32) -> f32 {
 @fragment fn fsMask(i: O) -> @location(0) vec4f {
   return vec4f(cover(inside(i, textureSample(shapes, samp, i.uv, i.layer).r), 0.0));
 }
-@fragment fn fsShadow(i: O) -> @location(0) vec4f {
-  return vec4f(cover(inside(i, textureSample(shapes, samp, i.uv, i.layer).r), 0.0));
-}
 `
 
 const POST = /* wgsl */ `
@@ -416,8 +481,6 @@ const HALVE = /* wgsl */ `
           textureLoad(src, min(q + vec2i(0, 1), s), 0) + textureLoad(src, min(q + 1, s), 0)) * 0.25;
 }
 `
-
-const premul = ([r, g, b, a]: Rgba) => [r * a, g * a, b * a, a]
 
 // canvas holds the table, top the trays and everything above the notes (see frame()).
 export async function createGpu(canvas: HTMLCanvasElement, top: HTMLCanvasElement, atlas: GpuAtlasLayout): Promise<Gpu> {
@@ -621,7 +684,7 @@ class Gpu {
       pipe(mPiece, 'vs', 'fs', pieceBuffers, screen, [lAtlas]),
       pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.RED }, [lAtlas]),
       pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.GREEN }, [lAtlas]),
-      pipe(mPiece, 'vs', 'fsShadow', pieceBuffers, { format: 'r8unorm', blend: over }, [lAtlas]),
+      pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'r8unorm', blend: over }, [lAtlas]),
       pipe(mPost, 'vsFull', 'fsBlur', [], { format: 'r8unorm' }, [lPost]),
       pipe(mPost, 'vsFull', 'fsShadow', [], screen, [lPost]),
       pipe(mPost, 'vsFull', 'fsOutline', [], screen, [lPost]),

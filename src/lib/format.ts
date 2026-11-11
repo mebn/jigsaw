@@ -23,3 +23,6 @@ export function timeAgo(ms: number): string {
   const [unit, size] = STEPS.find(([, size]) => s >= size)!
   return ago.format(-Math.floor(s / size), unit)
 }
+
+// "1 piece", "3 pieces".
+export const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`

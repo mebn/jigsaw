@@ -1,15 +1,17 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useOverlay } from '../lib/overlays.ts'
+import { trayName, trayOrder } from '../lib/engine.ts'
 import type { Engine } from '../lib/engine.ts'
 import type { Box } from '../lib/geometry.ts'
-import { timeAgo } from '../lib/time.ts'
+import { plural, timeAgo } from '../lib/format.ts'
 import type { NameOf } from './Players.tsx'
 import TextField from './TextField.tsx'
 import { Search as SearchIcon } from './icons.tsx'
 
 // A note or a tray with a name: its text, what's said under it, the text to search in, the box to fly
-// to, and how to select it.
+// to.
 interface Result {
   kind: 'tray' | 'note'
   key: string
@@ -19,7 +21,7 @@ interface Result {
   box: Box
   // How much of the view the box fills when flown to: a note, being small, less, so what's around it shows too.
   fill: number
-  select: () => void
+  id: string
 }
 
 // The text with each place it has the query in it marked.
@@ -66,27 +68,21 @@ export default function Search({ engine, nameOf, closing, onClose }: SearchProps
           hay: `${text}\n${by}\nnote`.toLowerCase(),
           box: { x0: n.x, y0: n.y, x1: n.x + n.w, y1: n.y + n.h },
           fill: 0.3,
-          select: () => {
-            engine.selectTray(null)
-            engine.setSelection(new Set(), new Set(), new Set([n.id]))
-          },
+          id: n.id,
         }
       })
     const trays: Result[] = engine.trays
-      .filter((t) => t.name?.trim())
-      .sort((a, b) => (a.num || 99) - (b.num || 99) || a.name!.localeCompare(b.name!))
+      .filter(trayName)
+      .sort(trayOrder)
       .map((t) => ({
         kind: 'tray' as const,
         key: `t:${t.id}`,
-        text: t.name!.trim(),
-        meta: [t.num ? `Tray ${t.num}` : 'Tray', `${t.pieces.length} ${t.pieces.length === 1 ? 'piece' : 'pieces'}`],
+        text: trayName(t),
+        meta: [t.num ? `Tray ${t.num}` : 'Tray', plural(t.pieces.length, 'piece')],
         hay: `${t.name}\ntray ${t.num || ''}`.toLowerCase(),
         box: { x0: t.x, y0: t.y, x1: t.x + t.w, y1: t.y + t.h },
         fill: 0.75,
-        select: () => {
-          engine.setSelection(new Set())
-          engine.selectTray(t.id)
-        },
+        id: t.id,
       }))
     return [...trays, ...notes]
   }, [engine, nameOf])
@@ -104,11 +100,12 @@ export default function Search({ engine, nameOf, closing, onClose }: SearchProps
     listRef.current?.querySelector(`[data-i="${active}"]`)?.scrollIntoView({ block: 'nearest' })
   }, [active, results])
 
+  useOverlay(!closing, onClose, { modal: true })
+
   const go = (r: Result | undefined) => {
     if (!r) return
     onClose()
-    engine.selectRef(null)
-    r.select()
+    engine.selectOnly(r.kind, r.id)
     engine.flyTo(r.box, r.fill)
   }
 
@@ -117,7 +114,6 @@ export default function Search({ engine, nameOf, closing, onClose }: SearchProps
     if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) setActive((a) => (n ? (a + 1) % n : 0))
     else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) setActive((a) => (n ? (a - 1 + n) % n : 0))
     else if (e.key === 'Enter') go(results[active])
-    else if (e.key === 'Escape') onClose()
     else return
     e.preventDefault()
   }

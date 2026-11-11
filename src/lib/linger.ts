@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 
 // How long a closing dialog stays up to animate out (ms); matches the CSS.
-export const CLOSE_MS = 160
+const CLOSE_MS = 160
 
 // Keeps showing the last value for a moment after it goes falsy, so a dialog can animate out.
 // Returns [what to show, whether it is closing].

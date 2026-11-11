@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { useOverlay } from '../lib/overlays.ts'
 
 // The app's own confirmation dialog, used instead of the browser's confirm().
 interface ConfirmProps {
@@ -14,16 +14,7 @@ interface ConfirmProps {
 }
 
 export default function Confirm({ title, text, children, action, danger = false, onConfirm, onCancel }: ConfirmProps) {
-  // Escape cancels only this dialog, not a window underneath it.
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopImmediatePropagation()
-      onCancel()
-    }
-    window.addEventListener('keydown', key, true)
-    return () => window.removeEventListener('keydown', key, true)
-  }, [onCancel])
+  useOverlay(true, onCancel, { modal: true })
 
   return createPortal(
     <div className="modal-bg" onPointerDown={(e) => e.target === e.currentTarget && onCancel()}>

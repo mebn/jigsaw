@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api.ts'
-import { useApp } from '../App.tsx'
-import { Check, Copy, Lock } from './icons.tsx'
+import { useApp } from '../lib/app.ts'
+import { paths } from '../lib/router.ts'
+import { Lock } from './icons.tsx'
 import InviteList from './Invite.tsx'
 import TextField from './TextField.tsx'
+import CopyButton from './CopyButton.tsx'
+import { useOverlay } from '../lib/overlays.ts'
 
 // Explains that this jigsaw is private and gives its link, with a button that copies it.
 export default function PrivateRoom({ id, onClose }: { id: string; onClose: () => void }) {
-  const link = `${location.origin}/r/${id}`
-  const [copied, setCopied] = useState(false)
+  const link = `${location.origin}${paths.room(id)}`
   const { player } = useApp()
   const [invited, setInvited] = useState(() => new Set<string>())
   const [sending, setSending] = useState(false)
@@ -32,29 +34,7 @@ export default function PrivateRoom({ id, onClose }: { id: string; onClose: () =
     }
   }
 
-  useEffect(() => {
-    if (!copied) return
-    const t = setTimeout(() => setCopied(false), 1500)
-    return () => clearTimeout(t)
-  }, [copied])
-
-  // Escape closes only this dialog, not a window underneath it.
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopImmediatePropagation()
-      onClose()
-    }
-    window.addEventListener('keydown', key, true)
-    return () => window.removeEventListener('keydown', key, true)
-  }, [onClose])
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link)
-      setCopied(true)
-    } catch {}
-  }
+  useOverlay(true, onClose, { modal: true })
 
   return createPortal(
     <div className="modal-bg" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -73,15 +53,7 @@ export default function PrivateRoom({ id, onClose }: { id: string; onClose: () =
             onFocus={(e) => e.target.select()}
             aria-label="Link to this jigsaw"
           />
-          <button
-            type="button"
-            className={`icon-btn copy-btn${copied ? ' on' : ''}`}
-            onClick={copy}
-            aria-label={copied ? 'Copied' : 'Copy link'}
-            title={copied ? 'Copied' : 'Copy link'}
-          >
-            {copied ? <Check /> : <Copy />}
-          </button>
+          <CopyButton text={link} label="Copy link" />
         </div>
         <section className="field">
           <h2 className="label">Invite players</h2>

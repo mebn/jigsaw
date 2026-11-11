@@ -8,11 +8,7 @@ interface TrayButtonProps {
 }
 
 export function TrayButton({ engine }: TrayButtonProps) {
-  const place = (x: number | null, y: number | null) => {
-    if (x == null) return engine.addTray()
-    const r = engine.canvas.getBoundingClientRect()
-    engine.addTray(x - r.left, y! - r.top)
-  }
+  const place = (x: number | null, y: number | null) => engine.addTray(x == null ? undefined : engine.clientToWorld(x, y!))
   return (
     <PlaceButton onPlace={place} ghost="tray-ghost" label="Tray" shortcut="T" title="Drag a tray onto the board">
       <TrayIcon />

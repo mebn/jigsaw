@@ -3,7 +3,8 @@ import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../lib/api.ts'
 import { SHAPES, buildPuzzle, gridFor, outlinePath, samplePiecePath, scatter } from '../lib/geometry.ts'
-import { useApp } from '../App.tsx'
+import { useApp } from '../lib/app.ts'
+import { navigate, paths } from '../lib/router.ts'
 import { Arrow, Close, Lock, Upload } from '../components/icons.tsx'
 
 type Shape = (typeof SHAPES)[number]
@@ -117,7 +118,7 @@ function Preview({ img, cols, rows, shape, seed }: PreviewProps) {
 // top, and under it the settings: how many pieces, their shape and whether it's private. The
 // Create button goes in slot, in the window's header.
 export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
-  const { requireName, currentPlayer, openRoom } = useApp()
+  const { requireName, currentPlayer } = useApp()
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   // Pieces asked for, by slider or typed. The jigsaw gets the closest grid to it.
   const [count, setCount] = useState(() => toCount(44))
@@ -127,6 +128,7 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
   const [hidden, setHidden] = useState(false)
   const [over, setOver] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [seed] = useState(() => (Math.random() * 2 ** 31) | 0)
   const input = useRef<HTMLInputElement>(null)
 
@@ -139,7 +141,6 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
     setImg(image)
   }
 
-  // Back to no image.
   const clear = () => {
     setImg(null)
     input.current!.value = ''
@@ -165,6 +166,7 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
     if (!img || busy) return
     if (!(await requireName())) return
     setBusy(true)
+    setFailed(false)
     try {
       const full = encode(img, maxSide(grid.cols, grid.rows), 0.9)
       const thumb = encode(img, 480, 0.8)
@@ -179,9 +181,10 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
         pieces: scatter(room),
         passphrase: currentPlayer()?.passphrase,
       })
-      openRoom(id)
+      navigate(paths.room(id))
     } catch {
       setBusy(false)
+      setFailed(true)
     }
   }
 
@@ -309,7 +312,7 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
             <span className="toggle-knob" />
           </span>
         </button>
-
+        {failed && <p className="modal-error">Couldn't make the jigsaw, try again.</p>}
       </div>
 
       {slot &&

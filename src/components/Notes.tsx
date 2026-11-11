@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ChangeEvent, CSSProperties, KeyboardEvent, MouseEvent, PointerEvent, RefObject } from 'react'
-import { api } from '../lib/api.ts'
-import type { NoteReaction, NoteReactionKind, NoteReply, NoteRow, RoomMessage } from '../lib/api.ts'
-import { TRAY_COLORS } from '../lib/engine.ts'
+import { newId } from '../lib/api.ts'
+import { useApp } from '../lib/app.ts'
+import type { RoomSocket } from '../lib/api.ts'
+import { trayColor } from '../lib/colors.ts'
+import { LIMITS } from '../../shared/protocol.ts'
+import type { NoteReaction, NoteReactionKind, NoteReply, NoteRow, RoomDetails } from '../../shared/protocol.ts'
 import type { Engine } from '../lib/engine.ts'
 import type { NameOf } from './Players.tsx'
 import { Close, Note as NoteIcon, Reply } from './icons.tsx'
@@ -20,7 +23,7 @@ const ON_TRAY_Y = 0.6
 // Two clicks on a note within this time (ms) start editing it.
 const DOUBLE_MS = 400
 
-// The reactions a note can have, in the order they show under it (the server keeps the same list).
+// How each reaction a note can have shows, in the order they show under it.
 const REACTIONS: { kind: NoteReactionKind; emoji: string; label: string }[] = [
   { kind: 'up', emoji: '👍', label: 'Thumbs up' },
   { kind: 'down', emoji: '👎', label: 'Thumbs down' },
@@ -63,17 +66,11 @@ function fitSize(el: HTMLTextAreaElement, fill = false) {
   el.style.height = `${el.scrollHeight}px`
 }
 
-// Notes from the room's socket: one changed or removed, a reaction or reply, or all of them again
-// after a reconnect.
-export type NoteMessage =
-  | Extract<RoomMessage, { type: 'note' | 'note-delete' | 'note-react' | 'note-reply' | 'note-reply-delete' }>
-  | { type: 'notes-reset'; notes: NoteRow[]; reactions: NoteReaction[]; replies: NoteReply[] }
-
 // Makes a note at (clientX, clientY) in the window, or in the middle of the table for null.
 export type CreateNote = (clientX: number | null, clientY: number | null) => void
 
 // A note's reactions: kind -> the players who gave it.
-export type NoteReactions = Partial<Record<NoteReactionKind, string[]>>
+type NoteReactions = Partial<Record<NoteReactionKind, string[]>>
 
 interface NoteProps {
   note: NoteRow
@@ -95,7 +92,7 @@ interface NoteProps {
   onLive: (note: NoteRow) => void
   onReact: (id: string, kind: NoteReactionKind, on: boolean) => void
   onReply: (note: string, text: string) => void
-  onDeleteReply: (note: string, id: string) => void
+  onDeleteReply: (id: string) => void
 }
 
 function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, reactions, replies, me, nameOf, ensureName, onChange, onSave, onLive, onReact, onReply, onDeleteReply }: NoteProps) {
@@ -181,8 +178,8 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
         const b = (e.target as Element).closest<HTMLElement>('[data-who]')
         const text = b ? b.dataset.who : author
         if (e.buttons || !text) return engine.showTip(null)
-        const r = engine.canvas.getBoundingClientRect()
-        engine.showTip({ text, sx: e.clientX - r.left, sy: e.clientY - r.top })
+        const [sx, sy] = engine.canvasPoint(e.clientX, e.clientY)
+        engine.showTip({ text, sx, sy })
       }}
       onPointerLeave={() => engine.showTip(null)}
       onPointerDown={startMove}
@@ -205,7 +202,7 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
           onSave(note)
         }}
         spellCheck={false}
-        maxLength={2000}
+        maxLength={LIMITS.text}
         aria-label="Note"
       />
       {replies?.map((r) => (
@@ -213,7 +210,7 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
           <b>{nameOf(r.author)}</b>
           <span>{r.text}</span>
           {r.author === me && (
-            <button type="button" className="note-reply-delete" onClick={() => onDeleteReply(note.id, r.id)} aria-label="Delete reply" data-who="Delete your reply">
+            <button type="button" className="note-reply-delete" onClick={() => onDeleteReply(r.id)} aria-label="Delete reply" data-who="Delete your reply">
               <Close />
             </button>
           )}
@@ -232,7 +229,7 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
             onBlur={replyBlur}
             autoFocus
             spellCheck={false}
-            maxLength={2000}
+            maxLength={LIMITS.text}
             aria-label="Reply"
           />
         </div>
@@ -287,24 +284,22 @@ function withoutReply(rs: ReplyMap, id: string): ReplyMap {
   return out
 }
 
+// room: the room as last loaded, again after a reconnect.
 interface NotesLayerProps {
   engine: Engine
-  roomId: string
+  sock: RoomSocket
+  room: Pick<RoomDetails, 'notes' | 'noteReactions' | 'noteReplies'>
   me: string | null | undefined
   nameOf: NameOf
-  initial: NoteRow[]
-  initialReactions: NoteReaction[]
-  initialReplies: NoteReply[]
-  busRef: RefObject<((msg: NoteMessage) => void) | null>
   createRef: RefObject<CreateNote | null>
-  ensureName: () => boolean
-  requireName: () => Promise<string | null>
 }
 
-export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactions, initialReplies, busRef, createRef, ensureName, requireName }: NotesLayerProps) {
-  const [notes, setNotes] = useState(initial)
-  const [reactions, setReactions] = useState(() => gather(initialReactions))
-  const [replies, setReplies] = useState(() => gatherReplies(initialReplies))
+// Memoised: the room re-renders every second while time counts up, and nothing here changes with it.
+export const NotesLayer = memo(function NotesLayer({ engine, sock, room, me, nameOf, createRef }: NotesLayerProps) {
+  const { ensureName, requireName } = useApp()
+  const [notes, setNotes] = useState(room.notes)
+  const [reactions, setReactions] = useState(() => gather(room.noteReactions))
+  const [replies, setReplies] = useState(() => gatherReplies(room.noteReplies))
   const [focusId, setFocusId] = useState<string | null>(null)
   const [selected, setSelected] = useState(() => new Set<string>())
   const [marked, setMarked] = useState(() => new Map<string, string>())
@@ -323,19 +318,25 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
   // A note stuck to a tray has the tray's colour for its border.
   const edgeOf = (n: NoteRow) => {
     const t = n.tray && engine.trays.find((x) => x.id === n.tray)
-    return t ? TRAY_COLORS[t.color] || TRAY_COLORS.gray : undefined
+    return t ? trayColor(t.color) : undefined
   }
+  const saveNote = (note: NoteRow, live = false) => sock.send({ type: 'note', live, note })
 
+  // The notes as the room was loaded, but the text of a note that's being edited right now stays.
   useEffect(() => {
-    engine.resetSeen('note', initial)
-  }, [engine, initial])
+    engine.resetSeen('note', room.notes)
+    setReactions(gather(room.noteReactions))
+    setReplies(gatherReplies(room.noteReplies))
+    const editing = document.activeElement?.closest?.<HTMLElement>('[data-note]')?.dataset.note
+    setNotes((ns) => room.notes.map((n) => (n.id === editing ? { ...n, text: ns.find((o) => o.id === n.id)?.text ?? n.text } : n)))
+  }, [engine, room])
 
   useEffect(() => {
     const el = layer.current!
     const off = engine.addView((cam, vw, vh) => {
       el.style.transform = `translate(${vw / 2 - cam.x * cam.z}px, ${vh / 2 - cam.y * cam.z}px) scale(${cam.z})`
     })
-    const wheel = (e: WheelEvent) => engine.h.wheel(e)
+    const wheel = (e: WheelEvent) => engine.onWheel(e)
     el.addEventListener('wheel', wheel, { passive: false })
     return () => {
       off()
@@ -378,7 +379,7 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
         for (const n of latest.current) {
           if (!at.has(n.id)) continue
           const m = moved(n)
-          api.saveNote(roomId, m, send === 'live')
+          saveNote(m, send === 'live')
           if (send === 'save') engine.trackObj('note', n.id, m)
         }
       },
@@ -412,12 +413,12 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
         if (!off.length) return
         const by = new Map(off.map((n) => [n.id, n]))
         setNotes((ns) => ns.map((n) => by.get(n.id) || n))
-        if (save) for (const n of off) api.saveNote(roomId, n)
+        if (save) for (const n of off) saveNote(n)
       },
       // Puts a note back as it was (undo and redo).
       put: (note: NoteRow) => {
         setNotes((ns) => (ns.some((n) => n.id === note.id) ? ns.map((n) => (n.id === note.id ? note : n)) : [...ns, note]))
-        api.saveNote(roomId, note)
+        saveNote(note)
       },
       select: (ids) => setSelected(new Set(ids)),
       // Notes other players have selected, id -> their colour.
@@ -425,7 +426,7 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       remove: (ids) => {
         const gone = new Set(ids)
         setNotes((ns) => ns.filter((n) => !gone.has(n.id)))
-        for (const id of gone) api.deleteNote(roomId, id)
+        for (const id of gone) sock.send({ type: 'note-delete', id })
       },
       // Starts editing a note, with the caret after its text.
       edit: (id) => {
@@ -444,63 +445,47 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
         if (last.id === id && now - last.t! < DOUBLE_MS) return engine.notes!.edit(id)
         // Leave any note being edited, so Delete removes this one rather than editing its text.
         if (document.activeElement?.closest?.('[data-note]')) (document.activeElement as HTMLElement).blur()
-        engine.selectRef(null)
-        engine.selectTray(null)
-        engine.setSelection(new Set(), new Set(), new Set([id]))
+        engine.selectOnly('note', id)
       },
     }
     return () => {
       engine.notes = null
     }
-  }, [engine, roomId, S])
+  }, [engine, sock, S])
 
   useEffect(() => {
-    busRef.current = (msg) => {
-      if (msg.type === 'note-react') return setReactions((rs) => toggled(rs, msg.id, msg.kind, msg.player, msg.on))
-      if (msg.type === 'note-reply') return setReplies((rs) => withReply(rs, msg.reply))
-      if (msg.type === 'note-reply-delete') return setReplies((rs) => withoutReply(rs, msg.id))
-      if (msg.type === 'note-delete') {
+    const offs = [
+      sock.on('note-react', (msg) => setReactions((rs) => toggled(rs, msg.id, msg.kind, msg.player, msg.on))),
+      sock.on('note-reply', (msg) => setReplies((rs) => withReply(rs, msg.reply))),
+      sock.on('note-reply-delete', (msg) => setReplies((rs) => withoutReply(rs, msg.id))),
+      sock.on('note-delete', (msg) => {
         engine.seen('note', msg.id, null)
-        return setNotes((ns) => ns.filter((n) => n.id !== msg.id))
-      }
-      if (msg.type === 'notes-reset') {
-        engine.resetSeen('note', msg.notes)
-        setReactions(gather(msg.reactions))
-        setReplies(gatherReplies(msg.replies))
-        // Keep the text of a note that's being edited right now.
-        const editing = document.activeElement?.closest?.<HTMLElement>('[data-note]')?.dataset.note
-        return setNotes((ns) =>
-          msg.notes.map((n) => (n.id === editing ? { ...n, text: ns.find((o) => o.id === n.id)?.text ?? n.text } : n)),
-        )
-      }
-      const incoming = msg.note
-      engine.seen('note', incoming.id, incoming)
-      setNotes((ns) => {
-        const editing = document.activeElement?.closest?.(`[data-note="${incoming.id}"]`)
-        const i = ns.findIndex((n) => n.id === incoming.id)
-        if (i < 0) return [...ns, incoming]
-        const next = [...ns]
-        next[i] = editing ? { ...incoming, text: ns[i].text } : incoming
-        return next
-      })
-    }
-    return () => {
-      busRef.current = null
-    }
-  }, [busRef, engine])
+        setNotes((ns) => ns.filter((n) => n.id !== msg.id))
+      }),
+      sock.on('note', ({ note: incoming }) => {
+        engine.seen('note', incoming.id, incoming)
+        setNotes((ns) => {
+          const editing = document.activeElement?.closest?.(`[data-note="${incoming.id}"]`)
+          const i = ns.findIndex((n) => n.id === incoming.id)
+          if (i < 0) return [...ns, incoming]
+          const next = [...ns]
+          next[i] = editing ? { ...incoming, text: ns[i].text } : incoming
+          return next
+        })
+      }),
+    ]
+    return () => offs.forEach((off) => off())
+  }, [sock, engine])
 
   useEffect(() => {
     createRef.current = async (clientX, clientY) => {
-      const rect = engine.canvas.getBoundingClientRect()
       // Notes show in the first pane of a split screen (top left), so one without a place goes in its middle.
       const first = engine.panes[0]
-      const sx = clientX == null ? first.w / 2 : clientX - rect.left
-      const sy = clientY == null ? first.h / 2 : clientY - rect.top
-      const [wx, wy] = engine.worldAt(sx, sy)
+      const [wx, wy] = clientX == null ? engine.worldAt(first.w / 2, first.h / 2) : engine.clientToWorld(clientX, clientY!)
       const author = await requireName()
       if (!author) return
       const note: NoteRow = {
-        id: Math.random().toString(36).slice(2, 10),
+        id: newId(),
         x: wx - (NOTE_W * S) / 2,
         y: wy - S * 0.2,
         text: '',
@@ -510,32 +495,32 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       }
       setNotes((ns) => [...ns, note])
       setFocusId(note.id)
-      api.saveNote(roomId, note)
+      saveNote(note)
       engine.trackObj('note', note.id, note)
     }
     return () => {
       createRef.current = null
     }
-  }, [engine, roomId, S, createRef, requireName])
+  }, [engine, sock, S, createRef, requireName])
 
   const change = (id: string, patch: Partial<NoteRow>) => setNotes((ns) => ns.map((n) => (n.id === id ? { ...n, ...patch } : n)))
   const save = (note: NoteRow) => {
-    api.saveNote(roomId, note)
+    saveNote(note)
     engine.trackObj('note', note.id, note)
   }
-  const live = (note: NoteRow) => api.saveNote(roomId, note, true)
+  const live = (note: NoteRow) => saveNote(note, true)
   const react = (id: string, kind: NoteReactionKind, on: boolean) => {
     setReactions((rs) => toggled(rs, id, kind, me!, on))
-    api.reactNote(roomId, id, kind, on)
+    sock.send({ type: 'note-react', id, kind, on })
   }
   const reply = (note: string, text: string) => {
-    const r: NoteReply = { id: Math.random().toString(36).slice(2, 10), note, author: me!, text, created: Date.now() }
+    const r: NoteReply = { id: newId(), note, author: me!, text, created: Date.now() }
     setReplies((rs) => withReply(rs, r))
-    api.replyNote(roomId, { id: r.id, note, text })
+    sock.send({ type: 'note-reply', id: r.id, note, text })
   }
-  const deleteReply = (note: string, id: string) => {
+  const deleteReply = (id: string) => {
     setReplies((rs) => withoutReply(rs, id))
-    api.deleteReply(roomId, id)
+    sock.send({ type: 'note-reply-delete', id })
   }
 
   return (
@@ -567,7 +552,7 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
       ))}
     </div>
   )
-}
+})
 
 // Header button: drag it onto the board to drop a note there, or click to drop one in the centre.
 interface NoteButtonProps {
