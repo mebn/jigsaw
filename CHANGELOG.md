@@ -6,7 +6,7 @@
 - Images and notes moved by another player now glide smoothly after them, like pieces and trays, instead of jumping along, and notes lift with a deeper shadow while they're moved.
 - Moving or resizing an image now hides the card saying who put it there, and its menu button, until you let go.
 - The list of players now scrolls inside its window, so its scrollbar no longer sticks out past the rounded corners.
-- The jigsaws page now scrolls smoothly, and goes a little past the top or bottom before springing back, instead of stopping dead.
+- The jigsaws page now scrolls smoothly, gliding to a stop, also at the top and bottom, instead of jumping and stopping dead.
 - **A new look**: the bars, buttons, tabs, menus and windows are now made of glass, with rounded shapes and a bright rim. The bars, buttons and tabs are almost clear, so you see the table and the jigsaws through them, and windows and menus are frosted so they stay easy to read. In Chrome and Edge the rim bends what lies behind it, with a faint fringe of colour, like real glass.
 - Windows, menus and hover cards now spring gently into place, buttons press in a little when clicked, and a soft light follows the mouse across the bars.
 - **Search**: press `Ctrl+F` (`⌘F` on a Mac) to search every note and every tray with a name, in a list as you type, and press it again to close the list. Pick one with the arrow keys and press Enter, or click it, to fly straight to it, selected.

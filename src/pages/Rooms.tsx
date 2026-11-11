@@ -208,18 +208,14 @@ function Tile({ r, i, kind, mine, onPick, onDelete, children, below }: TileProps
   )
 }
 
-// Scrolling eases to where it's sent with this time constant (ms), and back inside from past an end
-// with this one; it goes at most OVERSCROLL (px) past an end, and springs back SETTLE_MS (ms) after the
-// last push.
+// Scrolling eases to where it's sent with this time constant (ms), so it glides to a stop, also at
+// either end.
 const EASE_MS = 70
-const BACK_MS = 110
-const OVERSCROLL = 150
-const SETTLE_MS = 140
 
 // The canvas: scrolled, moved with the arrow keys, or on a touch screen dragged with a finger (with
 // a little glide after), up and down only, and not zoomed. The mouse doesn't drag it. The jigsaws are in the middle across, and when they don't fit on the
 // screen they can be moved until a gap past their top or bottom reaches the screen's. Scrolling eases
-// smoothly, and goes a little past either end, harder the further, springing back once let go.
+// smoothly to where it's sent, never past either end.
 // render(r, w, h) makes the jigsaw for each place.
 function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; gap: number; render: (p: Placed) => ReactNode }) {
   const field = useRef<HTMLDivElement>(null)
@@ -301,23 +297,18 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       place.current()
     })
     ro.observe(el)
-    // Scrolling moves where the canvas is going (ty), and it eases there each frame. Past either end it
-    // resists more the further it goes, up to OVERSCROLL, and once nothing has pushed it for a moment
-    // it springs back. A finger moves it directly, and its glide after carries on the same way.
+    // Scrolling moves where the canvas is going (ty), never past either end, and it eases there each
+    // frame. A finger moves it directly, and its glide after carries on the same way, ending at an end.
     let down: { id: number; x: number; y: number; t: number; moved: boolean } | null = null
     let dragged = false
     let gliding = false
-    let pushed = 0
     let raf = 0
     let last = 0
     const ends = () => range().y
     const move = (dy: number) => {
       const c = cam.current
       const [lo, hi] = ends()
-      const out = c.ty < lo ? lo - c.ty : c.ty > hi ? c.ty - hi : 0
-      if ((c.ty <= lo && dy < 0) || (c.ty >= hi && dy > 0)) dy *= Math.max(0, 1 - out / OVERSCROLL) ** 2
-      c.ty = Math.min(hi + OVERSCROLL, Math.max(lo - OVERSCROLL, c.ty + dy))
-      pushed = performance.now()
+      c.ty = Math.min(hi, Math.max(lo, c.ty + dy))
       run()
     }
     const step = (now: number) => {
@@ -325,19 +316,17 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       const dt = Math.min(40, now - last)
       last = now
       const c = cam.current
-      const [lo, hi] = ends()
-      const out = c.ty < lo || c.ty > hi
       if (gliding) {
-        // Past an end, a glide slows much faster, as if it ran into something soft.
-        c.vy *= Math.pow(out ? 0.97 : 0.994, dt)
+        const was = c.ty
+        c.vy *= Math.pow(0.994, dt)
         move(c.vy * dt)
-        if (Math.abs(c.vy) < 0.02) gliding = false
+        // Stopped at an end, or slowed to nothing.
+        if (c.ty === was || Math.abs(c.vy) < 0.02) gliding = false
       }
-      if (!down && !gliding && now - pushed > SETTLE_MS) c.ty = Math.min(hi, Math.max(lo, c.ty))
-      c.y = down ? c.ty : c.y + (c.ty - c.y) * (1 - Math.exp(-dt / (c.y < lo || c.y > hi ? BACK_MS : EASE_MS)))
+      c.y = down ? c.ty : c.y + (c.ty - c.y) * (1 - Math.exp(-dt / EASE_MS))
       if (Math.abs(c.ty - c.y) < 0.3) c.y = c.ty
       if (place.current()) draw()
-      if (gliding || c.y !== c.ty || c.ty < lo || c.ty > hi) run()
+      if (gliding || c.y !== c.ty) run()
     }
     const run = () => {
       if (raf) return
