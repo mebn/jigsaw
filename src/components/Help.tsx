@@ -87,6 +87,7 @@ const SECTIONS = [
     rows: [
       [<Key key="t">T</Key>, 'New tray'],
       [<Key key="i">I</Key>, 'New image'],
+      [<Key key="q">Q</Key>, 'Picture as a map'],
       [<Key key="n">N</Key>, 'New note'],
       [<Key key="r">R</Key>, 'Reactions'],
       [<Key key="p">P</Key>, 'All players'],

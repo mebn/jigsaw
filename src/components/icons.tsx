@@ -233,6 +233,14 @@ export const Hand = (p: IconProps) => (
   </Svg>
 )
 
+// A folded map.
+export const MapIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 4 3 6.5v13.5l6-2.5 6 2.5 6-2.5V4l-6 2.5Z" />
+    <path d="M9 4v13.5M15 6.5V20" />
+  </Svg>
+)
+
 export const Split = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="5" width="18" height="14" rx="2" />

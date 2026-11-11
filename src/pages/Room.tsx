@@ -2,16 +2,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { api } from '../lib/api.ts'
 import type { NoteReaction, NoteReply, NoteRow, RoomSocket, TimeRow } from '../lib/api.ts'
-import { Engine, warmSprites } from '../lib/engine.ts'
+import { Engine, cursorColor, warmSprites } from '../lib/engine.ts'
 import { navigate, store, useApp } from '../App.tsx'
 import {
   Hand,
+  MapIcon,
   Pencil,
   Picture,
-  Redo,
   Rooms,
   Share,
-  Undo,
 } from '../components/icons.tsx'
 import Settings from '../components/Settings.tsx'
 import type { OpenSettings } from '../components/Settings.tsx'
@@ -33,6 +32,7 @@ import { TrayButton } from '../components/Trays.tsx'
 import SplitButton from '../components/SplitButton.tsx'
 import type { SplitPanes } from '../components/SplitButton.tsx'
 import ShareDialog from '../components/ShareDialog.tsx'
+import PictureMap from '../components/PictureMap.tsx'
 import { playSnap } from '../lib/sound.ts'
 import { canFullscreen, toggleFullscreen, useNotch } from '../lib/fullscreen.ts'
 
@@ -40,11 +40,6 @@ import { canFullscreen, toggleFullscreen, useNotch } from '../lib/fullscreen.ts'
 const noMenu = (e: MouseEvent) => {
   if (!(e.target as Element).closest('input, textarea, [contenteditable="true"]')) e.preventDefault()
 }
-
-// Undo and redo shortcuts as the platform writes them.
-const MAC = /Mac|iPhone|iPad/.test(navigator.platform)
-const MOD = MAC ? '⌘' : 'Ctrl+'
-const REDO_KEY = MAC ? '⇧Z' : 'Y'
 
 // The controls fade away after this long without the pointer moving or a key being pressed.
 const IDLE_MS = 3000
@@ -185,7 +180,10 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   })
   // Draw mode: dragging draws strokes that fade away after a few seconds, for everyone to see.
   const [drawMode, setDrawMode] = useState(false)
-  const [hist, setHist] = useState({ undo: false, redo: false })
+  // The picture as a map over the table, just for this player (Q, see PictureMap).
+  const [map, setMap] = useState(false)
+  const [mapShown, mapClosing] = useLinger(map)
+  const closeMap = useCallback(() => setMap(false), [])
   const [menu, setMenu] = useState<MenuAt | null>(null)
   const closeMenu = useCallback(() => setMenu(null), [])
   const [podium, setPodium] = useState(false)
@@ -245,7 +243,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           onStats: () => setStats(eng!.contributors()),
           onSnap: playSnap,
           onMenu: (x, y, kind, id, opts) => setMenu({ x, y, kind, id, rename: !!opts?.rename }),
-          onHistory: setHist,
           onComplete: () => {
             setDone(true)
             // Celebrate once per player and jigsaw, whoever placed the last piece.
@@ -410,7 +407,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     return () => mo.disconnect()
   }, [engine])
 
-  // H help, V view mode, N note, T tray, I image, + and - zoom, C fits to screen, F fullscreen. Arrow keys and WASD pan (see the engine). New notes, trays and images go under the pointer when it's on the table.
+  // H help, V view mode, N note, T tray, I image, Q the picture as a map, + and - zoom, C fits to screen, F fullscreen. Arrow keys and WASD pan (see the engine). New notes, trays and images go under the pointer when it's on the table.
   useEffect(() => {
     if (!engine) return
     const key = (e: KeyboardEvent) => {
@@ -430,6 +427,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       else if (k === 'n') createNote.current?.(over ? over[0] + engine.ox + r.left : null, over ? over[1] + engine.oy + r.top : null)
       else if (k === 't') (over ? engine.addTray(...over) : engine.addTray())
       else if (k === 'i') (over ? engine.addRef(...over) : engine.addRef())
+      else if (k === 'q') setMap(true)
       else if (k === '+' || k === '=') engine.zoomBy(1.4)
       else if (k === '-' || k === '_') engine.zoomBy(1 / 1.4)
       else if (k === 'c') engine.fit()
@@ -443,7 +441,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   }, [engine])
 
   // The toolbar: all jigsaws and settings on the top left, the play tools at the top middle in one
-  // bar, in three groups split by lines, and the players on the top right.
+  // bar, in two groups split by lines, and the players on the top right.
   const nav = (
     <>
       <button className="icon-btn" onClick={() => navigate('/rooms')} aria-label="All jigsaws" data-tip="All jigsaws">
@@ -455,13 +453,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   )
   const play = engine && (
     <>
-      <button className="icon-btn" onClick={() => engine.undo()} disabled={!hist.undo} aria-label="Undo" aria-keyshortcuts="Control+Z Meta+Z" data-tip="Undo" data-key={`${MOD}Z`}>
-        <Undo />
-      </button>
-      <button className="icon-btn" onClick={() => engine.redo()} disabled={!hist.redo} aria-label="Redo" aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z" data-tip="Redo" data-key={`${MOD}${REDO_KEY}`}>
-        <Redo />
-      </button>
-      <span className="bar-sep" />
       <button
         className={`icon-btn view-btn${panMode ? ' on' : ''}`}
         onClick={() => setPanMode((v) => !v)}
@@ -506,6 +497,9 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         data-key="I"
       >
         <Picture />
+      </button>
+      <button className="icon-btn" onClick={() => setMap(true)} aria-label="Picture as a map" aria-keyshortcuts="Q" data-tip="Look at the picture, zoom in and draw on it" data-key="Q">
+        <MapIcon />
       </button>
       <NoteButton createRef={createNote} />
     </>
@@ -610,6 +604,9 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           onClose={closeShare}
           closing={shareClosing}
         />
+      )}
+      {engine && mapShown && (
+        <PictureMap roomId={id} src={api.imageUrl(id)} color={cursorColor(playerId || 'me')} closing={mapClosing} onClose={closeMap} />
       )}
     </div>
   )
