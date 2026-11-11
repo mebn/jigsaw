@@ -230,7 +230,7 @@ export interface Turn {
 }
 
 // What comes in over a room's socket. client is the sender's client id. Messages from other players'
-// pages (grab, live, cursor, marks, moves) are only relayed, so their fields are what those pages
+// pages (grab, live, sway, cursor, marks, moves) are only relayed, so their fields are what those pages
 // sent, and are worth checking.
 export type RoomMessage =
   | { type: 'player'; client?: string; player: PlayerRef }
@@ -252,6 +252,7 @@ export type RoomMessage =
   | { type: 'moves'; client: string; pieces: PieceMove[]; turns?: Turn[]; fix?: true }
   | { type: 'grab'; client: string; ids: number[]; ox: number[]; oy: number[]; r0: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; client: string; px: number; py: number; k?: number }
+  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; refs?: unknown; notes?: unknown; trays?: unknown }
   | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: string; player?: string; box?: number[] }
   | { type: 'marks'; client: string; sel?: number[]; hl?: number[]; refs?: string[]; notes?: string[]; tray?: string | null; player?: string }
 
@@ -283,7 +284,7 @@ export const clientId = Math.random().toString(36).slice(2)
 // Open room sockets, by room id.
 const sockets = new Map<string, RoomSocket>()
 // Messages that only matter while they're fresh; everything else is queued while offline.
-const transient = (msg: OutgoingMessage) => msg.live || msg.type === 'live' || msg.type === 'grab' || msg.type === 'cursor'
+const transient = (msg: OutgoingMessage) => msg.live || msg.type === 'live' || msg.type === 'grab' || msg.type === 'sway' || msg.type === 'cursor'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)

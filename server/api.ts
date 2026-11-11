@@ -792,7 +792,7 @@ function createApi(dbFile: string) {
         saveMoves(roomId, m.pieces)
         const turns = Array.isArray(m.turns) ? m.turns.slice(0, 2000) : undefined
         broadcast(roomId, { type: 'moves', client, pieces: m.pieces, turns, fix: m.fix ? true : undefined }, ws)
-      } else if (m.type === 'grab' || m.type === 'live' || m.type === 'cursor' || m.type === 'marks') {
+      } else if (m.type === 'grab' || m.type === 'live' || m.type === 'sway' || m.type === 'cursor' || m.type === 'marks') {
         broadcast(roomId, { ...m, client }, ws)
       } else if (m.type === 'ink') {
         // A stroke in draw mode, growing or finished. Not stored: it fades away on every screen.

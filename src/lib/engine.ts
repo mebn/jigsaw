@@ -214,6 +214,7 @@ export type Turn = { self: true; a: number } | { self?: false; cx: number; cy: n
 export type OutMessage =
   | { type: 'grab'; ids: number[]; ox: number[]; oy: number[]; r0: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; px: number; py: number; k: number }
+  | { type: 'sway'; a: number; px?: number; py?: number; pieces?: true; refs?: string[]; notes?: string[]; trays?: string[] }
   | { type: 'moves'; pieces: PieceState[]; turns?: TurnMsg[]; fix?: boolean }
   | { type: 'marks'; sel: number[]; hl: number[]; refs: string[]; notes: string[]; tray: string | null; player: string }
   | { type: 'cursor'; hide: true }
@@ -224,6 +225,7 @@ export type OutMessage =
 export type RemoteMessage =
   | { type: 'grab'; client: string; ids?: number[]; ox?: number[]; oy?: number[]; r0?: number[]; px: number; py: number; k?: number; tray?: boolean }
   | { type: 'live'; client: string; px: number; py: number; k?: number }
+  | { type: 'sway'; client: string; a?: unknown; px?: unknown; py?: unknown; pieces?: unknown; refs?: unknown; notes?: unknown; trays?: unknown }
   | { type: 'moves'; client: string; pieces?: PieceState[]; turns?: unknown; fix?: boolean }
   | { type: 'marks'; client: string; sel?: unknown; hl?: unknown; refs?: unknown; notes?: unknown; tray?: unknown; player?: unknown }
   | { type: 'cursor'; client: string; hide?: boolean; x?: number; y?: number; name?: unknown; box?: unknown; player?: unknown }
@@ -283,6 +285,21 @@ export interface Drag {
   // The middle of the carried pieces from the pointer, before any turn (world units), see swing().
   mx: number
   my: number
+}
+// How what another player holds swings (see remoteSway()): the angle shown, easing to the one they
+// sent (ta), around their pointer as sent (px, py) and eased like their pieces and trays (ex, ey), and
+// what swings: the pieces they carry, and images, notes and trays by id.
+export interface RemoteSway {
+  a: number
+  ta: number
+  px: number
+  py: number
+  ex: number
+  ey: number
+  pieces: boolean
+  refs: Set<string>
+  notes: Set<string>
+  trays: Set<string>
 }
 // What this player holds swinging from the pointer, see swing(): the pointer and whether it still
 // holds them (after letting go, what's left of the swing settles), the angle (radians, around the
@@ -793,6 +810,10 @@ export class Engine {
   notes: NotesApi | null
   carry: Carry | null
   hand: Hand | null
+  rsway: Map<string, RemoteSway>
+  // The angle last sent to the others, and when (see sendSway()).
+  swaySent: number
+  swayAt: number
   // The pivot (screen px) and angle the overlay is turned by for what's drawn now, see tiltFor().
   tilt: [number, number, number] | null
   marquee: Marquee | null
@@ -1013,6 +1034,9 @@ export class Engine {
     this.carry = null
     this.marquee = null
     this.hand = null
+    this.rsway = new Map()
+    this.swaySent = 0
+    this.swayAt = 0
     this.tilt = null
     // Other players' drags in progress: client -> { ids, ox, oy, r0 }.
     this.remote = new Map()
@@ -3436,6 +3460,12 @@ export class Engine {
   // goes, and grabbed by an end it swings round behind it. When the pointer stops it swings back and
   // wobbles a little before settling; let go, it settles quickly. Returns whether still moving.
   swing(dt: number) {
+    const on = this.swingHand(dt)
+    this.sendSway()
+    return on
+  }
+
+  swingHand(dt: number) {
     const g = this.holding()
     let h = this.hand
     if (g && (!h || !h.held || h.pointer !== g.pointer)) h = this.hand = this.grip(g)
@@ -3494,6 +3524,90 @@ export class Engine {
     return !still
   }
 
+  // Tells the others how what this player holds swings, so they see it too: as it changes, at most
+  // as often as live drags, and once more when it's straight again.
+  sendSway() {
+    const h = this.hand
+    const a = h ? Math.round(h.a * 1000) / 1000 : 0
+    if (a === this.swaySent) return
+    const now = performance.now()
+    if (a && now - this.swayAt < LIVE_MS) return
+    this.swaySent = a
+    this.swayAt = now
+    if (!h || !a) return this.send({ type: 'sway', a: 0 })
+    this.send({
+      type: 'sway',
+      a,
+      px: r2(h.px),
+      py: r2(h.py),
+      pieces: h.held && this.drag ? true : undefined,
+      refs: h.refs.size ? [...h.refs] : undefined,
+      notes: h.notes.size ? [...h.notes] : undefined,
+      trays: h.trays.size ? [...h.trays] : undefined,
+    })
+  }
+
+  remoteSway(msg: Extract<RemoteMessage, { type: 'sway' }>) {
+    const a = typeof msg.a === 'number' && isFinite(msg.a) ? Math.max(-0.5, Math.min(0.5, msg.a)) : 0
+    let r = this.rsway.get(msg.client)
+    if (!a) {
+      if (r) r.ta = 0
+      this.invalidate()
+      return
+    }
+    if (typeof msg.px !== 'number' || typeof msg.py !== 'number' || !isFinite(msg.px) || !isFinite(msg.py)) return
+    const ids = (v: unknown) => new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 500) : [])
+    if (!r) {
+      r = { a: 0, ta: a, px: msg.px, py: msg.py, ex: msg.px, ey: msg.py, pieces: false, refs: new Set(), notes: new Set(), trays: new Set() }
+      this.rsway.set(msg.client, r)
+    }
+    r.ta = a
+    r.px = msg.px
+    r.py = msg.py
+    r.pieces = !!msg.pieces
+    r.refs = ids(msg.refs)
+    r.notes = ids(msg.notes)
+    r.trays = ids(msg.trays)
+    this.invalidate()
+  }
+
+  // Eases other players' swings toward what they sent. Returns whether any is still moving.
+  stepRemoteSways(dt: number) {
+    const f = ease(dt, 40)
+    for (const [id, r] of this.rsway) {
+      r.a = calm?.matches ? 0 : r.a + (r.ta - r.a) * f
+      r.ex += (r.px - r.ex) * f
+      r.ey += (r.py - r.ey) * f
+      if (!r.ta && Math.abs(r.a) < 0.001) this.rsway.delete(id)
+    }
+    return this.rsway.size > 0
+  }
+
+  // Another player let go of their pieces: what's left of their swing settles as a turn on the
+  // table, as ours does (see keepSway()).
+  dropRemoteSway(client: string, ids: number[]) {
+    const r = this.rsway.get(client)
+    if (!r?.pieces) return
+    r.pieces = false
+    if (Math.abs(r.a) < 0.001) return
+    const t: Turn = { cx: r.ex, cy: r.ey, a: r.a }
+    for (const i of ids) if (!this.turns.has(i)) this.turns.set(i, t)
+  }
+
+  // The pivot and angle something swings by, ours or another player's: images and notes as sent, as
+  // they jump to where they're sent; trays (and notes stuck to them) eased, as their boxes are.
+  swayFor(kind: 'refs' | 'notes' | 'trays', id: string): [number, number, number] | null {
+    const h = this.hand
+    if (h?.a && h[kind].has(id)) return [h.px, h.py, h.a]
+    for (const r of this.rsway.values()) if (r.a && r[kind].has(id)) return kind === 'trays' ? [r.ex, r.ey, r.a] : [r.px, r.py, r.a]
+    return null
+  }
+
+  // A note's swing: its own, or its tray's when it's stuck to one.
+  noteSway(id: string, tray: string | null | undefined) {
+    return this.swayFor('notes', id) || (tray ? this.swayFor('trays', tray) : null)
+  }
+
   // When the pieces are let go, what's left of their swing settles as a turn on the table around the
   // pointer, where they land, so they don't jump straight. The rest of the hand (see swing()) settles
   // around the same spot at the same pace.
@@ -3511,20 +3625,21 @@ export class Engine {
   // Where something carried with its middle at (x, y) is drawn while the hand swings: its middle
   // turned around the pivot, and the angle.
   swayed(kind: 'refs' | 'trays', id: string, x: number, y: number): [number, number, number] {
-    const h = this.hand
-    if (!h || !h.a || !h[kind].has(id)) return [x, y, 0]
-    const c = Math.cos(h.a)
-    const s = Math.sin(h.a)
-    const dx = x - h.px
-    const dy = y - h.py
-    return [h.px + dx * c - dy * s, h.py + dx * s + dy * c, h.a]
+    const w = this.swayFor(kind, id)
+    if (!w) return [x, y, 0]
+    const [px, py, a] = w
+    const c = Math.cos(a)
+    const s = Math.sin(a)
+    const dx = x - px
+    const dy = y - py
+    return [px + dx * c - dy * s, py + dx * s + dy * c, a]
   }
 
   // The same for the 2D drawing over an image or tray (its buttons, tags and outline): sets this.tilt
   // for it, and tiltCtx() then turns the overlay with it.
   tiltFor(kind: 'refs' | 'trays', id: string) {
-    const h = this.hand
-    this.tilt = h && h.a && h[kind].has(id) ? [(h.px - this.cam.x) * this.cam.z + this.vw / 2, (h.py - this.cam.y) * this.cam.z + this.vh / 2, h.a] : null
+    const w = this.swayFor(kind, id)
+    this.tilt = w ? [(w[0] - this.cam.x) * this.cam.z + this.vw / 2, (w[1] - this.cam.y) * this.cam.z + this.vh / 2, w[2]] : null
   }
 
   tiltCtx(ctx: CanvasRenderingContext2D) {
@@ -3876,12 +3991,15 @@ export class Engine {
     } else if (msg.type === 'live') {
       const d = this.remote.get(msg.client)
       if (d) this.remoteLive(d, msg.px, msg.py, (msg.k ?? 0) | 0, now)
+    } else if (msg.type === 'sway') {
+      this.remoteSway(msg)
     } else if (msg.type === 'moves') {
       // A fix to pieces someone left behind (see applyRemote) isn't a drop: whatever they hold stays held.
       if (!msg.fix) {
         // They let go of everything they held.
         const d = this.remote.get(msg.client)
         if (d) for (const i of d.ids) this.held.delete(i)
+        if (d) this.dropRemoteSway(msg.client, d.ids)
         this.remote.delete(msg.client)
         const rl = this.rlift.get(msg.client)
         if (rl) rl.target = 0
@@ -3915,6 +4033,7 @@ export class Engine {
       this.marks.delete(msg.client)
       this.players.delete(msg.client)
       this.rlift.delete(msg.client)
+      this.rsway.delete(msg.client)
       for (const u of this.trayUp.values()) if (u.client === msg.client) u.target = 0
       this.markNotes()
       const d = this.remote.get(msg.client)
@@ -4988,6 +5107,7 @@ export class Engine {
       }
     }
     if (this.swing(dt)) again = true
+    if (this.rsway.size && this.stepRemoteSways(dt)) again = true
 
     if (this.lift) {
       const l = this.lift
@@ -5239,13 +5359,25 @@ export class Engine {
     // Pieces other players carry, grown a little as ours are.
     let rvalue = 0
     const theirs = (tray: boolean) => {
-      for (const rl of this.rlift.values()) {
+      for (const [client, rl] of this.rlift) {
         if (!!rl.tray !== tray) continue
         const s = tray ? 1 : 1 + 0.045 * rl.value
         if (!tray) rvalue = Math.max(rvalue, rl.value)
+        // Swinging as they carry them, around their pointer.
+        const w = this.rsway.get(client)
+        const sa = w?.pieces && w.a ? w.a : 0
+        const sc = Math.cos(sa)
+        const ss = Math.sin(sa)
         for (const i of rl.ids) {
           if (lifted?.has(i)) continue
           this.poseInto(i)
+          if (sa) {
+            const dx = this.qx - w!.ex
+            const dy = this.qy - w!.ey
+            this.qx = w!.ex + dx * sc - dy * ss
+            this.qy = w!.ey + dx * ss + dy * sc
+            this.qa += sa
+          }
           drawn.set(i, [this.qx, this.qy, this.qa, s])
           if (seen(this.qx, this.qy, R * s)) this.gpuPiece(i, this.qx, this.qy, this.qa, s, v)
         }

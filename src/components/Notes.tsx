@@ -407,17 +407,17 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           if (!('lit' in el.dataset)) el.dataset.lit = ''
         }
         for (const el of layer.current?.querySelectorAll<HTMLElement>('[data-lit]') || []) if (!lit.has(el.dataset.note!)) delete el.dataset.lit
-        // Notes moved by hand, and those stuck to a tray moved by hand, swing with it around the
-        // pointer (see swing() in engine.ts).
-        const h = engine.hand
+        // Notes moved by hand, here or by another player, and those stuck to a tray moved by hand,
+        // swing with it around the pointer (see swing() in engine.ts).
         const now = new Set<string>()
-        if (h?.a) {
+        if (engine.hand?.a || engine.rsway.size) {
           for (const n of latest.current) {
-            if (!h.notes.has(n.id) && !(n.tray && h.trays.has(n.tray))) continue
+            const w = engine.noteSway(n.id, n.tray)
+            if (!w) continue
             const el = layer.current?.querySelector<HTMLElement>(`[data-note="${n.id}"]`)
             if (!el) continue
-            el.style.transformOrigin = `${h.px - parseFloat(el.style.left)}px ${h.py - parseFloat(el.style.top)}px`
-            el.style.transform = `rotate(${h.a}rad)`
+            el.style.transformOrigin = `${w[0] - parseFloat(el.style.left)}px ${w[1] - parseFloat(el.style.top)}px`
+            el.style.transform = `rotate(${w[2]}rad)`
             now.add(n.id)
           }
         }
