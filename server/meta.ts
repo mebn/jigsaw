@@ -5,9 +5,8 @@
 export interface SharedRoom {
   id: string
   name: string
-  // The picture's size in pixels.
-  width: number
-  height: number
+  // The picture to show, its address on the site and size in pixels.
+  image: { path: string; width: number; height: number }
   pieces: number
   progress: number
   done: boolean
@@ -26,16 +25,16 @@ export function roomPage(html: string, room: SharedRoom) {
   const origin = /<meta property="og:url" content="([^"]*)"/.exec(html)?.[1]?.replace(/\/+$/, '') || ''
   const title = room.name.trim() || 'Jigsaw'
   const state = room.done ? 'finished' : `${Math.floor(room.progress * 100)}% done`
-  const description = `${room.pieces} pieces, ${state}. Do it together with friends.`
+  const description = `${room.pieces} pieces, ${state}.`
   const tags: [string, string][] = [
     ['og:title', title],
     ['og:description', description],
     ['description', description],
     ['og:url', `${origin}/r/${room.id}`],
-    ['og:image', `${origin}/api/rooms/${room.id}/image`],
-    ['og:image:width', String(Math.round(room.width))],
-    ['og:image:height', String(Math.round(room.height))],
-    ['og:image:alt', `The picture of the jigsaw ${title}`],
+    ['og:image', origin + room.image.path],
+    ['og:image:width', String(room.image.width)],
+    ['og:image:height', String(room.image.height)],
+    ['og:image:alt', `The jigsaw's picture`],
   ]
   // The <title> stays, as the page doesn't change it when leaving the jigsaw.
   return tags.reduce((out, [key, value]) => setMeta(out, key, value), html)

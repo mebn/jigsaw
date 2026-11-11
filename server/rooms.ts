@@ -16,6 +16,9 @@ import type { createTable } from './table.ts'
 type Room = Omit<RoomDetails, 'pieces' | 'notes' | 'noteReactions' | 'noteReplies' | 'refs' | 'trays' | 'times' | 'seen' | 'online' | 'players'>
 type Table = ReturnType<typeof createTable>
 
+// The longest side of a jigsaw's thumbnail, in pixels (see encode() in NewRoom.tsx).
+const THUMB_SIDE = 480
+
 // Share of a jigsaw's pieces connected (0 to 1), from how many pieces (n) and groups it has.
 const progress = (n: number, groups: number) => ({ progress: n > 1 ? (n - groups) / (n - 1) : 0, done: n > 0 && groups === 1 })
 
@@ -42,9 +45,11 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     ),
     image: prepare<{ image: Uint8Array; image_type: string }>('SELECT image, image_type FROM rooms WHERE id = ?'),
     // What a jigsaw's link preview shows, see sharing().
-    share: prepare<{ id: string; name: string; width: number; height: number; private: number; n: number; groups: number }>(
-      `SELECT r.id, r.name, r.width, r.height, r.private, ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
+    share: prepare<{ id: string; name: string; width: number; height: number; private: number; thumb: number; n: number; groups: number }>(
+      `SELECT r.id, r.name, r.width, r.height, r.private, length(r.thumb) > 0 AS thumb, ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
     ),
+    // Stored as text or as bytes, depending on how the jigsaw was saved.
+    thumb: prepare<{ thumb: string | Uint8Array }>('SELECT thumb FROM rooms WHERE id = ?'),
     insertRoom: prepare(`
       INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
@@ -173,7 +178,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     return ok({ id })
   }
 
-  // /api/rooms/:id[/image|snapshots|join|invite|time]
+  // /api/rooms/:id[/image|thumb|snapshots|join|invite|time]
   async function room(req: IncomingMessage, id: string, action: string | undefined): Promise<Reply> {
     const room = q.room.get(id)
     if (!room) return fail(404, 'not found')
@@ -194,6 +199,12 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     if (route === 'GET image') {
       const img = q.image.get(id)!
       return { file: Buffer.from(img.image), type: img.image_type }
+    }
+    // The thumbnail, stored as a data URL, as a file; see sharing().
+    if (route === 'GET thumb') {
+      const { thumb } = q.thumb.get(id)!
+      const m = /^data:([^;]+);base64,(.*)$/s.exec(typeof thumb === 'string' ? thumb : Buffer.from(thumb).toString('latin1'))
+      return m ? { file: Buffer.from(m[2], 'base64'), type: m[1] } : fail(404, 'not found')
     }
     if (route === 'GET snapshots') return ok(table.snapshots(id))
     const b = await readJson<{ passphrase: string; players: string[]; seconds: number; client: string }>(req)
@@ -231,7 +242,11 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
   function sharing(id: string): SharedRoom | null {
     const r = q.share.get(id)
     if (!r || r.private) return null
-    return { id: r.id, name: r.name, width: r.width, height: r.height, pieces: r.n, ...progress(r.n, r.groups) }
+    // The thumbnail, made at most THUMB_SIDE on its longest side (see NewRoom.tsx), as the full
+    // picture can be several MB, more than some apps take for a preview. Jigsaws without one use the picture.
+    const k = r.thumb ? Math.min(1, THUMB_SIDE / Math.max(r.width, r.height)) : 1
+    const image = { path: `/api/rooms/${r.id}/${r.thumb ? 'thumb' : 'image'}`, width: Math.round(r.width * k), height: Math.round(r.height * k) }
+    return { id: r.id, name: r.name, image, pieces: r.n, ...progress(r.n, r.groups) }
   }
 
   return {
