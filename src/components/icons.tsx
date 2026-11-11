@@ -114,6 +114,13 @@ export const Reply = (p: IconProps) => (
   </Svg>
 )
 
+export const Search = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="10.5" cy="10.5" r="6" />
+    <path d="m15 15 5 5" />
+  </Svg>
+)
+
 export const Tray = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3.5" y="5" width="17" height="14" rx="2" />

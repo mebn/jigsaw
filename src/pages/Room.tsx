@@ -33,6 +33,7 @@ import SplitButton from '../components/SplitButton.tsx'
 import type { SplitPanes } from '../components/SplitButton.tsx'
 import ShareDialog from '../components/ShareDialog.tsx'
 import PictureMap from '../components/PictureMap.tsx'
+import Search from '../components/Search.tsx'
 import { playSnap } from '../lib/sound.ts'
 import { canFullscreen, toggleFullscreen, useNotch } from '../lib/fullscreen.ts'
 
@@ -185,6 +186,10 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const [mapShown, mapClosing] = useLinger(map)
   const closeMap = useCallback(() => setMap(false), [])
   const [menu, setMenu] = useState<MenuAt | null>(null)
+  // Ctrl+F: search the notes and named trays (see Search).
+  const [search, setSearch] = useState(false)
+  const [searchShown, searchClosing] = useLinger(search)
+  const closeSearch = useCallback(() => setSearch(false), [])
   const closeMenu = useCallback(() => setMenu(null), [])
   const [podium, setPodium] = useState(false)
   const closePodium = useCallback(() => setPodium(false), [])
@@ -440,6 +445,20 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     return () => window.removeEventListener('keydown', key)
   }, [engine])
 
+  // Ctrl+F (Cmd+F on a Mac) opens and closes the search of the notes and named trays, instead of the page's.
+  useEffect(() => {
+    if (!engine) return
+    const key = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'f') return
+      if (document.querySelector('.modal-bg:not(.search-bg)')) return
+      e.preventDefault()
+      setMenu(null)
+      setSearch((v) => !v)
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [engine])
+
   // The toolbar: all jigsaws and settings on the top left, the play tools at the top middle in one
   // bar, in two groups split by lines, and the players on the top right.
   const nav = (
@@ -603,6 +622,14 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           ranked={rankPlayers({ stats, times, nameOf })}
           onClose={closeShare}
           closing={shareClosing}
+        />
+      )}
+      {engine && searchShown && (
+        <Search
+          engine={engine}
+          nameOf={nameOf}
+          closing={searchClosing}
+          onClose={closeSearch}
         />
       )}
       {engine && mapShown && (

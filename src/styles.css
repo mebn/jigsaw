@@ -3379,3 +3379,139 @@ button.link:hover {
     animation-name: fade;
   }
 }
+
+/* ---- Ctrl+F search (see Search.tsx) ---- */
+
+.modal-bg.search-bg {
+  place-items: start center;
+  padding-top: calc(12vh + var(--notch));
+  background: rgba(0, 0, 0, 0.25);
+}
+.modal.search {
+  gap: 0;
+  width: min(600px, 100%);
+  max-height: min(560px, 76vh);
+  padding: 0;
+  overflow: hidden;
+}
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 8px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.search-field > svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+/* The field is the whole top of the window, so it goes without its own frame. */
+.search-field .text,
+.search-field .text:hover,
+.search-field .text:focus {
+  border-color: transparent;
+  box-shadow: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 17px;
+}
+.search-results {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* Trays and notes each under their own heading, with how many there are. */
+.search-section {
+  display: flex;
+  gap: 6px;
+  margin: 10px 10px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.search-section:first-child {
+  margin-top: 4px;
+}
+.search-section span {
+  font-weight: 500;
+  opacity: 0.7;
+}
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.search-item.on {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.search-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.search-title {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-meta {
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.search-meta b {
+  color: var(--fg);
+  font-weight: 500;
+}
+.search-meta > * + *::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--muted);
+}
+.search-item mark {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--sel) 28%, transparent);
+  color: inherit;
+}
+.search-enter {
+  flex: none;
+  padding: 2px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  font: 500 12px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  opacity: 0;
+}
+.search-item.on .search-enter {
+  opacity: 1;
+}
+.search-empty {
+  margin: 0;
+  padding: 32px 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}

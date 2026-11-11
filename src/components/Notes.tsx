@@ -356,6 +356,15 @@ export function NotesLayer({ engine, roomId, me, nameOf, initial, initialReactio
           ...where(n),
           ...size(n.id),
         })),
+      find: () =>
+        latest.current.map((n) => ({
+          id: n.id,
+          ...where(n),
+          ...size(n.id),
+          text: n.text,
+          author: n.author,
+          created: n.created,
+        })),
       // send: null moves locally only, 'live' also relays, 'save' also stores. Moving a note takes it
       // off its tray, unless it's given one ({ id, x, y, tray }), whose corner it then goes to.
       move: (list, send) => {

@@ -2,6 +2,7 @@
 
 ## 11 November 2026
 
+- **Search**: press `Ctrl+F` (`⌘F` on a Mac) to search every note and every tray with a name, in a list as you type, and press it again to close the list. Pick one with the arrow keys and press Enter, or click it, to fly straight to it, selected.
 - **The picture as a map**: press `Q` or the map button in the toolbar to see the jigsaw's picture over the table, with the table greyed out and blurred behind it. Scroll or pinch to zoom, drag to move it around, and pick the pencil (or press `E`) to draw on it in your colour. The drawing is only for you and stays until you clear it. `Ctrl+Z` undoes a line or a clear and `Ctrl+Shift+Z` redoes it (`⌘Z` and `⌘⇧Z` on a Mac), apart from undo on the table, and still works after closing and opening the map again. Press `Q` or `Esc`, or click beside the picture, to close it. It opens again where you left it, zoomed in just as far.
 - The undo and redo buttons are gone from the bar at the top. Undo and redo still work with `Ctrl+Z` and `Ctrl+Shift+Z` (`⌘Z` and `⌘⇧Z` on a Mac).
 - On wide screens the jigsaws page keeps its jigsaws and the bar along the top together in the middle, with at most five columns of jigsaws, instead of spreading them across the whole screen. A section with only a few jigsaws now keeps them side by side in the middle, in order, instead of leaving wide gaps between them.

@@ -77,6 +77,7 @@ const SECTIONS = [
       [<Range key="tn" from="1" to="9" />, 'Send to tray'],
       [<Key key="rn">R</Key>, 'Rename the selected tray'],
       [<Combo key="sa" keys={[MOD, 'A']} />, 'Select all'],
+      [<Combo key="sf" keys={[MOD, 'F']} />, 'Search notes and trays'],
       [<Either key="del" keys={['Delete', 'Backspace']} />, 'Remove'],
       [<Combo key="un" keys={[MOD, 'Z']} />, 'Undo'],
       [<Combo key="re" keys={[MOD, 'Shift', 'Z']} />, 'Redo'],

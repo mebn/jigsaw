@@ -95,6 +95,8 @@ export interface Spot {
 // Set by the notes layer, see Engine.notes.
 export interface NotesApi {
   get(): NoteBox[]
+  // The same with each note's text, who wrote it and when, for the search (see Search.tsx).
+  find(): (NoteBox & { text: string; author: string; created: number })[]
   // send: null moves locally only, 'live' also relays, 'save' also stores.
   move(list: Spot[], send: null | 'live' | 'save'): void
   put(note: NoteData): void
@@ -1519,6 +1521,12 @@ export class Engine {
     if (animate) this.camAnim = { from: { ...this.cam }, to, t0: performance.now(), ms: 550, pane: this.pane }
     else this.cam = to
     this.invalidate()
+  }
+
+  // Frames box b in the first pane (the only one without split screen).
+  flyTo(b: Box, fill = 0.85) {
+    this.usePane(0)
+    this.frame(b, fill)
   }
 
   // C: frames everything on the table: pieces, trays, images and notes.
