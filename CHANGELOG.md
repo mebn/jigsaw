@@ -2,6 +2,7 @@
 
 ## 12 November 2026
 
+- The jigsaws page has a new address, `jigsaw.marnil.dev/home`. Old links to it still work.
 - **Play in a terminal**: run `npx @mebn/jigsaw` to pick a jigsaw and play with everyone.
 - On touch screens, tap something to select it before dragging it. Dragging anything else pans the table.
 - On touch screens, images, notes and trays now ride above your finger while you drag them.

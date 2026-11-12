@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 
-// The app's addresses: plain paths, no hash. /rooms is the jigsaws page and /new the same with the
-// new jigsaw form open; /r/<id> is a jigsaw.
+// The app's addresses: plain paths, no hash. /home is the jigsaws page and /new the same with the
+// new jigsaw form open; /r/<id> is a jigsaw. / opens the last jigsaw (see App).
 export const paths = {
-  rooms: '/rooms',
+  rooms: '/home',
   new: '/new',
   room: (id: string) => `/r/${id}`,
 }

@@ -190,11 +190,13 @@ export default function App() {
     return false
   }, [requireName])
 
-  // Any other path goes to the last jigsaw, or the jigsaws page when there isn't one.
+  // Any other path goes to the last jigsaw, or the jigsaws page when there isn't one; the old
+  // /rooms always goes to the jigsaws page. The query stays, so that analytics still sees the utm_
+  // tags of the link the visitor came by.
   useEffect(() => {
     if (roomId || onGallery) return
-    const last = lastRoom.get()
-    navigate(last ? paths.room(last) : paths.rooms, true)
+    const last = path === '/rooms' ? null : lastRoom.get()
+    navigate((last ? paths.room(last) : paths.rooms) + window.location.search, true)
   }, [path, roomId, onGallery])
 
   const ctx: AppContext = {
