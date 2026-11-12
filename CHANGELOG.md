@@ -2,251 +2,136 @@
 
 ## 12 November 2026
 
-- On touch screens, you now tap a piece, image, note or tray to select it before you can drag it. Dragging anything that isn't selected pans the table instead, so panning around a busy table no longer moves pieces by mistake. Tapping the empty table clears the selection.
-- On touch screens, images, notes and trays you drag now rise above your finger like pieces do, so your finger no longer hides what you're moving.
-- On touch screens, tapping a note no longer gives it a reaction or opens its menu by mistake. Its reaction and menu buttons only show once the note is selected, and only respond to a tap that starts on them.
-- On phones and other narrow screens, the bar with the play tools (view mode, draw, reactions, split screen, trays, images and notes) now sits at the bottom of the screen, in easy reach of your thumb, instead of under the top bar. The split screen menu opens upwards from it.
-- The podium and share buttons on a finished jigsaw are now centred together, instead of the podium alone sitting in the middle with the share button off to one side.
+- On touch screens, tap something to select it before dragging it. Dragging anything else pans the table.
+- On touch screens, images, notes and trays now ride above your finger while you drag them.
+- Tapping a note on a phone no longer reacts to it or opens its menu by mistake.
+- On phones, the play tools now sit at the bottom of the screen.
+- The podium and share buttons are now centred together.
 
 ## 11 November 2026
 
-- The changelog and the link to the source code have moved from General to a new **About** section in the settings.
-- The first time you open a jigsaw, a small window now shows just the basic controls (moving, rotating, panning and zooming) instead of all of them. Press `H` there for all the shortcuts.
-- The split screen button now sits after the reactions button in the toolbar, and its layout menu shows just a picture of each layout, with the tick on the chosen one sitting neatly inside its highlight.
-- Pieces, groups of pieces, images, notes and trays now swing a little as you drag them, as if pinned to the pointer where you hold them: they trail behind the way you move them, in any direction, more the faster you go and the further from their middle you hold them. Speeding up or stopping gives them a little push. Big things swing less than small ones, and everyone else in the room sees them swing too. It's off if your device is set to reduce motion.
-- Images and notes moved by another player now glide smoothly after them, like pieces and trays, instead of jumping along, and notes lift with a deeper shadow while they're moved.
-- Moving or resizing an image now hides the card saying who put it there, and its menu button, until you let go.
-- A note you drag is now outlined as you move it, like an image or a tray, and the others see it outlined in your colour.
-- The selection box another player drags out now grows smoothly with their pointer instead of in jumps.
-- The list of players now scrolls inside its window, so its scrollbar no longer sticks out past the rounded corners.
-- A link to a jigsaw now shows that jigsaw's picture, name and how far along it is when you paste it in a chat or post, as a big, sharp preview. Jigsaws made before today get theirs the next time someone opens them. Links to private jigsaws still show the site's own preview, so their picture stays with those who have the link.
-- The site's own link preview is now a plain white jigsaw with grey seams, without any text.
-- The celebrate button in a jigsaw's top bar now shows a thumbs-up drawn in the same style as the other buttons, instead of an emoji.
-- Switching dark mode on or off in a jigsaw now changes the table's colour straight away, instead of leaving it in the old one.
-- The jigsaws page now scrolls smoothly, gliding to a stop, also at the top and bottom, instead of jumping and stopping dead.
-- **A new look**: the bars, buttons, tabs, menus and windows are now made of glass, with rounded shapes and a bright rim. The bars, buttons and tabs are almost clear, so you see the table and the jigsaws through them, and windows and menus are frosted so they stay easy to read. In Chrome and Edge the rim bends what lies behind it, with a faint fringe of colour, like real glass.
-- Windows, menus and hover cards now spring gently into place, buttons press in a little when clicked, and a soft light follows the mouse across the bars.
-- **Search**: press `Ctrl+F` (`⌘F` on a Mac) to search every note and every tray with a name, in a list as you type, and press it again to close the list. Pick one with the arrow keys and press Enter, or click it, to fly straight to it, selected.
-- **The picture as a map**: press `Q` to see the jigsaw's picture over the table, with the table greyed out and blurred behind it. Scroll or pinch to zoom, drag to move it around, and pick the pencil (or press `E`) to draw on it in your colour. The drawing is only for you and stays until you clear it. `Ctrl+Z` undoes a line or a clear and `Ctrl+Shift+Z` redoes it (`⌘Z` and `⌘⇧Z` on a Mac), apart from undo on the table, and still works after closing and opening the map again. Press `Q` or `Esc`, or click beside the picture, to close it. It opens again where you left it, zoomed in just as far.
-- The undo and redo buttons and the map button are gone from the bar at the top. Press `Q` to open the map. Undo and redo still work with `Ctrl+Z` and `Ctrl+Shift+Z` (`⌘Z` and `⌘⇧Z` on a Mac).
-- On wide screens the jigsaws page keeps its jigsaws and the bar along the top together in the middle, with at most five columns of jigsaws, instead of spreading them across the whole screen. A section with only a few jigsaws now keeps them side by side in the middle, in order, instead of leaving wide gaps between them.
-- `Esc` now closes one thing at a time, whatever was opened last: a window, a menu, the map, drawing or throwing reactions. With nothing open, it clears your selection, and with nothing selected it opens the settings.
-- In split screen, a tray dragged from the toolbar into any view now lands where you drop it, not off to one side.
-- The crosshair stays while drawing after you move the table with the right button.
-- If the picture or the timelapse to share can't be made, the share window now says so instead of spinning forever, and a timelapse that fails no longer claims the jigsaw was started before timelapses were recorded.
-- The time you spend on a jigsaw, your reactions and your replies now count only for the player who is really logged in, and new notes, images and trays are always yours.
-- `H` in the settings switches to How to play again while drawing or throwing reactions.
-- Dragging a note or tray from the toolbar onto the players in the top right no longer drops it on the table underneath.
-- If the jigsaws can't be loaded, the jigsaws page says so, with a button to try again, instead of saying there are none. If making a jigsaw fails, it now says so.
-- The names of players who only made trays, replied to notes or reacted to them now show as soon as a jigsaw opens.
-- When a jigsaw is deleted, everyone in it is taken back to the jigsaws page right away.
+- **A new look**: bars, buttons, menus and windows are now made of glass.
+- **Search**: press `Ctrl+F` (`⌘F` on a Mac) to find notes and named trays.
+- **Picture map**: press `Q` to see the jigsaw's picture, zoom around it and draw on it.
+- Dragged pieces, images, notes and trays now swing a little behind the pointer.
+- Links to a jigsaw now show its picture and progress as a preview.
+- The first time you open a jigsaw, a small window shows the basic controls.
+- `Esc` now closes whatever was opened last.
+- The undo, redo and map buttons are gone from the top bar; use `Ctrl+Z`, `Ctrl+Shift+Z` and `Q`.
+- The changelog has moved to a new **About** section in the settings.
+- The jigsaws page scrolls smoothly and keeps its jigsaws centred on wide screens.
+- Images and notes moved by others now glide smoothly.
+- Several fixes for split screen, sharing, deleting jigsaws and loading errors.
 
 ## 10 November 2026
 
-- **A new jigsaws page**: all jigsaws now have a page of their own, like a gallery: a canvas you scroll up and down, with the jigsaws in staggered columns that drift a little as you move the mouse, the one under it tilting towards it. Jigsaws still in progress come first, with how far along each one is, and finished ones follow, each with how long it took and the day it was finished. Clicking all jigsaws zooms out of the table into the page, and clicking a jigsaw takes you straight to its table, zooming in. Private jigsaws in progress show a small lock.
-- **A new look for making a jigsaw**: your picture is shown large at the top, with the cuts drawn on it, and the settings sit under it: type or slide the number of pieces, pick a shape from the five shown side by side, and make it private. The big pieces option is gone, and players are now invited to a private jigsaw from inside it rather than when making it.
-- **Draw**: press `E` or the pencil in the toolbar, then drag on the table to draw in your colour, to point something out to the others. Each line fades away moments after you draw it. Press `E` or `Esc` to stop drawing.
-- **Split screen**: press `X` or the split button in the toolbar to see the table twice, side by side. Move and zoom each view on its own, then drag pieces straight from one view into another to carry them across the table. Click the little arrow beside the split button (or right click it) to pick a layout: two halves, a half and two quarters, or four quarters. Notes show in the top left view only. The other views remember where they were, so turning split screen off and on again, or changing the layout, brings them back to the same places.
-- Right clicking the bar along the top no longer opens the browser's menu.
-- The toolbar buttons no longer show their shortcut keys in the corner. Hover a button to see its key, or find them all under How to play.
+- **A new jigsaws page**: all jigsaws in a gallery you scroll through, zooming in and out of the table.
+- **A new look for making a jigsaw**, with a large preview of the cuts. The big pieces option is gone.
+- **Draw**: press `E` to draw lines on the table that fade away.
+- **Split screen**: press `X` to see the table in two to four views and drag pieces between them.
 
 ## 5 November 2026
 
-- New trays now have auto sort on from the start, so pieces put in them sort themselves. Click the switch on the tray to turn it off.
+- New trays now have auto sort on.
 
 ## 4 November 2026
 
-- The pictures in the share window now always fit inside their square, however tall or wide the jigsaw is.
-- Zoomed far out on a jigsaw with few pieces, the pieces' edges and corners now stay smooth instead of turning jagged.
+- Piece edges stay smooth when zoomed far out.
 
 ## 3 November 2026
 
-- The table no longer has a grid of dots on it, so it's a plain, calm background behind your pieces.
-- The buttons at the top middle are now one bar, with thin lines between the groups, instead of three separate bars.
-- You can react to notes with 👍, 👎, 👀 or 🔥. Hover a note to pick one, and click it again to take it back. Reactions show at the bottom of the note with how many people gave each; hover one to see who.
-- You can reply to notes. Hover a note and click the speech bubble, write your reply and press Enter or click anywhere else to send it (Shift+Enter for a new line, Escape to cancel). Replies show under the note's text with who wrote them, and you can delete your own.
-- Drop a note onto a tray to stick it to the tray's bottom right corner. It moves with the tray from then on, takes on the tray's colours and is outlined with it when the tray is selected; drag it off to unstick it. If the tray is deleted, the note stays where it was.
-- Moving a tray now lifts the tray itself, with a shadow under it, instead of lifting each piece in it. The pieces stay flat in the tray, and a note stuck to it lifts with it.
-- Notes now always lie on top, above trays and the pieces in them, so a tray never hides a note.
-- Notes now stay on the table when a jigsaw is finished. Trays and images are still cleared away.
+- React to notes with 👍, 👎, 👀 or 🔥, and reply to them.
+- Drop a note on a tray to stick it there.
+- Moving a tray lifts the whole tray.
+- Notes always lie on top, and stay when a jigsaw is finished.
+- The table no longer has dots, and the top buttons are one bar.
 
 ## 30 October 2026
 
-- Improvements to sorting: **G** and a tray's **Auto sort** now pull pieces together while keeping each one near its neighbours, and a tray shuffled with **Shift + G** stays shuffled.
-- Sending pieces to a tray with a number key (**1**–**9**) or **Send to** now puts them last in the tray, after the pieces already in it.
+- Better sorting with `G` and auto sort.
+- Pieces sent to a tray now go last in it.
 
 ## 19 October 2026
 
-- On a trackpad, sliding two fingers now moves around the table, no click needed. Pinch to zoom; a mouse wheel still zooms.
-- Moving around with the arrow keys or WASD now glides smoothly into motion and to a stop, instead of jumping at the start, and speeds up sooner when held.
+- Slide two fingers on a trackpad to move around the table.
+- Moving with the arrow keys or WASD is smoother.
 
 ## 15 October 2026
 
-- Jigsaw cards have a new, quieter look that fits the rest of the window: the picture sits in a frame, with the progress line, time, pieces and percentage under it instead of over the picture. Finished jigsaws say **Done** there, and private ones show a lock. The grey placeholders while jigsaws load have the same shape, so nothing jumps when the cards arrive.
-- The **Wobbly** piece shape is gone from the new jigsaw form. Jigsaws already made with it still work.
-- Tabs and holes on **Dovetail**, **Wave**, **Mixed** and **Jagged** pieces now sit a little off the middle of each edge, like on a real jigsaw and like Classic pieces already did. Jigsaws you've already started get the new pieces too; everything still fits together.
-- Jigsaws no longer have a title. The title field is gone from the new jigsaw form, and the jigsaw list shows just the picture, time, pieces and progress.
-- The shared picture has a smaller podium, and the site's address is now a small label in the bottom right corner of both the picture and the timelapse GIF.
-- The podium has a **Share** button under it, and turns slightly towards your pointer as you move it.
-- The share button on a finished jigsaw opens a **Share** window. Copy the picture with the podium as before, or share a **timelapse GIF** of the biggest piece growing until the jigsaw is done. Timelapses are recorded from now on, so jigsaws started earlier only show the part played after this update.
-- The podium button on a finished jigsaw is now the same size as the other buttons, and lights up on hover like them instead of growing.
-- Notes grow wider as you type on a line instead of wrapping it, and start a new row only when you press **Enter**.
-- Sharing a link to the game in apps like Slack, X or Messages now shows a colourful jigsaw preview picture.
-- Pieces keep a sharp, smooth edge however far you zoom in, instead of going blurry and blocky. A thin line marks each piece's edge at any zoom, in place of the soft rim and shadow, and connected pieces join without gaps.
-- Settings open in a window in the middle of the screen instead of a dropdown, with **General**, **Account** and **How to play** in a list down the side. **H** opens the window on How to play, and the first time you open a jigsaw it opens there by itself. Press **Esc** to open or close them, as long as Esc has nothing else to do, like clearing a selection or closing a menu.
-- **Log out** has moved to the **Account** panel in the settings, which your own player window's **Account** button now opens too.
-- The QR code under **Account** always logs you in on your phone. The switch to leave that out is gone.
-- Press **P** to open or close the list of all players.
-- Esc no longer leaves fullscreen when nothing is selected, since it opens the settings now. Hold it down to leave fullscreen, or press **F**.
-- Moving a piece or group by just a few pixels works again, for fine adjustments. Letting go after a tiny movement no longer puts it back where it was.
-- Jigsaws load much faster, after a refresh and when you open another one: the pieces show up in a fraction of the time, more than ten times as fast for big jigsaws. Very big jigsaws that sometimes failed to show all their pieces now load too.
-- Turning a piece and letting go of it straight away, or picking it up again while it's still turning, no longer cuts the turn short. It finishes smoothly instead of jumping to its new angle.
-- Moving or zooming the view while dragging out a selection box keeps the box's starting corner on the same spot of the table, so the box grows to cover what you scroll over instead of sliding along with the view.
-- A piece or group you drag, or turn while holding it, stays selected after you let go, so you can keep turning or sorting it straight away. This also fixes a quick click and **Space** leaving the piece unselected.
-- A tray no longer stretches to reach a piece someone is holding over the table when another player puts pieces in it, takes them out or sorts it.
-- When two players change the same tray at the same moment, neither change is lost: a piece taken out stays out and a piece put in stays in, and everyone sees the same tray.
-- Moving a tray picks up pieces someone else drops into it while you move it, instead of leaving them behind.
-- A group that ended up partly in a tray and partly out of it goes into the tray most of it is in.
+- **Share a timelapse GIF** of a finished jigsaw.
+- Jigsaws load much faster.
+- Pieces stay sharp however far you zoom in.
+- Settings open in a window, with How to play and Account inside. Press `P` for the players list.
+- New look for jigsaw cards. Jigsaws no longer have a title.
+- Tabs on more piece shapes sit off-centre, like a real jigsaw. The Wobbly shape is gone.
+- Notes grow wider as you type.
+- Many fixes for turning pieces, small moves, selections and trays.
 
 ## 14 October 2026
 
-- A piece that ended up connected but slightly out of line with the rest of its group slides back into place by itself, for everyone. Jigsaws that already have one are fixed the next time someone opens them.
-- After an update to the game, an open jigsaw reloads itself onto the new version, waiting until you're not holding anything, typing or in a window.
-- Clicking a group to select it no longer nudges it if your hand moves a little while you click.
-- Pieces no longer end up slightly out of place when two players drop pieces onto the same group at the same moment, or when a group is picked up just as a piece snaps onto it. Nothing snaps onto pieces someone else is carrying.
-- The picture you copy to share a finished jigsaw ends at its white frame, with no empty space around it, and has **jigsaw.marnil.dev** along the bottom.
+- Pieces slightly out of line in a group now slide back into place.
+- An open jigsaw reloads itself after an update.
+- Fixes for pieces ending up out of place.
 
 ## 13 October 2026
 
-- While jigsaws are loading, the all jigsaws window and player windows show shimmering placeholder cards instead of an empty space or a spinner.
-- The settings button has moved to the top left, next to the all jigsaws button, so the top right is just the players.
-- Your own player window has an **Account** button.
-- A tray goes away once you drag the last pieces out of it. Undo brings it back with them.
-- Press **R** with a tray selected to rename it. Without a tray selected, **R** still celebrates.
-- Spectator mode is gone, along with its switch in the settings menu.
-- The shadow under a jigsaw in the all jigsaws window is no longer cut off at the edges of the list.
-- The players panel is replaced by circles at the top right for the players who are here now, with the first two letters of their name in their colour. Yours comes first, tagged **You**. Rest the pointer on a circle to see their name, pieces connected, time spent and whether they made the jigsaw. The players button next to them lists everyone, here now and away, with the same card when you point at a name, saying how long ago each player was last here.
-- The players list starts with the total time spent by everyone.
-- Click a player to open their window: how long ago they were last online, what they did in this jigsaw, and the other jigsaws they have played, in a row you can scroll through. Private jigsaws only show there if you have them too.
-- **How to play** has moved to the settings menu, and the fullscreen button is gone. **H** and **F** still work.
-- The zoom and fit to screen buttons are gone. Use **+**, **-** and **C**, or scroll and pinch.
-- Pointing at a toolbar button now shows a small card with what it does and its shortcut key, in place of the browser's plain tooltip.
-- Buttons that are switched on, like settings or view mode, no longer turn pale when you point at them.
+- Players now show as circles at the top right. Click one to see what they've done.
+- Press `R` with a tray selected to rename it.
+- A tray goes away once it's empty.
+- Spectator mode is gone, as are the zoom and fullscreen buttons.
+- Toolbar buttons show a card with what they do.
 
 ## 9 October 2026
 
-- Images can be trimmed: choose **Trim** in an image's menu (**⋯** or right click) and drag over the part you want to keep. The rest is hidden and the part you kept stays where it was. Trim again to narrow it down further, or choose **Show whole image** to get the whole picture back. **Esc** cancels.
-- **C** (fit to screen) now makes room for trays, images and notes too, not just the pieces.
-- Moving a tray no longer outlines all the pieces in it, on your screen or anyone else's.
+- Trim images from their menu.
+- `C` now fits trays, images and notes too.
 
 ## 8 October 2026
 
-- When pieces connect, the biggest group now stays where it is and the smaller ones move to fit it. Before, adding a piece next to a loose one could nudge your whole main group, knocking it out of line with the pieces you had laid out around it.
+- When pieces connect, the biggest group stays put.
 
 ## 7 October 2026
 
-- The outline around selected pieces is smoother: it's the same thickness all the way round and follows the piece's shape closely, without a gap. It's blue for your own selection and in the other player's colour for theirs, and pieces being carried keep their outline too, on your screen and everyone else's.
-- When another player picks up a piece you have selected or are pointing at, the outline now moves with the piece instead of getting stuck where it was or not fitting it.
-- Clicking quickly on a big group of pieces no longer shows a second outline, or one that lags behind the pieces as they settle. Hovering over selected pieces no longer adds a dark outline on top of the blue one.
-- Each player now keeps the same colour for their cursor and outlines, instead of getting a new one every time they reload the page or open another tab.
-- Notes have a new look that matches the rest of the table: a plain card in the light or dark theme instead of a yellow sticky note. They are also narrower.
-- Text in a note stays the same size however much you write. The note grows taller to fit it, instead of the text shrinking.
-- Notes have the same **⋯** button as trays and images, on their top right corner, opening the note's menu.
-- The **⋯** buttons on notes, trays and images all look the same now, and sit on the top right corner, standing out a little over the edge so they don't cover what's underneath. They no longer show a hover text. Images no longer have a resize handle in that corner; use the other three, or hold **Shift** and drag.
-- A tray's number and name now sit in tags in the tray's colour on its top left corner, standing out over the edge like its buttons.
-- Holding **Shift** over an image shows the resize cursor, since a shift drag resizes it.
-- Everything you can drag shows the same open hand, which closes while you hold it: pieces, trays, images and notes.
-- Hold **Shift** and drag a tray to move it, even when you grab it on a piece. A shift click on a piece in a tray still selects it.
-- The players list no longer shows how many notes each player wrote, and writing a note no longer puts you on the list.
-- The help (**H**) is laid out in three columns, mouse, keyboard and tools, with shorter descriptions so it's quicker to scan.
-- The right click menu on a note has an **Edit note** item, the same as double clicking it.
-- Dragging a note or image to the edge of the screen now moves the table, like pieces and trays. Moving the table this way speeds up the longer you hold it there, just like the arrow keys and WASD, for pieces and trays too.
-- Trays have a new **⋯** button in their top right corner, next to the auto sort switch. It opens the tray's menu, the same one you get by right clicking the tray.
-- You can now name a tray and change its colour from its menu. The name shows quietly along the top of the tray, and hovering a name that is cut short shows it in full. Everyone in the room sees the change, and it can be undone.
-- Images have the same **⋯** button in their top right corner, opening the image's menu.
-- A tray's **⋯** button and auto sort switch, and an image's **⋯** button, now only show while your pointer is over that tray or image, or its right click menu is open, fading in and out. On a touch screen, tap the tray or image to show them.
-- Images can be made see-through with the new opacity slider in their menu. Everyone in the room sees the change, and it can be undone.
-- Hold **Shift** and drag an image to resize it from its nearest corner, without having to grab the corner itself. A shift click still adds the image to the selection.
-- Hold **Alt** and drag an image left or right to make it fainter or more solid.
-- The right click menu on pieces has a **Send to** item that opens a second menu with the trays to send them to: numbered trays first, like **Tray 1 (Edges)** when they have a name, then trays that only have a name.
-- The right click menus no longer have a **Deselect** item. Press Esc or click the table instead.
-- The changelog is wider, so it's easier to read.
-- When zoomed far out, a tray's number and buttons now hide once they no longer fit inside it.
-- Moving an empty tray, or images and notes as part of a selection, now saves where you put them. Before, they could jump back after reloading the page, and undo skipped the move.
-- When you join pieces, the piece you were holding decides the tray. Joining a piece from a tray to a group on the table takes it out of the tray, even if you let go close to the tray. Joining a group to a piece in a tray puts the whole group in that tray.
+- Name trays and change their colour.
+- Make images see-through, or resize them with `Shift` + drag.
+- Notes, trays and images have a **⋯** menu button.
+- Notes have a new look.
+- A **Send to** item in the piece menu.
+- Cleaner selection outlines, and each player keeps their colour.
 
 ## 6 October 2026
 
-- New spectator mode, in the settings menu: watch the jigsaw like a TV broadcast. Every player who is at the table gets their own screen, following their cursor and the area around it, with rounded corners and a shadow. Three players give two screens on top and one below in the middle, and the screens slide around when players join or leave. Only the all jigsaws and settings buttons are left on screen.
-- When a player matches a piece in spectator mode, their screen grows to fill the window, replays the move in slow motion, and celebrates with confetti before the screens slide back.
-- Every other line in the help is now shaded, so it is easier to read across from a key to what it does.
-- The help no longer has a "Got it" button. Close it with the cross, `H`, `Esc` or by clicking outside.
-- Select all (`Ctrl+A` or `Cmd+A`) no longer picks up the pieces that are in trays.
-- The reaction you throw with `R` is now a thumbs up instead of a party popper.
-- The settings menu now opens on top of the players list instead of behind it.
-- On touch screens, pieces you pick up now ride above your finger so you can see them, and they land where they are shown.
-- The help now only shows the controls that fit your device: touch gestures on phones and tablets, mouse and keyboard on computers.
+- On touch screens, pieces you pick up ride above your finger.
+- The help only shows controls for your device.
+- Spectator mode, in the settings.
 
 ## 5 October 2026
 
-- A finished jigsaw has a new share button next to the podium button. It copies a sticker to your clipboard, ready to paste: the podium from the game over the finished jigsaw, which is blurred and dimmed behind it, with a white border round it all on a see-through background. A short message tells you when it has been copied. Where the browser doesn't allow that, the picture is saved as a file instead.
-- The celebration when a jigsaw is finished is calmer: the party emojis only shoot up from the bottom corners, and no longer rain from the top.
-- When a jigsaw is finished, it turns the right way up, and all trays, images and notes are cleared away. A finished jigsaw can no longer be picked up, moved or turned.
-- Trays have an auto sort switch in their top right corner (a small grid icon), also in the right click menu. When it is on, every time pieces are put in the tray or taken out of it, everything in it is sorted into a grid, new pieces last, and pieces that fit join up. Everyone sees whether it is on.
-- Reactions are now just the celebration: the button next to view mode turns it on, and no drop-down with other emojis is left.
-- The players button moved to the top right, between help and settings, and no longer shows any times. The players list now starts with the total time.
-- When another player moves a tray with pieces in it, the tray now glides along with its pieces instead of running ahead of them.
-- Trays now lie above the pieces on the table, images and notes, so those slide under them, while the pieces inside a tray stay on top of it. Clicking on a tray over loose pieces or an image selects the tray.
-- Undo and redo your own changes with `Ctrl+Z` and `Ctrl+Shift+Z` (`⌘Z` and `⌘⇧Z` on a Mac), or the new buttons next to reactions. It covers moving, turning and sorting pieces, adding, moving, resizing and removing images, trays and notes, and what you have selected, so you can get a selection back after clearing it by accident. Things that another player has changed since, or is holding, stay as they are.
-- Right click a piece, tray, image or note to open a menu with everything you can do with it, such as turn, sort, send to a tray, remove and deselect. Each item shows its keyboard shortcut. Dragging with the right button still moves the table.
-- Other players no longer see your cursor while a dialog is open, such as sign in, help, all jigsaws or settings.
-- You can now turn selected pieces that lie in a tray.
-- The first nine trays get a number, 1 to 9, shown in the top left corner. When a tray is removed, its number goes to the next new tray. Select some pieces and press the number to move them into that tray.
-- In the new jigsaw form the image preview now spans the whole window, with the settings under it. It adjusts when you resize the window.
-- When someone turns pieces, you now see them spin into place too. Pieces other players carry also lift up with a shadow, like yours do.
-- You can now see what other players have selected or are pointing at. Pieces, images, trays and notes get an outline in the same color as that player's cursor, and so do the pieces they are carrying. The box they drag out to select is shown too.
-- **Classic** pieces now look more like a real jigsaw: gently crooked rows of pieces, and smooth round tabs that are each a little different in place, size and tilt. Jigsaws you've already started get the new pieces too; everything still fits together.
+- **Undo and redo** with `Ctrl+Z` and `Ctrl+Shift+Z`.
+- **Right-click menus** on pieces, trays, images and notes.
+- See what other players have selected.
+- Tray auto sort, and numbered trays you send pieces to with `1`–`9`.
+- A share button that copies a picture of a finished jigsaw.
+- A finished jigsaw turns the right way up and clears away trays, images and notes.
+- Classic pieces look more like a real jigsaw.
 
 ## 4 October 2026
 
-- Hardcore mode is gone. Jigsaws that were made with it now have every piece face up.
-- The account button is no longer in the top right corner. Find your account under **Settings** > **Account**.
-- Picking a name as a new player takes you straight in, without the passphrase dialog after it. Your passphrase is still under **Settings** > **Account**.
-- Zoom and fullscreen in the bottom right are now two separate bars instead of one bar with a divider.
+- Hardcore mode is gone.
+- Your account is now under **Settings** > **Account**.
 
 ## 1 October 2026
 
-- Three new piece shapes for new jigsaws: **Wobbly**, **Mixed** and **Jagged**. Every piece is a little different in size and form, with crooked edges, and the tabs and holes vary from edge to edge. Mixed puts different kinds of tabs in one jigsaw, Jagged has straight lines and sharp corners.
-- **Big pieces**, a new option for new jigsaws: some pieces are two to five pieces in one, in all kinds of shapes: long, L, T, S, square and more. They work with every piece shape, and a big piece moves and turns as one.
-- Round, Square and Arrow are no longer offered for new jigsaws. Jigsaws that already have them keep their pieces.
-- The shape list in the new jigsaw form stays open when you pick a shape, so you can try them one after another. Click outside it or press `Esc` to close it.
-- Pieces joining now make a soft wooden clack. It sounds the same for every join, the last one too.
-- The table is now drawn by your graphics card (WebGPU), so zooming, panning, turning and carrying stay smooth in every browser, however big the jigsaw. Your browser needs WebGPU for this; if it can't start, the jigsaw tells you so instead of loading.
-- The table is much bigger: four times as wide and tall, with lots more room to lay pieces out, and you can zoom out further to see it.
+- New piece shapes: **Wobbly**, **Mixed** and **Jagged**.
+- **Big pieces**, made of several pieces in one.
+- The table is drawn with WebGPU and is much bigger.
+- Pieces make a soft clack when they join.
 
 ## 30 September 2026
 
-- Click a note to select it, double click it to write in it. Notes and images no longer have an x to delete them: select them and press `Delete` or `Backspace`. `Esc` stops writing in a note.
-- The resize corners on images are rounder.
-- Fit to screen (`C`) zooms out a little further, leaving more room around the pieces.
-- The buttons at the top middle are in three separate bars instead of one bar with dividers.
-- **Trays** to sort pieces into. Add one with the new button next to the note button, or press `T`. With pieces selected, the new tray is made around them. Drop pieces on a tray to put them in it (everything you're carrying, when you let go over the tray): it grows and shrinks to fit them. Drag a tray to move it with its pieces. Click a tray to select it: `Space` and `G` then work on its pieces, and `Delete` removes the tray (the pieces stay). Turning or sorting a selection leaves the pieces in trays where they are. Each tray gets a random colour.
-- Pieces click into place with a sound and a little burst where they join, for everyone's pieces. Other players' clicks are quieter. Turn the sound off with **Sounds** in the settings menu.
-- The jigsaws window and the new jigsaw form look like the other windows now. Under the title, the All, Public and Private tabs sit in the middle, with **New jigsaw** on the right.
-- Remove the picked image with the x in its corner, to pick another.
-- The new jigsaw form has the image on the left and its settings on the right, with **Create jigsaw** at the top right where **New jigsaw** was. Loading an image from a link is gone: upload, drop or paste one instead.
-- New look for the jigsaw cards: the picture fills the card, with the title, time, pieces and progress over it.
-- The login window has tabs under its title for a new player, a passphrase or an email, and opens on New player.
-- The side menu with groups, notes and images (M) is gone.
-- Shift + G sorts the selected pieces into a grid in random order. It also works while holding several groups.
-- Your time is paused while a dialog is open over the board. The settings menu doesn't pause it.
-- The table behind the jigsaws window is blurred instead of greyed out.
-- The controls and the players list fade away after 3 seconds without moving the mouse or pressing a key, and come back as soon as you do.
-- Arrow keys and WASD pan faster the longer you hold them.
-- Fullscreen, with the F key or the new button next to zoom. On MacBooks with a notch, the middle toolbar and the windows move below it. In Chrome and Edge, Esc clears the selection first and leaves fullscreen when nothing is selected.
-- New icon for fit to screen.
-- Faster drawing of the board, especially with many pieces.
-- A changelog, in the settings menu.
-- Log out from the account dialog too.
-- Roomier email and password fields when logging in, matching the other text fields.
-- "Last played" in the players list is more reliable. Players whose computer went to sleep or lost its connection no longer stay "Currently playing".
+- **Trays** to sort pieces into. Press `T` to add one.
+- Pieces click into place with a sound and a little burst.
+- Fullscreen with `F`.
+- `Shift+G` sorts pieces into a shuffled grid.
+- The controls fade away when you're not moving the mouse.
+- A changelog, in the settings.

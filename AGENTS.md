@@ -6,9 +6,10 @@ The app and server are TypeScript with `strict` on. Run `npm run typecheck` afte
 
 ## Changelog
 
-`CHANGELOG.md` is shown to players in the changelog dialog (Settings > Changelog), so write it for them: short, plain sentences about what changed for them, not about the code.
+`CHANGELOG.md` is shown to players in the changelog dialog (Settings > About), so write it for them: what changed for them, not about the code.
 
-- Add an entry for every change a player would notice: new features, changed behaviour, visible fixes, noticeably better performance. Skip refactors, tooling and changes to these notes. Update the entry as a change evolves rather than adding a second one.
+- Keep entries short: one line, one sentence, ideally under 15 words. Say what changed, not how it works: no step-by-step instructions, no list of every case, no reasons or comparisons with before. Name a shortcut key if there is one.
+- Add an entry for changes a player would notice: new features, changed behaviour, visible fixes, noticeably better performance. Skip small visual tweaks, refactors, tooling and changes to these notes. Group several small fixes into one line ("Fixes for split screen and sharing"). Update the entry as a change evolves rather than adding a second one.
 - Each `## ` section is one day, titled with the date, for example `## 30 September 2026`. Newest section first. Add entries to today's section, starting it above the others if it isn't there yet.
 - Entries are `- ` bullets. The dialog renders `**bold**`, `` `code` `` and `[links](url)`, nothing else.
 
