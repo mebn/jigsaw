@@ -35,6 +35,11 @@ export function roomPage(html: string, room: SharedRoom) {
     ['og:image:width', String(room.image.width)],
     ['og:image:height', String(room.image.height)],
     ['og:image:alt', `The jigsaw's picture`],
+    // Slack reads the Twitter card before Open Graph, so these match the og: ones.
+    ['twitter:title', title],
+    ['twitter:description', description],
+    ['twitter:image', origin + room.image.path],
+    ['twitter:image:alt', `The jigsaw's picture`],
   ]
   // The <title> stays, as the page doesn't change it when leaving the jigsaw.
   return tags.reduce((out, [key, value]) => setMeta(out, key, value), html)
