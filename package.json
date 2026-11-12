@@ -7,7 +7,8 @@
     "dev": "vite --host",
     "build": "vite build",
     "start": "vite build && vite preview --host",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "cli": "esbuild cli/src/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=cli/dist/jigsaw.js \"--banner:js=#!/usr/bin/env node\""
   },
   "dependencies": {
     "gifenc": "^1.0.3",
@@ -23,6 +24,8 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.0.0",
     "@webgpu/types": "^0.1.74",
+    "esbuild": "^0.28.2",
+    "jpeg-js": "^0.4.4",
     "typescript": "^7.0.2",
     "vite": "^7.0.0"
   }

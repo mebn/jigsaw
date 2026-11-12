@@ -2,6 +2,7 @@
 
 ## 12 November 2026
 
+- **Play in a terminal**: run `npx @mebn/jigsaw` to pick a jigsaw and play with everyone.
 - On touch screens, tap something to select it before dragging it. Dragging anything else pans the table.
 - On touch screens, images, notes and trays now ride above your finger while you drag them.
 - Tapping a note on a phone no longer reacts to it or opens its menu by mistake.

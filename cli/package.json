@@ -1,0 +1,23 @@
+{
+  "name": "@mebn/jigsaw",
+  "version": "0.1.0",
+  "description": "Play a multiplayer jigsaw in the terminal",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mebn/jigsaw.git",
+    "directory": "cli"
+  },
+  "type": "module",
+  "bin": {
+    "jigsaw": "dist/jigsaw.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.4"
+  },
+  "scripts": {
+    "prepack": "cd .. && npm run cli"
+  }
+}
