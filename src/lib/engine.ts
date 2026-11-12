@@ -364,11 +364,21 @@ interface Marquee {
   baseRefs: Set<string>
   baseNotes: Set<string>
 }
+// Images, notes and trays carried with a finger, without pieces: they ride above it like held
+// pieces (TOUCH_LIFT), easing up (value 0 to 1) once they start moving. Where the finger is (sx, sy).
+interface FingerUp {
+  pointer: number
+  sx: number
+  sy: number
+  value: number
+}
 interface Pan {
   pointer: number
   sx: number
   sy: number
   menu?: MenuOpen | null
+  // A touch press on something not selected: what a tap (no move) does, and where the press was.
+  tap?: { run: () => void; sx: number; sy: number } | null
 }
 // An image under a point, see refHit(): its body (move) or a resize handle on corner (cx, cy).
 interface RefHit {
@@ -528,7 +538,7 @@ interface Handlers {
   moved: () => void
 }
 // What pointer events the engine reads; React's events have them too.
-type PointerLike = { pointerId: number; clientX: number; clientY: number }
+type PointerLike = { pointerId: number; clientX: number; clientY: number; pointerType?: string }
 // Chrome and Safari still report this, see onWheel().
 type LegacyWheelEvent = WheelEvent & { wheelDeltaY?: number }
 
@@ -784,6 +794,7 @@ export class Engine {
   camAnim: CamAnim | null
   drag: Drag | null
   lift: Lift | null
+  fingerUp: FingerUp | null
   pan: Pan | null
   pinch?: { d: number; m: number[] } | null
   trim?: Trim | null
@@ -1026,6 +1037,7 @@ export class Engine {
     this.camAnim = null
     this.drag = null
     this.lift = null
+    this.fingerUp = null
     this.pan = null
     this.pointers = new Map()
     this.touches = new Set()
@@ -1686,6 +1698,7 @@ export class Engine {
   // Picks up the whole selection: its pieces as a normal drag, with images and notes riding along.
   // Also called by the notes layer when a selected note is dragged, hence the pointer capture.
   grabSelection(e: PointerLike, from: { piece?: boolean; note?: string } = {}) {
+    if (e.pointerType === 'touch') this.touches.add(e.pointerId)
     const [sx, sy] = this.pos(e)
     const [wx, wy] = this.toWorld(sx, sy)
     if (!this.pointers.has(e.pointerId)) {
@@ -1722,6 +1735,7 @@ export class Engine {
   grabNote(e: PointerLike, id: string) {
     const n = this.notes?.get().find((x) => x.id === id)
     if (!n) return
+    if (e.pointerType === 'touch') this.touches.add(e.pointerId)
     const [sx, sy] = this.pos(e)
     const [wx, wy] = this.toWorld(sx, sy)
     this.canvas.setPointerCapture(e.pointerId)
@@ -1920,6 +1934,12 @@ export class Engine {
     this.setHovered(this.hoverKey(picked))
     const { rh, th } = picked
     const i = this.done ? -1 : picked.i
+    // On touch, only what is selected moves: a press on anything else pans the table, and a tap
+    // selects it, so panning over a busy table never drags things about by mistake.
+    if (e.pointerType === 'touch' && !e.shiftKey) {
+      const tap = this.touchTap(i, rh, th)
+      if (tap) return this.touchPan(e, tap)
+    }
     // Shift drag on a tray moves the tray, even from a piece in it, once the pointer moves; a shift
     // click on a piece in it still adds it to the selection or takes it out.
     if (th && e.shiftKey) {
@@ -1989,6 +2009,50 @@ export class Engine {
       baseNotes: keep ? new Set(this.selNotes) : new Set(),
     }
     if (!keep && this.selCount) this.setSelection(new Set())
+  }
+
+  // What a touch tap on a piece (i), image (rh) or tray (th) that isn't selected does: selects it, and
+  // only it. On the empty table it clears the selection. Null when it is selected, so it moves.
+  touchTap(i: number, rh: RefHit | null, th: TrayHit | null): (() => void) | null {
+    const guarded = (f: () => void) => () => (!this.guard || this.guard()) && f()
+    if (i >= 0) {
+      if (this.sel.has(i) && !(this.held.get(i)! > performance.now())) return null
+      return guarded(() => {
+        if (this.held.get(i)! > performance.now()) return
+        this.selectRef(null)
+        this.selectTray(null)
+        this.setSelection(new Set(this.members(this.g[i])))
+      })
+    }
+    if (rh) {
+      if (this.refSel === rh.ref.id || this.selRefs.has(rh.ref.id)) return null
+      return guarded(() => {
+        this.selectTray(null)
+        if (this.selCount) this.setSelection(new Set())
+        if (this.refs.includes(rh.ref)) this.selectRef(rh.ref.id)
+      })
+    }
+    if (th) {
+      if (this.traySel === th.tray.id) return null
+      return guarded(() => this.trays.includes(th.tray) && this.selectOnly('tray', th.tray.id))
+    }
+    return () => {
+      this.selectRef(null)
+      this.selectTray(null)
+      if (this.selCount) this.setSelection(new Set())
+    }
+  }
+
+  // Pans the table from a touch press, and runs tap if it is let go without moving. Also called by
+  // the notes layer for a press on a note that isn't selected, hence the pointer capture.
+  touchPan(e: PointerLike, tap: () => void) {
+    const [sx, sy] = this.pos(e)
+    if (!this.pointers.has(e.pointerId)) {
+      this.canvas.setPointerCapture(e.pointerId)
+      this.pointers.set(e.pointerId, [sx, sy])
+    }
+    this.startPan(e.pointerId, sx, sy)
+    this.pan!.tap = { run: tap, sx, sy }
   }
 
   // Shift-click on a piece: its group goes in or out of the selection.
@@ -2083,7 +2147,7 @@ export class Engine {
         }
       }
       if (!this.drag) {
-        if (c.moved) this.moveCarry(...this.toWorld(sx, sy))
+        if (c.moved) this.moveCarry(...this.fingerAt(e.pointerId, sx, sy))
         return
       }
     }
@@ -2115,6 +2179,8 @@ export class Engine {
       this.pan.sy = sy
       const m = this.pan.menu
       if (m && Math.hypot(sx - m.sx, sy - m.sy) > CLICK_PX) this.pan.menu = null
+      const t = this.pan.tap
+      if (t && Math.hypot(sx - t.sx, sy - t.sy) > CLICK_PX) this.pan.tap = null
       this.clampCam()
       if (this.marquee) this.updateMarquee()
       this.invalidate()
@@ -2154,7 +2220,7 @@ export class Engine {
       }
     }
     if (this.refDrag && e.pointerId === this.refDrag.pointer) {
-      this.moveRef(...this.toWorld(sx, sy))
+      this.moveRef(...(this.refDrag.mode === 'move' ? this.fingerAt(e.pointerId, sx, sy) : this.toWorld(sx, sy)))
       return
     }
     if (e.pointerType === 'mouse' && !e.buttons) {
@@ -2181,10 +2247,11 @@ export class Engine {
       this.toggleGroup(i)
     }
     if (this.pan && e.pointerId === this.pan.pointer) {
-      const m = this.pan.menu
+      const { menu: m, tap } = this.pan
       this.pan = null
       this.modeCursor()
       if (m && !this.drag) this.openMenu(m)
+      if (tap && !this.drag) tap.run()
     }
     if (this.marquee && e.pointerId === this.marquee.pointer) {
       this.marquee = null
@@ -2208,6 +2275,7 @@ export class Engine {
       this.out.ref.cancel()
       this.saveRef(ref, false)
     }
+    if (this.fingerUp?.pointer === e.pointerId) this.fingerUp = null
     if (this.pointers.size < 2) this.pinch = null
     // Letting go: the cursor shows what is under it again.
     if (!this.pointers.size && e.pointerType === 'mouse') this.hover(...this.pos(e))
@@ -2216,6 +2284,18 @@ export class Engine {
       this.inPress = false
       this.pressId++
     }
+  }
+
+  // The world point a pointer carrying images, notes or trays (without pieces) holds them at: with a
+  // finger, above it, like held pieces (see updatePivot()), easing up as they start to move.
+  fingerAt(pointer: number, sx: number, sy: number): Vec2 {
+    if (!this.touches.has(pointer)) return this.toWorld(sx, sy)
+    let f = this.fingerUp
+    if (f?.pointer !== pointer) f = this.fingerUp = { pointer, sx, sy, value: 0 }
+    f.sx = sx
+    f.sy = sy
+    if (f.value < 1) this.invalidate()
+    return this.toWorld(sx, sy - TOUCH_LIFT * f.value)
   }
 
   // Selects every group with a piece centre inside the box. Also called when the camera moves.
@@ -5065,6 +5145,18 @@ export class Engine {
         this.updatePivot()
         this.out.live.call()
       }
+    }
+
+    const fu = this.fingerUp
+    if (fu && fu.value < 1) {
+      fu.value += (1 - fu.value) * ease(dt, 55)
+      if (1 - fu.value < 0.005) fu.value = 1
+      else again = true
+      // What the finger carries follows it up.
+      const c = this.carry
+      if (c?.pointer === fu.pointer && c.moved && !this.drag) this.moveCarry(...this.fingerAt(fu.pointer, fu.sx, fu.sy))
+      const rd = this.refDrag
+      if (rd?.pointer === fu.pointer && rd.mode === 'move') this.moveRef(...this.fingerAt(fu.pointer, fu.sx, fu.sy))
     }
 
     for (const [id, rl] of this.rlift) {

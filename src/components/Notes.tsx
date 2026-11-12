@@ -122,12 +122,27 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
     if (e.target === area.current && document.activeElement === area.current) return
     if (e.target === replyArea.current) return
     e.preventDefault()
+    // On touch, a note that isn't selected doesn't move: a press pans the table, a tap selects it.
+    if (e.pointerType === 'touch' && !e.shiftKey && !selected) return engine.touchPan(e, () => ensureName() && engine.selectOnly('note', note.id))
     if (!ensureName()) return
     // Shift-click adds the note to the selection; dragging a selected note carries the whole selection.
     if (e.shiftKey) return engine.toggleNote(note.id)
     if (selected && engine.selCount > 1) return engine.grabSelection(e, { note: note.id })
     if (engine.selCount && !selected) engine.setSelection(new Set())
     engine.grabNote(e, note.id)
+  }
+
+  // A note's buttons only act on a press that started on them: a tap that selects the note brings its
+  // reactions up under the finger, and the click at the end of it would otherwise land on one.
+  const pressed = useRef<EventTarget | null>(null)
+  const press = (e: PointerEvent<HTMLButtonElement>) => {
+    pressed.current = e.currentTarget
+  }
+  const pressedHere = (e: MouseEvent<HTMLButtonElement>) => {
+    // A click from the keyboard has no press (detail 0).
+    const ok = e.detail === 0 || pressed.current === e.currentTarget
+    pressed.current = null
+    return ok
   }
 
   const edit = (e: ChangeEvent<HTMLTextAreaElement>) => {
@@ -184,7 +199,7 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
       onPointerLeave={() => engine.showTip(null)}
       onPointerDown={startMove}
     >
-      <button type="button" className="note-menu" onClick={menu} aria-label="Note menu">
+      <button type="button" className="note-menu" onPointerDown={press} onClick={(e) => pressedHere(e) && menu(e)} aria-label="Note menu">
         <i />
         <i />
         <i />
@@ -244,7 +259,8 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
               key={kind}
               type="button"
               className={`note-react${who.length ? ' used' : ''}${mine ? ' mine' : ''}`}
-              onClick={() => ensureName() && onReact(note.id, kind, !mine)}
+              onPointerDown={press}
+              onClick={(e) => pressedHere(e) && ensureName() && onReact(note.id, kind, !mine)}
               aria-label={label}
               aria-pressed={mine}
               data-who={who.map(nameOf).join(', ')}
@@ -254,7 +270,7 @@ function Note({ note, at, edge, engine, focus, selected, mark, canEdit, author, 
             </button>
           )
         })}
-        <button type="button" className="note-react note-reply-btn" onClick={startReply} aria-label="Reply" data-who="Reply">
+        <button type="button" className="note-react note-reply-btn" onPointerDown={press} onClick={(e) => pressedHere(e) && startReply()} aria-label="Reply" data-who="Reply">
           <Reply />
         </button>
       </div>

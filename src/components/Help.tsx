@@ -106,8 +106,9 @@ const SECTIONS = [
   {
     title: 'Touch',
     rows: [
-      [<Key key="tp">Drag a piece</Key>, 'Move'],
-      [<Key key="tt">Drag the table</Key>, 'Pan'],
+      [<Key key="ts">Tap a piece</Key>, 'Select'],
+      [<Key key="tp">Drag a selected piece</Key>, 'Move'],
+      [<Key key="tt">Drag anything else</Key>, 'Pan'],
       [<Key key="tz">Pinch</Key>, 'Zoom'],
       [<Key key="t2">2nd finger tap</Key>, 'Rotate'],
     ],
@@ -144,9 +145,10 @@ export default function HelpPanel() {
 // Just enough to start: moving, rotating, panning and zooming.
 const BASICS: Row[] = TOUCH
   ? [
-      [<Key key="tp">Drag a piece</Key>, 'Move'],
+      [<Key key="ts">Tap a piece</Key>, 'Select'],
+      [<Key key="tp">Drag a selected piece</Key>, 'Move'],
       [<Key key="t2">2nd finger tap</Key>, 'Rotate'],
-      [<Key key="tt">Drag the table</Key>, 'Pan'],
+      [<Key key="tt">Drag anything else</Key>, 'Pan'],
       [<Key key="tz">Pinch</Key>, 'Zoom'],
     ]
   : [

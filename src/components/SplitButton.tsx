@@ -30,14 +30,16 @@ export default function SplitButton({ on, panes, onToggle, onPanes }: SplitButto
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const Icon = LAYOUTS.find((l) => l.panes === panes)!.Icon
 
-  // Below the button and its arrow, kept on screen.
+  // Below the button and its arrow, or above them when the bar is at the bottom of the screen (on a
+  // phone), kept on screen.
   useLayoutEffect(() => {
     const b = group.current?.getBoundingClientRect()
     const m = menu.current
     if (!open || !b || !m) return setPos(null)
+    const below = b.bottom + 6 + m.offsetHeight + 4 <= window.innerHeight
     setPos({
       left: Math.max(4, Math.min(b.left, window.innerWidth - m.offsetWidth - 4)),
-      top: Math.min(b.bottom + 6, window.innerHeight - m.offsetHeight - 4),
+      top: below ? b.bottom + 6 : Math.max(4, b.top - 6 - m.offsetHeight),
     })
   }, [open])
 

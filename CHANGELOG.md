@@ -1,5 +1,13 @@
 # Changelog
 
+## 12 November 2026
+
+- On touch screens, you now tap a piece, image, note or tray to select it before you can drag it. Dragging anything that isn't selected pans the table instead, so panning around a busy table no longer moves pieces by mistake. Tapping the empty table clears the selection.
+- On touch screens, images, notes and trays you drag now rise above your finger like pieces do, so your finger no longer hides what you're moving.
+- On touch screens, tapping a note no longer gives it a reaction or opens its menu by mistake. Its reaction and menu buttons only show once the note is selected, and only respond to a tap that starts on them.
+- On phones and other narrow screens, the bar with the play tools (view mode, draw, reactions, split screen, trays, images and notes) now sits at the bottom of the screen, in easy reach of your thumb, instead of under the top bar. The split screen menu opens upwards from it.
+- The podium and share buttons on a finished jigsaw are now centred together, instead of the podium alone sitting in the middle with the share button off to one side.
+
 ## 11 November 2026
 
 - The changelog and the link to the source code have moved from General to a new **About** section in the settings.

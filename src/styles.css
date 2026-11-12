@@ -1753,6 +1753,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   cursor: pointer;
   opacity: 0;
   transform: scale(0.75);
+  /* Hidden, it can't be pressed by mistake. */
+  pointer-events: none;
   transition:
     opacity 0.15s,
     transform 0.15s;
@@ -1763,10 +1765,19 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   border-radius: 50%;
   background: currentColor;
 }
-.note:hover .note-menu,
 .note.sel .note-menu {
   opacity: 1;
   transform: none;
+  pointer-events: auto;
+}
+/* Hover only where there is a real one: a tap on a touch screen counts as a hover, which would bring
+   the buttons up under the finger mid tap, and the tap would land on them. */
+@media (hover: hover) {
+  .note:hover .note-menu {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
 }
 .note-menu:hover {
   background: linear-gradient(var(--hover), var(--hover)) var(--bg);
@@ -1804,17 +1815,30 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
     display 0.15s allow-discrete;
 }
 .note-react.used,
-.note:hover .note-react,
 .note.sel .note-react {
   display: inline-flex;
   opacity: 1;
   transform: none;
 }
+@media (hover: hover) {
+  .note:hover .note-react {
+    display: inline-flex;
+    opacity: 1;
+    transform: none;
+  }
+}
 @starting-style {
-  .note:hover .note-react:not(.used),
   .note.sel .note-react:not(.used) {
     opacity: 0;
     transform: scale(0.75);
+  }
+}
+@media (hover: hover) {
+  @starting-style {
+    .note:hover .note-react:not(.used) {
+      opacity: 0;
+      transform: scale(0.75);
+    }
   }
 }
 .note-react:not(.used) span {
@@ -1969,12 +1993,17 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 8px 24px var(--shadow);
   pointer-events: none;
 }
+/* On a narrow screen the play tools go to the bottom middle, in reach of a thumb, and the podium
+   and share buttons sit above them. */
 @media (max-width: 640px) {
-  .float.tc {
-    top: 68px;
+  .float.tc,
+  :root[data-notch] .room .tc {
+    top: auto;
+    bottom: calc(16px + env(safe-area-inset-bottom));
   }
-  .float.dev-menu {
-    top: 120px;
+  .room .podium-btn,
+  .room .share-btn {
+    bottom: calc(74px + env(safe-area-inset-bottom));
   }
 }
 
@@ -2871,7 +2900,8 @@ button.link:hover {
 .podium-btn {
   position: absolute;
   bottom: 16px;
-  left: 50%;
+  /* Centred together with the share button beside it (44px each, 8px apart). */
+  left: calc(50% - 26px);
   z-index: 5;
   display: grid;
   place-items: center;
@@ -3325,7 +3355,7 @@ button.link:hover {
 .share-btn {
   position: absolute;
   bottom: 16px;
-  left: calc(50% + 22px + 8px);
+  left: calc(50% + 4px);
   z-index: 5;
   display: grid;
   place-items: center;
