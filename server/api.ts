@@ -47,10 +47,10 @@ function createApi(dbFile: string) {
   }
 
   // One socket per open room, from api.ts in the page.
-  function connect(socket: Socket, url: URL) {
+  function connect(socket: Socket, url: URL, ip: string) {
     const roomId = url.searchParams.get('room') || ''
     if (!rooms.exists(roomId)) return socket.closed()
-    const ws: RoomSocket = Object.assign(socket, { client: url.searchParams.get('client') || '', player: null })
+    const ws: RoomSocket = Object.assign(socket, { client: url.searchParams.get('client') || '', ip, player: null })
     hub.join(roomId, ws)
     // Which build is being served, so a page still running an older one can reload (see src/lib/update.ts).
     if (build) ws.send(JSON.stringify({ type: 'build', build }))

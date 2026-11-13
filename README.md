@@ -56,9 +56,13 @@ Players can switch their login to an email and password, and invite players who 
 
 - `SMTP_URL`, such as `smtps://user:pass@smtp.example.com`, or `SMTP_HOST`, `SMTP_PORT` (default 587, 465 uses TLS), `SMTP_USER` and `SMTP_PASS`
 - `MAIL_FROM`, the sender, such as `Jigsaw <jigsaw@example.com>`
-- `APP_URL`, the public address used for links in emails, such as `https://jigsaw.example.com`. Without it, links use the address the inviting browser was on.
+- `APP_URL`, the public address used for links in emails, such as `https://jigsaw.example.com`. Without it, emails that are really sent carry no link (the address a browser says it is on can't be trusted); mail printed to the log uses the address the inviting browser was on.
 
 Without SMTP settings, emails are printed to the server log instead of being sent.
+
+## Behind a proxy
+
+The server limits wrong passphrases, new players and new jigsaws per address. Behind a reverse proxy or CDN every request comes from the proxy's address, so set `CLIENT_IP_HEADER` to the header the proxy puts the player's own address in, such as `CF-Connecting-IP` behind Cloudflare. Only set it when the server can't be reached around the proxy, since anyone who can reach it directly could write the header themselves.
 
 ## Playing in a terminal
 

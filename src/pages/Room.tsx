@@ -261,9 +261,11 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         setDone(eng.isComplete())
         // Already finished before this player opened it: nothing left to celebrate.
         if (eng.isComplete()) celebrated.mark()
-        // A jigsaw from before link previews gets one from whoever opens it first. Private ones never
-        // show theirs, see sharing() in server/rooms.ts.
-        if (!room.preview && !room.private) setTimeout(() => !dead && api.preview(id, renderPreview(image)).catch(() => {}), 1000)
+        // A jigsaw from before link previews gets one when its maker opens it (anyone logged in, when
+        // it has no maker). Private ones never show theirs, see sharing() in server/rooms.ts.
+        const mine = passphrase.current && (!room.owner || room.owner === playerId)
+        if (!room.preview && !room.private && mine)
+          setTimeout(() => !dead && passphrase.current && api.preview(id, passphrase.current, renderPreview(image)).catch(() => {}), 1000)
         const e = eng
         sock = openRoomSocket(
           id,

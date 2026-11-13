@@ -5,7 +5,7 @@ import type { IncomingMessage } from 'node:http'
 import { LIMITS, PREVIEW_H, PREVIEW_W } from '../shared/protocol.ts'
 import type { NewRoom, PlayerRef, RoomDetails } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
-import { fail, ok, readJson, siteOrigin } from './http.ts'
+import { fail, ipOf, ok, printable, rateLimit, readJson, siteOrigin } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
 import type { SharedRoom } from './meta.ts'
@@ -27,6 +27,17 @@ function previewBytes(data: unknown): Buffer | null {
   const m = typeof data === 'string' ? /^data:image\/jpeg;base64,(.*)$/s.exec(data) : null
   const bytes = m ? Buffer.from(m[1], 'base64') : null
   return bytes && bytes.length <= PREVIEW_MAX && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? bytes : null
+}
+
+// The kinds of picture a jigsaw and its thumbnail may be. Anything else (a page, an SVG with script)
+// is turned away when uploaded, and one stored before this check is served as plain bytes.
+const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'])
+const imageType = (type: string) => (IMAGE_TYPES.has(type.trim().toLowerCase()) ? type.trim().toLowerCase() : 'application/octet-stream')
+// A picture sent as a data URL: its type and bytes, or null when it isn't a picture.
+function pictureOf(data: unknown): { type: string; bytes: Buffer } | null {
+  const m = typeof data === 'string' ? /^data:([^;,]+);base64,(.*)$/s.exec(data) : null
+  const type = m ? m[1].trim().toLowerCase() : ''
+  return m && IMAGE_TYPES.has(type) ? { type, bytes: Buffer.from(m[2], 'base64') } : null
 }
 
 const progress = (n: number, groups: number) => ({ progress: n > 1 ? (n - groups) / (n - 1) : 0, done: n > 0 && groups === 1 })
@@ -109,10 +120,14 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       ORDER BY t.seen DESC, r.created DESC`),
   }
 
+  // New jigsaws per address.
+  const uploads = rateLimit(30, 60 * 60 * 1000)
+
   // Emails a private jigsaw's link to players with an email, and adds it to their list. Players who
   // already have it are skipped, so nobody gets the same invite twice. Returns how many were invited.
-  function invite(room: Room, from: PlayerRef, ids: unknown, origin: string) {
-    const link = `${origin}/r/${room.id}`
+  function invite(room: Room, from: PlayerRef, ids: unknown, origin: string | null) {
+    // Without an address to trust for the link (see siteOrigin()), the email points to their list.
+    const where = origin ? `Open it here: ${origin}/r/${room.id}` : 'Log in and you will find it in your list of jigsaws.'
     let n = 0
     for (const id of new Set((Array.isArray(ids) ? ids : []).slice(0, 50).map(String))) {
       const p = q.emailOf.get(id)
@@ -121,7 +136,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       mailer.send({
         to: p.email,
         subject: `${from.name} invited you to a jigsaw`,
-        text: `${from.name} invited you to play a private jigsaw.\n\nOpen it here: ${link}\n\nOnly people with this link can see and play it.`,
+        text: `${from.name} invited you to play a private jigsaw.\n\n${where}\n\nOnly people with its link can see and play it.`,
       })
       n++
     }
@@ -155,11 +170,17 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     // Private jigsaws are listed only for players who have opened them.
     if (req.method === 'GET') return ok(q.list.all(players.asking(req)?.id || '').map((r) => ({ ...r, ...progress(r.n, r.groups) })))
     if (req.method !== 'POST') return
+    // A new jigsaw is a big upload, read before its maker can be checked: each address gets so many.
+    const ip = ipOf(req)
+    if (uploads.blocked(ip)) return fail(429, 'too many new jigsaws from here, try again later')
+    uploads.count(ip)
     const b = await readJson<NewRoom>(req, 40 * 1024 * 1024)
-    const m = /^data:([^;]+);base64,(.*)$/s.exec(b.image || '')
-    if (!m || !Array.isArray(b.pieces) || !b.pieces.length) return fail(400, 'bad request')
+    const picture = pictureOf(b.image)
+    // The thumbnail is kept as the data URL it came as; one that isn't a picture is left out.
+    const thumb = pictureOf(b.thumb) ? String(b.thumb) : ''
+    if (!picture || !Array.isArray(b.pieces) || !b.pieces.length || b.pieces.length > LIMITS.pieces) return fail(400, 'bad request')
     // The creator proves who they are with their passphrase, and becomes the owner.
-    const owner = players.whoIs(b.passphrase)
+    const owner = players.whoIs(b.passphrase, ip)
     if (!owner) return fail(403, 'log in to create a jigsaw')
     // A private jigsaw's link is all it takes to join, so it gets an id too long to guess.
     const hidden = !!b.private
@@ -168,7 +189,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     tx(() => {
       q.insertRoom.run(
         id,
-        String(b.name || 'Jigsaw').slice(0, LIMITS.roomName),
+        printable(String(b.name || '')).trim().slice(0, LIMITS.roomName) || 'Jigsaw',
         Date.now(),
         Number(b.cols) | 0,
         Number(b.rows) | 0,
@@ -176,9 +197,9 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
         Number(b.seed) | 0,
         Number(b.width),
         Number(b.height),
-        Buffer.from(m[2], 'base64'),
-        m[1],
-        String(b.thumb || ''),
+        picture.bytes,
+        picture.type,
+        thumb,
         owner.id,
         hidden ? 1 : 0,
         b.longPieces ? 1 : 0,
@@ -189,7 +210,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       if (hidden) q.join.run(id, owner.id, Date.now())
       for (const p of pieces) q.insertPiece.run(id, p.i, p.x, p.y, p.r, p.g)
     })
-    if (hidden) invite(q.room.get(id)!, owner, b.invite, siteOrigin(req))
+    if (hidden) invite(q.room.get(id)!, owner, b.invite, siteOrigin(req, mailer.sent))
     return ok({ id })
   }
 
@@ -213,13 +234,13 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     }
     if (route === 'GET image') {
       const img = q.image.get(id)!
-      return { file: Buffer.from(img.image), type: img.image_type }
+      return { file: Buffer.from(img.image), type: imageType(img.image_type) }
     }
     // The thumbnail, stored as a data URL, as a file; see sharing().
     if (route === 'GET thumb') {
       const { thumb } = q.thumb.get(id)!
       const m = /^data:([^;]+);base64,(.*)$/s.exec(typeof thumb === 'string' ? thumb : Buffer.from(thumb).toString('latin1'))
-      return m ? { file: Buffer.from(m[2], 'base64'), type: m[1] } : fail(404, 'not found')
+      return m ? { file: Buffer.from(m[2], 'base64'), type: imageType(m[1]) } : fail(404, 'not found')
     }
     if (route === 'GET preview') {
       const p = q.preview.get(id)
@@ -228,14 +249,19 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     if (route === 'GET snapshots') return ok(table.snapshots(id))
     // A jigsaw made before link previews gets one from the first page to open it (see Room.tsx).
     // Read here, before the other posts, as it's bigger than they may be.
+    // Only its maker may give it one (anyone logged in, for a jigsaw from before they had makers), so
+    // nobody can put their own picture on someone else's link. Private jigsaws show no preview.
     if (route === 'POST preview') {
-      const bytes = previewBytes((await readJson<{ image: string }>(req, 2 * PREVIEW_MAX)).image)
+      const p = await readJson<{ image: string; passphrase: string }>(req, 2 * PREVIEW_MAX)
+      const who = players.whoIs(p.passphrase, ipOf(req))
+      if (!who || room.private || (room.owner && who.id !== room.owner)) return fail(403, 'only the player who made this jigsaw can set its preview')
+      const bytes = previewBytes(p.image)
       if (!bytes) return fail(400, 'bad request')
       q.setPreview.run(bytes, id)
       return ok({ ok: true })
     }
     const b = await readJson<{ passphrase: string; players: string[]; seconds: number; client: string }>(req)
-    const who = players.whoIs(b.passphrase)
+    const who = players.whoIs(b.passphrase, ipOf(req))
     // Only the player who created the jigsaw may delete it; old jigsaws have no owner.
     if (route === 'DELETE ') {
       if (!room.owner || who?.id !== room.owner) return fail(403, 'only the player who made this jigsaw can delete it')
@@ -253,7 +279,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     if (route === 'POST invite') {
       if (!who) return fail(403, 'log in to invite players')
       if (!room.private) return fail(400, 'only private jigsaws take invites')
-      return ok({ invited: invite(room, who, b.players, siteOrigin(req)) })
+      return ok({ invited: invite(room, who, b.players, siteOrigin(req, mailer.sent)) })
     }
     if (route === 'POST time') {
       const secs = Math.max(0, Math.min(300, Math.round(Number(b.seconds) || 0)))
