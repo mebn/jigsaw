@@ -89,7 +89,7 @@ export interface RoomSummary {
   finished: number
 }
 
-// A jigsaw a player has played: pieces is how many they connected, time how long they spent on it and
+// A jigsaw a player has played: connections is how many they made, time how long they spent on it and
 // seen when they were last in it (ms since epoch, 0 for never).
 export interface PlayerRoom {
   id: string
@@ -104,7 +104,7 @@ export interface PlayerRoom {
   n: number
   progress: number
   done: boolean
-  pieces: number
+  connections: number
   time: number
 }
 
@@ -201,6 +201,12 @@ export interface TimeRow {
   seconds: number
 }
 
+// A player's score in a jigsaw: the connections they made, one for every join of two pieces or groups.
+export interface ScoreRow {
+  player: string
+  n: number
+}
+
 // A whole jigsaw. longPieces and private are 0 or 1. seen: when each player was last in it (ms since
 // epoch, by player id); online: the ids of players in it now.
 export interface RoomDetails {
@@ -225,6 +231,7 @@ export interface RoomDetails {
   refs: RefRow[]
   trays: TrayRow[]
   times: TimeRow[]
+  scores: ScoreRow[]
   seen: Record<string, number>
   online: string[]
   players: PlayerRef[]
@@ -320,6 +327,8 @@ export type ServerMessage =
   | { type: 'player'; client?: string; player: PlayerRef }
   | { type: 'presence'; client?: undefined; online: string[]; seen: Record<string, number> }
   | { type: 'time'; client?: string; user: string; seconds: number }
+  // A player's score after connections they just made.
+  | { type: 'score'; client?: undefined; player: string; n: number }
   | { type: 'deleted'; client?: undefined }
   | { type: 'gone'; client: string }
   | { type: 'note'; client: string; live: boolean; note: NoteRow }

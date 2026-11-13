@@ -1,7 +1,7 @@
 // What lies on a room's table (pieces, notes and their reactions and replies, reference images and
 // trays), how pages change it over the room socket, and the timelapse of the biggest group.
 import { LIMITS, isNoteReaction } from '../shared/protocol.ts'
-import type { NoteReaction, NoteReply, NoteRow, PieceMove, PieceRow, RefRow, ServerMessage, TrayRow } from '../shared/protocol.ts'
+import type { NoteReaction, NoteReply, NoteRow, PieceMove, PieceRow, RefRow, ScoreRow, ServerMessage, TrayRow } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
 import type { Hub, RoomSocket } from './hub.ts'
 import type { Players } from './players.ts'
@@ -70,6 +70,14 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
     updatePiece: prepare<{ by: string | null }>(
       'UPDATE pieces SET x = ?, y = ?, r = ?, g = ?, by = COALESCE(?, by) WHERE room_id = ? AND idx = ? RETURNING by',
     ),
+    // For counting the connections a move makes, see saveMoves().
+    pieceGroup: prepare<{ g: number }>('SELECT g FROM pieces WHERE room_id = ? AND idx = ?'),
+    hasGroup: prepare<{ one: number }>('SELECT 1 AS one FROM pieces WHERE room_id = ? AND g = ? LIMIT 1'),
+    scores: prepare<ScoreRow>('SELECT player_id AS player, n FROM scores WHERE room_id = ? AND n > 0'),
+    addScore: prepare<{ n: number }>(`
+      INSERT INTO scores (room_id, player_id, n) VALUES (?, ?, ?)
+      ON CONFLICT (room_id, player_id) DO UPDATE SET n = n + excluded.n
+      RETURNING n`),
     // The tray a piece is in, and when it was put there: kept when the tray stays the same.
     setPieceTray: prepare<{ tray_at: number }>(
       'UPDATE pieces SET tray = ?1, tray_at = CASE WHEN tray IS ?1 THEN tray_at ELSE ?2 END WHERE room_id = ?3 AND idx = ?4 RETURNING tray_at',
@@ -158,14 +166,30 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
   // into its tray (ta), so a tray sorts in the same order for all. me: the player moving them. A
   // page says who connected each piece (by), but is only taken at its word for its own player:
   // otherwise the piece stays whose it was.
-  function saveMoves(roomId: string, list: unknown[], me: string) {
+  // Every connection the moves make scores one for the player, whether single pieces or whole groups
+  // were joined: counted here as how many fewer groups the jigsaw has afterwards, so a page can't
+  // just claim them. score: whether they count (a fix to pieces left behind doesn't). Returns the
+  // player's new score with the pieces when they made any.
+  function saveMoves(roomId: string, list: unknown[], me: string, score: boolean) {
     const now = Date.now()
     const out: PieceMove[] = []
     const groups = new Set<number>()
+    // The groups pieces left or joined: those that were there before the moves, and all of them.
+    const before = new Set<number>()
+    const touched = new Set<number>()
+    let total: number | undefined
     tx(() => {
       for (const raw of list) {
         const b = loose(raw)
         const p: PieceMove = { i: num(b.i), x: num(b.x), y: num(b.y), r: num(b.r), g: num(b.g) }
+        const was = score ? q.pieceGroup.get(roomId, p.i) : undefined
+        if (was && was.g !== p.g) {
+          before.add(was.g)
+          touched.add(was.g)
+          // Looked up the first time a group is joined, while it's still as it was.
+          if (!touched.has(p.g) && q.hasGroup.get(roomId, p.g)) before.add(p.g)
+          touched.add(p.g)
+        }
         // A piece the jigsaw doesn't have is no move at all.
         const saved = q.updatePiece.get(p.x, p.y, p.r, p.g, b.by === me ? me : null, roomId, p.i)
         if (!saved) continue
@@ -179,8 +203,11 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
         groups.add(p.g)
       }
       if (out.length) snapshot(roomId, now, groups)
+      let made = before.size
+      for (const g of touched) if (q.hasGroup.get(roomId, g)) made--
+      if (made > 0 && me) total = q.addScore.get(roomId, me, made)?.n
     })
-    return out
+    return { pieces: out, total }
   }
 
   // Notes, reference images and trays: live only relays (while dragging), otherwise it's saved.
@@ -220,17 +247,21 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
     // for before anything can be touched.
     if (!ws.player && CHANGES.has(String(m.type))) return
     switch (m.type) {
-      case 'moves':
+      case 'moves': {
         if (!Array.isArray(m.pieces)) return
-        const pieces = saveMoves(roomId, m.pieces.slice(0, LIMITS.pieces), author)
+        const { pieces, total } = saveMoves(roomId, m.pieces.slice(0, LIMITS.pieces), author, !m.fix)
         if (!pieces.length) return
-        return relay({
+        relay({
           type: 'moves',
           client,
           pieces,
           turns: Array.isArray(m.turns) ? m.turns.slice(0, 2000) : undefined,
           fix: m.fix ? true : undefined,
         })
+        // The score goes to everyone, the player who made it too.
+        if (total !== undefined) hub.broadcast(roomId, { type: 'score', player: author, n: total })
+        return
+      }
       // Drags, pointers and what players have selected are only relayed, as they are.
       case 'grab':
       case 'live':
@@ -323,6 +354,7 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
       noteReplies: q.noteReplies.all(roomId),
       refs: q.refs.all(roomId, null),
       trays: q.trays.all(roomId, null).map((t) => trayOut(t, roomId)),
+      scores: q.scores.all(roomId),
     }),
     // The timelapse: the biggest group each time it grew, its cells a base64 bitset.
     snapshots: (roomId: string) => q.snapshots.all(roomId).map((s) => ({ t: s.t, size: s.size, pieces: Buffer.from(s.pieces).toString('base64') })),
