@@ -2,8 +2,8 @@ import type { PlayerRef, ServerMessage } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
 import type { Socket } from './ws.ts'
 
-// A socket of a room, with the page's client id and the player on it.
-export type RoomSocket = Socket & { client: string; player: PlayerRef | null }
+// A socket of a room, with the page's client id, the address it's from and the player on it.
+export type RoomSocket = Socket & { client: string; ip: string; player: PlayerRef | null }
 
 // Who is in which room right now: their sockets, what goes out to them, and when players were last
 // in each room.

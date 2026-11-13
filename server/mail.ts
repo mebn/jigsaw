@@ -21,6 +21,8 @@ export function createMailer() {
   const smtp = transport()
   const from = process.env.MAIL_FROM || process.env.SMTP_USER || 'jigsaw@localhost'
   return {
+    // Whether mail really goes out, rather than to the server log.
+    sent: !!smtp,
     // Resolves once sent; never rejects, since a failed email shouldn't fail what caused it.
     send: async ({ to, subject, text }: { to: string; subject: string; text: string }) => {
       if (!smtp) return console.log(`[mail] to ${to}: ${subject}\n${text}\n`)

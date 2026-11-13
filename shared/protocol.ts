@@ -9,6 +9,8 @@ export const LIMITS = {
   email: 254,
   password: 8,
   roomName: 80,
+  // The most pieces (cells, for long pieces) a jigsaw can have, and one message can move.
+  pieces: 10000,
   // Ids of notes, images and trays, and the tray a piece is in.
   id: 40,
   text: 2000,

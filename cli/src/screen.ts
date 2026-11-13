@@ -56,6 +56,10 @@ export class Cells {
   put(col: number, row: number, ch: string, fg: Rgb, bg?: Rgb, bold = false) {
     if (col < 0 || row < 0 || col >= this.w || row >= this.h) return
     const k = row * this.w + col
+    // Names and other text from the site are drawn as they come: a control character, which the
+    // terminal would act on (an escape sequence), shows as a blank.
+    const code = ch.charCodeAt(0)
+    if (code < 32 || (code >= 127 && code < 160)) ch = ' '
     this.ch[k] = ch
     this.fg[k] = pack(fg)
     if (bg) this.bg[k] = pack(bg)

@@ -9,7 +9,10 @@ import type { Players } from './players.ts'
 // What a page sent, unchecked.
 type Loose = Record<string, unknown>
 const loose = (v: unknown): Loose => (v && typeof v === 'object' ? (v as Loose) : {})
-const num = (v: unknown) => Number(v) || 0
+const num = (v: unknown) => {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
 const str = (v: unknown, max: number) => String(v || '').slice(0, max)
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
@@ -56,12 +59,17 @@ const cleanTray = (b: Loose) => ({
   created: num(b.created),
 })
 
+// The messages that change what's on the table, or show it changing.
+const CHANGES = new Set(['moves', 'grab', 'live', 'sway', 'note', 'ref', 'tray', 'note-delete', 'ref-delete', 'tray-delete'])
+
 type StoredTray = Omit<TrayRow, 'auto' | 'pieces'> & { auto: number }
 
 export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
   const q = {
     pieces: prepare<PieceRow>('SELECT idx AS i, x, y, r, g, by, tray AS t, tray_at AS ta FROM pieces WHERE room_id = ? ORDER BY idx'),
-    updatePiece: prepare('UPDATE pieces SET x = ?, y = ?, r = ?, g = ?, by = COALESCE(?, by) WHERE room_id = ? AND idx = ?'),
+    updatePiece: prepare<{ by: string | null }>(
+      'UPDATE pieces SET x = ?, y = ?, r = ?, g = ?, by = COALESCE(?, by) WHERE room_id = ? AND idx = ? RETURNING by',
+    ),
     // The tray a piece is in, and when it was put there: kept when the tray stays the same.
     setPieceTray: prepare<{ tray_at: number }>(
       'UPDATE pieces SET tray = ?1, tray_at = CASE WHEN tray IS ?1 THEN tray_at ELSE ?2 END WHERE room_id = ?3 AND idx = ?4 RETURNING tray_at',
@@ -132,27 +140,21 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
     snapped.set(roomId, big.size)
   }
 
-  // Only real player ids are stored as authors; anything else is dropped.
-  const playerId = (v: unknown) => players.byId(v)?.id || null
-
   // Saves pieces where a page put them, and returns them as everyone is told: with when each went
-  // into its tray (ta), so a tray sorts in the same order for all.
-  function saveMoves(roomId: string, list: unknown[]) {
-    const known = new Map<string, string | null>()
-    const by = (v: unknown) => {
-      if (v == null) return null
-      const k = String(v)
-      if (!known.has(k)) known.set(k, playerId(k))
-      return known.get(k)!
-    }
+  // into its tray (ta), so a tray sorts in the same order for all. me: the player moving them. A
+  // page says who connected each piece (by), but is only taken at its word for its own player:
+  // otherwise the piece stays whose it was.
+  function saveMoves(roomId: string, list: unknown[], me: string) {
     const now = Date.now()
     const out: PieceMove[] = []
     tx(() => {
       for (const raw of list) {
         const b = loose(raw)
-        const p: PieceMove = { i: num(b.i), x: num(b.x), y: num(b.y), r: num(b.r), g: num(b.g), by: by(b.by) }
+        const p: PieceMove = { i: num(b.i), x: num(b.x), y: num(b.y), r: num(b.r), g: num(b.g) }
         // A piece the jigsaw doesn't have is no move at all.
-        if (!q.updatePiece.run(p.x, p.y, p.r, p.g, p.by ?? null, roomId, p.i).changes) continue
+        const saved = q.updatePiece.get(p.x, p.y, p.r, p.g, b.by === me ? me : null, roomId, p.i)
+        if (!saved) continue
+        p.by = saved.by
         // t: the tray it's in (null: none). Left out, as pages from before trays send, it stays as it was.
         if (b.t !== undefined) {
           p.t = typeof b.t === 'string' && b.t ? b.t.slice(0, LIMITS.id) : null
@@ -197,12 +199,14 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
     // What a player makes is theirs, whoever the page says it's by. (A change to something already
     // there keeps its author.)
     const author = ws.player?.id || ''
+    if (m.type === 'hello') return hub.setPlayer(roomId, ws, players.whoIs(m.passphrase, ws.ip))
+    // Guests only watch: changing what's on the table takes a logged in player, as the pages ask
+    // for before anything can be touched.
+    if (!ws.player && CHANGES.has(String(m.type))) return
     switch (m.type) {
-      case 'hello':
-        return hub.setPlayer(roomId, ws, players.whoIs(m.passphrase))
       case 'moves':
         if (!Array.isArray(m.pieces)) return
-        const pieces = saveMoves(roomId, m.pieces)
+        const pieces = saveMoves(roomId, m.pieces.slice(0, LIMITS.pieces), author)
         if (!pieces.length) return
         return relay({
           type: 'moves',
@@ -215,9 +219,13 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
       case 'grab':
       case 'live':
       case 'sway':
-      case 'cursor':
-      case 'marks':
         return relay({ ...m, client } as ServerMessage)
+      // Whose they are is the socket's player, whoever the page says.
+      case 'marks':
+        return relay({ ...m, client, player: author } as ServerMessage)
+      case 'cursor':
+        if (m.hide) return relay({ type: 'cursor', client, hide: true })
+        return relay({ ...m, client, player: author, name: ws.player?.name ?? str(m.name, LIMITS.name) } as ServerMessage)
       // A stroke in draw mode, growing or finished. Not stored: it fades away on every screen.
       case 'ink': {
         const pts = Array.isArray(m.pts) ? m.pts.slice(0, LIMITS.inkPoints).filter((v): v is number => typeof v === 'number' && isFinite(v)) : []

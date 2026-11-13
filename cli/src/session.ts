@@ -31,6 +31,15 @@ const nice = (msg: string) => {
   return msg ? msg[0].toUpperCase() + msg.slice(1) : 'Something went wrong, try again'
 }
 
+// An answer from the server that wasn't ok. error: what it said, as sent (see ERRORS).
+class ApiError extends Error {
+  error: string
+  constructor(error: string) {
+    super(nice(error))
+    this.error = error
+  }
+}
+
 export class Session {
   origin: string
   me: PlayerLogin | null = null
@@ -54,7 +63,7 @@ export class Session {
     } catch (e) {
       throw new Error(`Can't reach ${this.origin}: ${(e as Error & { cause?: Error }).cause?.message || (e as Error).message}`)
     }
-    if (!res.ok) throw new Error(nice(((await res.json().catch(() => ({}))) as { error?: string }).error || res.statusText))
+    if (!res.ok) throw new ApiError(((await res.json().catch(() => ({}))) as { error?: string }).error || res.statusText)
     return res.json() as Promise<T>
   }
 
@@ -64,9 +73,10 @@ export class Session {
     if (!saved) return
     try {
       this.set(await this.request<PlayerLogin>('/api/players/login', { passphrase: saved }))
-    } catch {
-      // A passphrase that no longer works is forgotten; the player is a guest.
-      if (!passphrase) this.save(null)
+    } catch (e) {
+      // A passphrase that no longer works is forgotten; the player is a guest. One that only couldn't
+      // be checked (no network, the site down, too many tries) is kept for next time.
+      if (!passphrase && e instanceof ApiError && e.error === ERRORS.unknownPassphrase) this.save(null)
     }
   }
 

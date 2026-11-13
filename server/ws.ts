@@ -5,6 +5,7 @@ import type { IncomingMessage } from 'node:http'
 import type { Socket as NetSocket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import type { HttpServer } from 'vite'
+import { ipOf } from './http.ts'
 
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 // Every socket is pinged this often (ms), and dropped if nothing, not even the pong, came back in
@@ -12,6 +13,8 @@ const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 // its player would stay in the room for good.
 const PING_MS = 25000
 const DEAD_MS = 70000
+// The biggest message taken, in bytes: a move of every piece of the biggest jigsaw is well under it.
+const MAX_MESSAGE = 4 * 1024 * 1024
 
 function frame(op: number, payload: Buffer) {
   const n = payload.length
@@ -88,7 +91,7 @@ export class Socket {
         n = Number(b.readBigUInt64BE(2))
         o = 10
       }
-      if (n > 16 * 1024 * 1024) return this.closed()
+      if (n > MAX_MESSAGE) return this.closed()
       const mo = o
       if (masked) o += 4
       if (b.length < o + n) return
@@ -98,7 +101,7 @@ export class Socket {
 
       if (op === 8) return this.closed()
       // A message in many parts is held to the same size as one in a single frame.
-      if (op === 0 && this.parts.reduce((t, p) => t + p.length, n) > 16 * 1024 * 1024) return this.closed()
+      if (op === 0 && this.parts.reduce((t, p) => t + p.length, n) > MAX_MESSAGE) return this.closed()
       if (op === 9) this.sock.write(frame(10, payload))
       else if (op === 0 || op === 1 || op === 2) {
         this.parts.push(payload)
@@ -112,9 +115,9 @@ export class Socket {
   }
 }
 
-// Calls onConnect(socket, url) for every upgrade request whose path matches.
+// Calls onConnect(socket, url, ip) for every upgrade request whose path matches; ip: where it's from.
 // Other upgrades (such as Vite's HMR socket) are left alone.
-export function attachWebSocket(httpServer: HttpServer, path: string, onConnect: (ws: Socket, url: URL) => void) {
+export function attachWebSocket(httpServer: HttpServer, path: string, onConnect: (ws: Socket, url: URL, ip: string) => void) {
   const all = new Set<Socket>()
   const timer = setInterval(() => {
     for (const ws of all) ws.ping()
@@ -135,7 +138,7 @@ export function attachWebSocket(httpServer: HttpServer, path: string, onConnect:
     )
     const ws: Socket = new Socket(sock as NetSocket, () => all.delete(ws))
     all.add(ws)
-    onConnect(ws, url)
+    onConnect(ws, url, ipOf(req))
     if (head?.length) ws.read(head)
   })
 }
