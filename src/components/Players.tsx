@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, RefObject } from 'react'
 import { cursorColor } from '../lib/colors.ts'
 import { formatTime, plural, timeAgo } from '../lib/format.ts'
@@ -6,12 +6,13 @@ import { useLinger } from '../lib/linger.ts'
 import { Clock, Crown, Piece, Users } from './icons.tsx'
 import PlayerDialog from './PlayerDialog.tsx'
 import { useMenu } from '../lib/overlays.ts'
-import type { Times } from '../lib/times.ts'
+import type { LiveSeconds, Times } from '../lib/times.ts'
 
 // At most this many circles in the header; everyone is in the menu behind the players button.
 const SHOWN = 5
 // How long the pointer rests on a circle before its card shows (ms).
 const HOVER_MS = 250
+const NONE: Record<string, number> = {}
 
 // A player with what they've done in this jigsaw.
 export interface RankedPlayer {
@@ -73,6 +74,16 @@ export function Dot({ p, here, big = false, you = false }: DotProps) {
   )
 }
 
+// This player's own time, counting up each second (see useTimes), with plus more seconds added.
+export function LiveTime({ live, plus = 0 }: { live: LiveSeconds; plus?: number }) {
+  return formatTime(plus + useSyncExternalStore(live.subscribe, live.get))
+}
+
+// The time a player spent: counting up when it's this player's own.
+export function Spent({ p, me, myTime }: { p: RankedPlayer; me: string | null | undefined; myTime?: LiveSeconds }) {
+  return p.id === me && myTime ? <LiveTime live={myTime} /> : formatTime(p.seconds)
+}
+
 // Where someone is: here now, or when they were last online (seen, ms), if known, as "20 minutes ago".
 export function presence(here: boolean, seen: number | null | undefined) {
   if (here) return 'Here now'
@@ -90,10 +101,11 @@ interface HoverCardProps {
   seen: number | undefined
   owner: string | null | undefined
   me: string | null | undefined
+  myTime?: LiveSeconds
   at?: { top: number; right: number }
 }
 
-function HoverCard({ p, here, seen, owner, me, at }: HoverCardProps) {
+function HoverCard({ p, here, seen, owner, me, myTime, at }: HoverCardProps) {
   return (
     <div className={`player-card${at ? ' side' : ''}`} role="tooltip" style={at}>
       <div className="player-card-head">
@@ -121,7 +133,7 @@ function HoverCard({ p, here, seen, owner, me, at }: HoverCardProps) {
       </div>
       <div className="player-card-row">
         <Clock />
-        {formatTime(p.seconds)} spent
+        <Spent p={p} me={me} myTime={myTime} /> spent
       </div>
     </div>
   )
@@ -134,6 +146,8 @@ function HoverCard({ p, here, seen, owner, me, at }: HoverCardProps) {
 interface PlayersProps {
   stats: Stats
   times: Times
+  // This player's own time, counting up (see useTimes): times only has it as last saved.
+  myTime?: LiveSeconds
   me: string | null | undefined
   owner: string | null | undefined
   nameOf: NameOf
@@ -143,7 +157,8 @@ interface PlayersProps {
   onAccount?: () => void
 }
 
-export default function Players({ stats, times, me, owner, nameOf, online, seen = {}, openRef, onAccount }: PlayersProps) {
+// Kept as it is while the room draws again for something else.
+export default memo(function Players({ stats, times, myTime, me, owner, nameOf, online, seen = NONE, openRef, onAccount }: PlayersProps) {
   const [open, setOpen] = useState(false)
   const [menuShown, menuClosing] = useLinger(open)
   // P opens and closes the list (see Room).
@@ -214,6 +229,9 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
   // The window keeps up with the player's numbers here while it's open.
   const current = profileShown && (list.find((p) => p.id === profileShown.id) || profileShown)
 
+  // Everyone else's time together: this player's own counts up beside it.
+  const others = list.reduce((t, p) => t + (myTime && p.id === me ? 0 : p.seconds), 0)
+
   if (!list.length) return null
   return (
     <div className="players" ref={wrap}>
@@ -231,7 +249,7 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
             >
               <Dot p={p} here={online.has(p.id)} you={p.id === me} />
             </button>
-            {hover === p.id && !open && <HoverCard p={p} here={online.has(p.id)} seen={seen[p.id]} owner={owner} me={me} />}
+            {hover === p.id && !open && <HoverCard p={p} here={online.has(p.id)} seen={seen[p.id]} owner={owner} me={me} myTime={myTime} />}
           </li>
         ))}
       </ul>
@@ -250,7 +268,8 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
         <div className={`players-menu${menuClosing ? ' closing' : ''}`}>
           <p className="players-total" title="Time spent by all players together">
             <Clock />
-            Total time {formatTime(list.reduce((t, p) => t + p.seconds, 0))}
+            Total time{' '}
+            {myTime && list.some((p) => p.id === me) ? <LiveTime live={myTime} plus={others} /> : formatTime(others)}
           </p>
           <div className="players-list">
             {(
@@ -292,7 +311,7 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
                         </span>
                         <span className="pstat ptime">
                           <Clock />
-                          {formatTime(p.seconds)}
+                          <Spent p={p} me={me} myTime={myTime} />
                         </span>
                       </button>
                     ))}
@@ -309,6 +328,7 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
           seen={seen[rowHover.p.id]}
           owner={owner}
           me={me}
+          myTime={myTime}
           at={rowHover.at}
         />
       )}
@@ -318,6 +338,7 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
           here={online.has(current.id)}
           owner={owner}
           me={me}
+          myTime={myTime}
           seen={seen[current.id]}
           onAccount={openAccount}
           onClose={closeProfile}
@@ -326,4 +347,4 @@ export default function Players({ stats, times, me, owner, nameOf, online, seen 
       )}
     </div>
   )
-}
+})

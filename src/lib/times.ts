@@ -14,14 +14,44 @@ const active = () => document.visibilityState === 'visible' && document.hasFocus
 // Seconds spent in the jigsaw, by player id.
 export type Times = Record<string, number>
 
-// Everyone's time in the jigsaw, this player's counting up live while they play, until stopped.
-// initial: the times as the room was loaded (none until it is).
-export function useTimes(roomId: string, sock: RoomSocket | null, player: PlayerLogin | null, initial: TimeRow[] | undefined, stopped: boolean): Times {
+// This player's own time in the jigsaw, counting up each second while they play. Kept out of React
+// state, so only what shows it (see Spent in Players.tsx) is drawn again each second, not the room.
+export interface LiveSeconds {
+  subscribe: (fn: () => void) => () => void
+  get: () => number
+}
+
+// Everyone's time in the jigsaw as it was last saved (times), and this player's as it counts up
+// (mine), until stopped. initial: the times as the room was loaded (none until it is).
+export function useTimes(
+  roomId: string,
+  sock: RoomSocket | null,
+  player: PlayerLogin | null,
+  initial: TimeRow[] | undefined,
+  stopped: boolean,
+): { times: Times; mine: LiveSeconds } {
   const [times, setTimes] = useState<Times>({})
-  const [pending, setPending] = useState(0)
+  // The same times, changed at once rather than at the next render, so mine never runs behind them.
+  const saved = useRef<Times>({})
   const pendingRef = useRef(0)
+  const idRef = useRef(player?.id)
   const stoppedRef = useRef(stopped)
   const flushRef = useRef<((beacon: boolean) => void) | null>(null)
+  const listeners = useRef(new Set<() => void>())
+  const emit = () => listeners.current.forEach((fn) => fn())
+  const [mine] = useState<LiveSeconds>(() => ({
+    subscribe: (fn) => {
+      listeners.current.add(fn)
+      return () => listeners.current.delete(fn)
+    },
+    // Saved seconds and those not saved yet.
+    get: () => (idRef.current ? (saved.current[idRef.current] || 0) + Math.floor(pendingRef.current) : 0),
+  }))
+  const put = (next: Times) => {
+    saved.current = next
+    setTimes(next)
+    emit()
+  }
 
   useEffect(() => {
     stoppedRef.current = stopped
@@ -29,21 +59,22 @@ export function useTimes(roomId: string, sock: RoomSocket | null, player: Player
   }, [stopped])
 
   useEffect(() => {
-    if (initial) setTimes(Object.fromEntries(initial.map((t) => [t.user, t.seconds])))
+    if (initial) put(Object.fromEntries(initial.map((t) => [t.user, t.seconds])))
   }, [initial])
-  useEffect(() => sock?.on('time', (msg) => setTimes((t) => ({ ...t, [msg.user]: msg.seconds }))), [sock])
+  useEffect(() => sock?.on('time', (msg) => put({ ...saved.current, [msg.user]: msg.seconds })), [sock])
 
   const id = player?.id
   const passphrase = player?.passphrase
   useEffect(() => {
+    idRef.current = id
+    emit()
     if (!id || !passphrase) return
     let last = performance.now()
     const flush = (beacon: boolean) => {
       const s = Math.floor(pendingRef.current)
       if (s <= 0) return
       pendingRef.current -= s
-      setPending(Math.floor(pendingRef.current))
-      setTimes((t) => ({ ...t, [id]: (t[id] || 0) + s }))
+      put({ ...saved.current, [id]: (saved.current[id] || 0) + s })
       api.time(roomId, passphrase, s, beacon)
     }
     flushRef.current = flush
@@ -54,7 +85,7 @@ export function useTimes(roomId: string, sock: RoomSocket | null, player: Player
       last = now
       if (active() && !stoppedRef.current) {
         pendingRef.current += Math.min(dt, 2)
-        setPending(Math.floor(pendingRef.current))
+        emit()
       }
     }, 1000)
     const periodic = setInterval(() => flush(false), FLUSH_MS)
@@ -76,6 +107,5 @@ export function useTimes(roomId: string, sock: RoomSocket | null, player: Player
     }
   }, [roomId, id, passphrase])
 
-  // This player's seconds not saved yet count too, so lists update live.
-  return id ? { ...times, [id]: (times[id] || 0) + pending } : times
+  return { times, mine }
 }

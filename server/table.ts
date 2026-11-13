@@ -107,8 +107,9 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
         x = excluded.x, y = excluded.y, w = excluded.w, h = excluded.h, name = excluded.name, color = excluded.color,
         num = excluded.num, auto = excluded.auto`),
     deleteTray: prepare('DELETE FROM trays WHERE room_id = ? AND id = ?'),
-    // The biggest group, for the timelapse (see snapshot()).
-    biggest: prepare<{ g: number; size: number }>('SELECT g, COUNT(*) AS size FROM pieces WHERE room_id = ? GROUP BY g ORDER BY size DESC, g LIMIT 1'),
+    // How many pieces a group has, for the timelapse (see snapshot()).
+    biggest: prepare<{ g: number }>('SELECT g FROM pieces WHERE room_id = ? GROUP BY g ORDER BY COUNT(*) DESC, g LIMIT 1'),
+    groupSize: prepare<{ size: number }>('SELECT COUNT(*) AS size FROM pieces WHERE room_id = ? AND g = ?'),
     groupCells: prepare<{ idx: number }>('SELECT idx FROM pieces WHERE room_id = ? AND g = ?'),
     lastSnapshot: prepare<{ size: number }>('SELECT size FROM snapshots WHERE room_id = ? ORDER BY t DESC, rowid DESC LIMIT 1'),
     insertSnapshot: prepare('INSERT INTO snapshots (room_id, t, size, pieces) VALUES (?, ?, ?, ?)'),
@@ -127,14 +128,27 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
 
   // Saves which pieces are in the room's biggest group when it has grown since the last snapshot,
   // for the timelapse. Groups only grow, so the frames only ever add pieces, unless another group
-  // overtakes the biggest.
-  function snapshot(roomId: string, now: number) {
-    const big = q.biggest.get(roomId)
-    if (!big || big.size < 2) return
-    if (!snapped.has(roomId)) snapped.set(roomId, q.lastSnapshot.get(roomId)?.size ?? 0)
-    if (big.size <= snapped.get(roomId)!) return
+  // overtakes the biggest. groups: the groups the pieces just moved are in, the only ones that can
+  // have grown, so only they are counted rather than every piece of the jigsaw.
+  function snapshot(roomId: string, now: number, groups: Set<number>) {
+    if (!snapped.has(roomId)) {
+      const last = q.lastSnapshot.get(roomId)?.size ?? 0
+      snapped.set(roomId, last)
+      // A jigsaw without a snapshot yet (from before there were any) starts from its biggest group,
+      // whichever pieces moved: looked up this once.
+      const g = last ? undefined : q.biggest.get(roomId)?.g
+      if (g !== undefined) groups.add(g)
+    }
+    const big = { g: 0, size: 0 }
+    for (const g of groups) {
+      const size = q.groupSize.get(roomId, g)?.size ?? 0
+      if (size > big.size || (size === big.size && g < big.g)) Object.assign(big, { g, size })
+    }
+    if (big.size < 2 || big.size <= snapped.get(roomId)!) return
     const cells = q.groupCells.all(roomId, big.g)
-    const bits = Buffer.alloc(Math.ceil((Math.max(...cells.map((c) => c.idx)) + 1) / 8))
+    let last = 0
+    for (const { idx } of cells) if (idx > last) last = idx
+    const bits = Buffer.alloc(Math.ceil((last + 1) / 8))
     for (const { idx } of cells) bits[idx >> 3] |= 1 << (idx & 7)
     q.insertSnapshot.run(roomId, now, big.size, bits)
     snapped.set(roomId, big.size)
@@ -147,6 +161,7 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
   function saveMoves(roomId: string, list: unknown[], me: string) {
     const now = Date.now()
     const out: PieceMove[] = []
+    const groups = new Set<number>()
     tx(() => {
       for (const raw of list) {
         const b = loose(raw)
@@ -161,8 +176,9 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
           p.ta = q.setPieceTray.get(p.t, now, roomId, p.i)?.tray_at ?? now
         }
         out.push(p)
+        groups.add(p.g)
       }
-      if (out.length) snapshot(roomId, now)
+      if (out.length) snapshot(roomId, now, groups)
     })
     return out
   }
