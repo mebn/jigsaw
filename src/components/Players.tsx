@@ -18,12 +18,12 @@ const NONE: Record<string, number> = {}
 export interface RankedPlayer {
   id: string
   name: string
-  pieces: number
+  connections: number
   seconds: number
 }
 
-// How many pieces a player connected, by player id (see Engine.contributors()).
-export type Stats = Map<string, { id: string; pieces: number }>
+// How many connections a player made (one for every join of two pieces or groups), by player id.
+export type Stats = Map<string, number>
 
 export type NameOf = (id: string | null | undefined) => string
 
@@ -33,20 +33,20 @@ interface RankInput {
   nameOf: NameOf
 }
 
-// Everyone who has done something in this jigsaw, most pieces connected first, then most time.
+// Everyone who has done something in this jigsaw, most connections first, then most time.
 // Players are kept apart by id, since two of them can share a name.
 export function rankPlayers({ stats, times, nameOf }: RankInput) {
   const map = new Map<string, RankedPlayer>()
   const get = (id: string) => {
-    if (!map.has(id)) map.set(id, { id, name: nameOf(id), pieces: 0, seconds: 0 })
+    if (!map.has(id)) map.set(id, { id, name: nameOf(id), connections: 0, seconds: 0 })
     return map.get(id)!
   }
-  for (const s of stats.values()) get(s.id).pieces = s.pieces
+  for (const [id, n] of stats) if (n > 0) get(id).connections = n
   for (const [id, seconds] of Object.entries(times)) if (seconds > 0) get(id).seconds = seconds
 
   return [...map.values()].sort(
     (a, b) =>
-      b.pieces - a.pieces ||
+      b.connections - a.connections ||
       b.seconds - a.seconds ||
       a.name.localeCompare(b.name),
   )
@@ -129,7 +129,7 @@ function HoverCard({ p, here, seen, owner, me, myTime, at }: HoverCardProps) {
       )}
       <div className="player-card-row">
         <Piece />
-        {plural(p.pieces, 'piece')} connected
+        {plural(p.connections, 'connection')} made
       </div>
       <div className="player-card-row">
         <Clock />
@@ -182,7 +182,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
   const timer = useRef(0)
   const ranked = rankPlayers({ stats, times, nameOf })
   for (const id of online) {
-    if (!ranked.some((p) => p.id === id)) ranked.push({ id, name: nameOf(id), pieces: 0, seconds: 0 })
+    if (!ranked.some((p) => p.id === id)) ranked.push({ id, name: nameOf(id), connections: 0, seconds: 0 })
   }
   // You come first among those here.
   const here = ranked.filter((p) => online.has(p.id)).sort((a, b) => Number(b.id === me) - Number(a.id === me))
@@ -307,7 +307,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
                         </span>
                         <span className="pstat">
                           <Piece />
-                          {p.pieces}
+                          {p.connections}
                         </span>
                         <span className="pstat ptime">
                           <Clock />

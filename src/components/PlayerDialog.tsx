@@ -14,7 +14,7 @@ import { Clock, Crown, Piece, User } from './icons.tsx'
 
 // A player's window, from their circle in the header: who they are, what they did in this jigsaw,
 // and the other jigsaws they've played. Private jigsaws only show if this player has them too (the
-// server checks). p is the player as the header knows them: { id, name, pieces, seconds }. Your own
+// server checks). p is the player as the header knows them: { id, name, connections, seconds }. Your own
 // window has a button to your account (onAccount). seen is when they were last in this jigsaw.
 interface PlayerDialogProps {
   p: RankedPlayer
@@ -86,7 +86,7 @@ export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccou
           )}
           <span className="profile-stat">
             <Piece />
-            {plural(p.pieces, 'piece')} connected
+            {plural(p.connections, 'connection')} made
           </span>
           <span className="profile-stat">
             <Clock />
@@ -117,9 +117,9 @@ export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccou
                       <Crown className="crown" />
                     </span>
                   )}
-                  <span title="Pieces they connected">
+                  <span title="Connections they made">
                     <Piece />
-                    {r.pieces}
+                    {r.connections}
                   </span>
                   <span title="Time they spent">
                     <Clock />

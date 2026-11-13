@@ -212,6 +212,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       learn(room.players)
       setOnline(new Set(room.online))
       setSeen(room.seen)
+      setStats(new Map(room.scores.map((s) => [s.player, s.n])))
     }
     ;(async () => {
       try {
@@ -237,7 +238,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           nameOf,
           guard: ensureName,
           tooltip: tip.current!,
-          onStats: () => setStats(eng!.contributors()),
           onSnap: playSnap,
           onMenu: (x, y, kind, id, opts) => setMenu({ x, y, kind, id, rename: !!opts?.rename }),
           onComplete: () => {
@@ -257,7 +257,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         if (dead) return
         show(room)
         eng.setColors(readColors())
-        setStats(eng.contributors())
         setDone(eng.isComplete())
         // Already finished before this player opened it: nothing left to celebrate.
         if (eng.isComplete()) celebrated.mark()
@@ -289,6 +288,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
             navigate(paths.rooms)
           }),
           sock.on('player', (msg) => learn([msg.player])),
+          sock.on('score', (msg) => setStats((s) => new Map(s).set(msg.player, msg.n))),
           sock.on('presence', (msg) => {
             setOnline(new Set(msg.online))
             setSeen((s) => ({ ...s, ...msg.seen }))
