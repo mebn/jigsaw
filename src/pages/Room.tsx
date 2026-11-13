@@ -135,7 +135,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   // Escape with nothing open over the table is for the table first, then for the settings.
   useEscapeFallback(engine && (() => engine.escape()), 1)
   const [stats, setStats] = useState<Stats>(() => new Map())
-  const times = useTimes(id, session?.sock ?? null, player, session?.room.times, done)
+  const { times, mine: myTime } = useTimes(id, session?.sock ?? null, player, session?.room.times, done)
   // Player ids in the room right now, and when the others were last here (ms by id).
   const [online, setOnline] = useState(() => new Set<string>())
   const [seen, setSeen] = useState<Record<string, number>>({})
@@ -498,7 +498,8 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     </>
   )
   // The players by rank, for the podium and the picture to share.
-  const ranked = (podiumShown || shareShown) && rankPlayers({ stats, times, nameOf })
+  // With this player's seconds not saved yet.
+  const ranked = (podiumShown || shareShown) && rankPlayers({ stats, times: playerId ? { ...times, [playerId]: myTime.get() } : times, nameOf })
   return (
     <div
       className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${leaving ? ' leaving' : ''}`}
@@ -542,7 +543,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       )}
       {engine && (
         <div className="tr" onContextMenu={noMenu}>
-          <Players stats={stats} times={times} me={playerId} owner={session?.room.owner} nameOf={nameOf} online={online} seen={seen} openRef={openPlayers} onAccount={openAccount} />
+          <Players stats={stats} times={times} myTime={myTime} me={playerId} owner={session?.room.owner} nameOf={nameOf} online={online} seen={seen} openRef={openPlayers} onAccount={openAccount} />
         </div>
       )}
       {menu && engine && <ContextMenu key={`${menu.kind}:${menu.id}:${menu.x}:${menu.y}`} engine={engine} at={menu} onClose={closeMenu} />}

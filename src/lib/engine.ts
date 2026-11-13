@@ -831,6 +831,20 @@ export class Engine {
   ready: Promise<void>
   // Per frame: the pieces' instances (still, active, lifted, then the outlined ones again), trays and images.
   gPieces = new PieceInstances()
+  // A frame's work shared by its panes, see prepFrame().
+  fr = {
+    x: new Float64Array(0),
+    y: new Float64Array(0),
+    a: new Float64Array(0),
+    still: new Int32Array(0),
+    trayed: new Int32Array(0),
+    up: new Int32Array(0),
+    nStill: 0,
+    nTrayed: 0,
+    nUp: 0,
+    markedTrays: new Map<string, string>(),
+    markedRefs: new Map<string, string>(),
+  }
   gTrays = new TrayInstances()
   gRefs = new RefInstances()
   // Where poseInto() put the last piece.
@@ -5244,6 +5258,7 @@ export class Engine {
       this.dirty = false
     }
     this.clearOverlay()
+    if (this.gpu) this.prepFrame()
     for (let k = 0; k < this.panes.length; k++) {
       this.usePane(k)
       const { cam, vw, vh } = this
@@ -5281,6 +5296,45 @@ export class Engine {
     this.usePane(active)
   }
 
+  // What every pane's frame shares, worked out once a frame rather than once a pane: where each
+  // piece lying still is drawn (see poseInto()), in table order in three lists (on the table, in a
+  // tray, in a lifted tray), and what other players have marked. drawGpu() picks from these what
+  // its view shows.
+  prepFrame() {
+    const fr = this.fr
+    const n = this.n
+    if (fr.x.length < n) {
+      fr.x = new Float64Array(n)
+      fr.y = new Float64Array(n)
+      fr.a = new Float64Array(n)
+      fr.still = new Int32Array(n)
+      fr.trayed = new Int32Array(n)
+      fr.up = new Int32Array(n)
+    }
+    fr.markedTrays = this.markedBy('tray')
+    fr.markedRefs = this.markedBy('refs')
+    const lifted = this.lift?.set
+    const rlifted = this.rlift.size ? new Set([...this.rlift.values()].flatMap((rl) => rl.ids)) : null
+    const inTray = this.trays.length ? new Set(this.trays.flatMap((t) => t.pieces)) : null
+    const inUp = inTray && new Set(this.trays.filter((t) => this.upOf('tray', t.id)).flatMap((t) => t.pieces))
+    let still = 0
+    let trayed = 0
+    let up = 0
+    for (const i of this.order) {
+      if (lifted?.has(i) || rlifted?.has(i)) continue
+      this.poseInto(i)
+      fr.x[i] = this.qx
+      fr.y[i] = this.qy
+      fr.a[i] = this.qa
+      if (!inTray?.has(i)) fr.still[still++] = i
+      else if (inUp!.has(i)) fr.up[up++] = i
+      else fr.trayed[trayed++] = i
+    }
+    fr.nStill = still
+    fr.nTrayed = trayed
+    fr.nUp = up
+  }
+
   // Builds a frame for the GPU (see gpu.ts) for view v, in device pixels: the trays and reference
   // images in view, the pieces lying on the table in table order, the lifted pieces, and the
   // selected and hovered pieces once more for their outlines.
@@ -5297,8 +5351,8 @@ export class Engine {
 
     const gTrays = this.gTrays
     gTrays.reset(this.trays.length)
-    const markedTrays = this.markedBy('tray')
-    const markedRefs = this.markedBy('refs')
+    const fr = this.fr
+    const { markedTrays, markedRefs } = fr
     const radius = Math.min(this.geo.S * 0.25, 10 / v.z) * z
     const bg = rgba(this.colors.bg)
     // Trays lying on the table first, then lifted ones (see raise()), which go over them.
@@ -5342,29 +5396,24 @@ export class Engine {
     const gp = this.gPieces
     gp.reset(2 * this.n + 8)
     const lifted = this.lift?.set
-    const rlifted = this.rlift.size ? new Set([...this.rlift.values()].flatMap((rl) => rl.ids)) : null
-    // Trays lie above the pieces on the table, and the pieces in them above the trays. Pieces in a
-    // lifted tray go over it, after the trays lying down.
-    const inTray = this.trays.length ? new Set(this.trays.flatMap((t) => t.pieces)) : null
-    const inUp = traysDown < gTrays.count ? new Set(this.trays.filter(trayUp).flatMap((t) => t.pieces)) : null
-    for (const i of this.order) {
-      if (lifted?.has(i) || rlifted?.has(i) || inTray?.has(i)) continue
-      this.poseInto(i)
-      if (seen(this.qx, this.qy, R)) this.gpuPiece(i, this.qx, this.qy, this.qa, 1, v)
-    }
-    const still = [0, gp.count]
-    const trayedIn = (up: boolean) => {
-      if (!inTray) return
-      for (const i of this.order) {
-        if (lifted?.has(i) || rlifted?.has(i) || !inTray.has(i) || !!inUp?.has(i) !== up) continue
-        this.poseInto(i)
-        if (seen(this.qx, this.qy, R)) this.gpuPiece(i, this.qx, this.qy, this.qa, 1, v)
+    // The pieces lying still, where prepFrame() found them: those this view shows, from a list.
+    const lying = (list: Int32Array, count: number) => {
+      for (let k = 0; k < count; k++) {
+        const i = list[k]
+        if (seen(fr.x[i], fr.y[i], R)) this.gpuPiece(i, fr.x[i], fr.y[i], fr.a[i], 1, v)
       }
     }
-    trayedIn(false)
+    // Trays lie above the pieces on the table, and the pieces in them above the trays. Pieces in a
+    // lifted tray go over it, after the trays lying down.
+    lying(fr.still, fr.nStill)
+    const still = [0, gp.count]
+    lying(fr.trayed, fr.nTrayed)
+    // No lifted tray in this view: what little shows of the pieces in one goes with the others.
+    const upShown = traysDown < gTrays.count
+    if (!upShown) lying(fr.up, fr.nUp)
     const trayed = [still[1], gp.count - still[1]]
     const trayedUp = [gp.count, 0]
-    trayedIn(true)
+    if (upShown) lying(fr.up, fr.nUp)
     trayedUp[1] = gp.count - trayedUp[0]
     const lift = [gp.count, 0]
     // Carried pieces (ours and others'), as they're drawn: id -> [x, y, angle, scale]. Outlines use

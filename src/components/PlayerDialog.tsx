@@ -6,8 +6,9 @@ import { navigate, paths } from '../lib/router.ts'
 import { formatTime, plural } from '../lib/format.ts'
 import { Card, CardGhosts } from './Card.tsx'
 import Dialog from './Dialog.tsx'
-import { Dot, presence } from './Players.tsx'
+import { Dot, Spent, presence } from './Players.tsx'
 import type { RankedPlayer } from './Players.tsx'
+import type { LiveSeconds } from '../lib/times.ts'
 import { Clock, Crown, Piece, User } from './icons.tsx'
 
 
@@ -20,13 +21,14 @@ interface PlayerDialogProps {
   here: boolean
   owner: string | null | undefined
   me: string | null | undefined
+  myTime?: LiveSeconds
   seen: number | undefined
   onAccount?: () => void
   onClose: () => void
   closing: boolean
 }
 
-export default function PlayerDialog({ p, here, owner, me, seen, onAccount, onClose, closing }: PlayerDialogProps) {
+export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccount, onClose, closing }: PlayerDialogProps) {
   const { player, roomId } = useApp()
   const [info, setInfo] = useState<PlayerProfile | null>(null)
   const [failed, setFailed] = useState(false)
@@ -88,7 +90,7 @@ export default function PlayerDialog({ p, here, owner, me, seen, onAccount, onCl
           </span>
           <span className="profile-stat">
             <Clock />
-            {formatTime(p.seconds)} spent
+            <Spent p={p} me={me} myTime={myTime} /> spent
           </span>
         </div>
       </section>
