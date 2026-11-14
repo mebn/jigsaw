@@ -3,6 +3,8 @@
 ## 15 November 2026
 
 - Fixes for text under a player's jigsaws and the podium buttons on phones.
+- New app icon.
+- The picture (`Q`) has just draw and clear buttons; turn drawing off to move it.
 
 ## 14 November 2026
 
