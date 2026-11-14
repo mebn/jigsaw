@@ -141,11 +141,11 @@ export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccou
                   )}
                   <span title="Connections they made">
                     <Piece />
-                    {r.connections}
+                    <span className="t">{r.connections}</span>
                   </span>
                   <span title="Time they spent">
                     <Clock />
-                    {formatTime(r.time)}
+                    <span className="t">{formatTime(r.time)}</span>
                   </span>
                 </span>
               </div>

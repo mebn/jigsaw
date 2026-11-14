@@ -699,7 +699,13 @@ button {
   text-overflow: ellipsis;
   transition: color 0.2s;
 }
+.art-info > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .art-info .dot {
+  flex: none;
   opacity: 0.6;
 }
 .art-info svg {
@@ -1831,16 +1837,13 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   box-shadow: 0 8px 24px var(--shadow);
   pointer-events: none;
 }
-/* On a narrow screen the play tools go to the bottom middle, in reach of a thumb, and the podium
-   and share bar sits above them. */
+/* On a narrow screen the play tools go to the bottom middle, in reach of a thumb (the podium and
+   share bar moves above them, see .float.bc). */
 @media (max-width: 640px) {
   .float.tc,
   :root[data-notch] .room .tc {
     top: auto;
     bottom: calc(16px + env(safe-area-inset-bottom));
-  }
-  .float.bc {
-    bottom: calc(76px + env(safe-area-inset-bottom));
   }
 }
 
@@ -2294,8 +2297,16 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+}
+/* On a narrow card the numbers end in an ellipsis rather than run into the next card. */
+.profile-share .t {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .profile-share svg {
+  flex: none;
   width: 13px;
   height: 13px;
 }
@@ -2744,6 +2755,12 @@ button.link:hover {
   bottom: calc(16px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
+}
+/* On a narrow screen it sits above the play tools, which move to the bottom middle there. */
+@media (max-width: 640px) {
+  .float.bc {
+    bottom: calc(76px + env(safe-area-inset-bottom));
+  }
 }
 
 /* The podium itself: a sticker on the table, with the table only slightly blurred behind it. */

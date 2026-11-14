@@ -1,5 +1,9 @@
 # Changelog
 
+## 15 November 2026
+
+- Fixes for text under a player's jigsaws and the podium buttons on phones.
+
 ## 14 November 2026
 
 - **Profile pictures**: add one in Settings > Account.
