@@ -3,14 +3,14 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { isPlainKey, isTyping, useOverlay } from '../lib/overlays.ts'
 import { store } from '../lib/storage.ts'
-import { Close, Hand, Pencil, Trash } from './icons.tsx'
+import { Close, Pencil, Trash } from './icons.tsx'
 
 // The jigsaw's picture over the table, like a map: Q opens and closes it (see Room). It belongs to
 // this player only. Wheel or pinch zooms, dragging pans, and with the pencil on dragging draws on the
 // picture instead. Drawings are kept per jigsaw in this browser, until cleared.
 //
 // It is a window over the page (see overlays.ts), so the table and its shortcuts leave the keyboard to it.
-// Its own keys: Q and Escape close, E switches between panning and drawing, C fits the picture to the
+// Its own keys: Q and Escape close, E turns drawing on and off, C fits the picture to the
 // screen, Cmd/Ctrl+Z undoes a line or a clear, Cmd/Ctrl+Shift+Z (or Ctrl+Y) redoes it, with the
 // map's own undo queue (see histories).
 
@@ -324,18 +324,8 @@ export default function PictureMap({ roomId, src, color, closing, onClose }: Pic
       </div>
       <div className="float map-tools">
         <button
-          className={`icon-btn${draw ? '' : ' on'}`}
-          onClick={() => setDraw(false)}
-          aria-pressed={!draw}
-          aria-label="Move"
-          data-tip="Move: drag to move the picture"
-          data-key="E"
-        >
-          <Hand />
-        </button>
-        <button
           className={`icon-btn${draw ? ' on' : ''}`}
-          onClick={() => setDraw(true)}
+          onClick={() => setDraw((d) => !d)}
           aria-pressed={draw}
           aria-label="Draw"
           data-tip="Draw on the picture, only you see it"

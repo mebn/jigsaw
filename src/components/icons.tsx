@@ -232,12 +232,6 @@ export const External = (p: IconProps) => (
   </Svg>
 )
 
-export const Hand = (p: IconProps) => (
-  <Svg {...p}>
-    <path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V11M11 10.5v-6a1.5 1.5 0 0 1 3 0v6M14 10.5V6a1.5 1.5 0 0 1 3 0v7.5a6.5 6.5 0 0 1-6.5 6.5h-.6a6 6 0 0 1-4.6-2.2l-2.7-3.3a1.6 1.6 0 0 1 2.3-2.2L8 15" />
-  </Svg>
-)
-
 export const Split = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="5" width="18" height="14" rx="2" />
