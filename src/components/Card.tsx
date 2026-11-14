@@ -1,79 +1,105 @@
-import { Check, Clock, Lock, Piece } from './icons.tsx'
-import { formatTime } from '../lib/format.ts'
+import { useState } from 'react'
+import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import { api } from '../lib/api.ts'
 import { paths } from '../lib/router.ts'
-import type { PlayerRoom } from '../../shared/protocol.ts'
+import { Lock } from './icons.tsx'
 
-interface CardProps {
-  r: PlayerRoom
-  onOpen: (id: string) => void
+// What a jigsaw's picture and the line under it need, from the jigsaws page or a player's window.
+interface ArtRoom {
+  id: string
+  thumb: string
+  private: number
+  seconds: number
+  progress: number
+  done: boolean
+  finished: number
 }
 
-// A jigsaw in a player's window: its picture in a frame, with how far along it is, the time and the
-// pieces under it.
-export function Card({ r, onOpen }: CardProps) {
-  const pct = Math.round(r.progress * 100)
+const finishedOn = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+
+// How long a jigsaw took, for the line under its picture: "45 min", "3 h 12 min".
+function took(seconds: number) {
+  const m = Math.round(seconds / 60)
+  if (m < 1) return 'Under a minute'
+  const h = Math.floor(m / 60)
+  return h ? `${h} h ${m % 60} min` : `${m} min`
+}
+
+// A jigsaw's picture, the small one first and the full one over it once loaded.
+export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
+  const [full, setFull] = useState(false)
   return (
-    <a
-      className={`card${r.done ? ' done' : ''}`}
-      href={paths.room(r.id)}
-      onClick={(e) => {
-        // Modified clicks still open the jigsaw in a new tab or window.
-        if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
-        e.preventDefault()
-        onOpen(r.id)
-      }}
-    >
-      <span className="card-pic">
-        <img className="thumb" src={r.thumb} alt="" loading="lazy" />
-      </span>
-      <span className="progress" title="Pieces connected">
-        <span style={{ width: `${r.done ? 100 : pct}%` }} />
-      </span>
-      <span className="card-stats">
-        <span title="Total time spent">
-          <Clock />
-          {formatTime(r.seconds)}
-        </span>
-        <span title="Pieces">
-          <Piece />
-          {r.n}
-        </span>
-        {!!r.private && (
-          <span title="Private room: only people with the link can see it">
-            <Lock />
-          </span>
-        )}
-        {r.done ? (
-          <span className="pct" title="Complete">
-            <Check />
-            Done
-          </span>
-        ) : (
-          <span className="pct" title="Pieces connected">
-            {pct}%
-          </span>
-        )}
-      </span>
-    </a>
+    <span className="art-pic" style={{ width: w, height: h }}>
+      <img src={r.thumb} alt="" draggable={false} />
+      <img className={`full${full ? ' on' : ''}`} src={api.imageUrl(r.id)} alt="" draggable={false} loading="lazy" decoding="async" onLoad={() => setFull(true)} />
+    </span>
   )
 }
 
-// Grey stand-ins for cards while the jigsaws load, shimmering, with a bar where the numbers go and
-// a line under each, so nothing moves when the cards come.
-export function CardGhosts({ count }: { count: number }) {
+// The line under a jigsaw's picture: how long it took when finished, or how far along it is.
+export function ArtInfo({ r }: { r: ArtRoom }) {
+  return r.done ? (
+    <span className="art-info">
+      <span title="Time it took">{took(r.seconds)}</span>
+      {r.finished > 0 && (
+        <>
+          <span className="dot" aria-hidden="true">·</span>
+          <span title="Finished on">{finishedOn(r.finished)}</span>
+        </>
+      )}
+    </span>
+  ) : (
+    <span className="art-info" title="Pieces connected">
+      {Math.round(r.progress * 100)}% done{!!r.private && <Lock aria-label="Private" />}
+    </span>
+  )
+}
+
+// The jigsaw under the pointer tilts towards it, with a soft light where it is.
+function tilt(e: ReactPointerEvent<HTMLElement>) {
+  if (e.pointerType !== 'mouse' || e.buttons) return
+  const el = e.currentTarget
+  const pic = el.querySelector<HTMLElement>('.pic')!
+  const b = pic.getBoundingClientRect()
+  const px = (e.clientX - b.left) / b.width
+  const py = (e.clientY - b.top) / b.height
+  el.style.setProperty('--ry', `${(px - 0.5) * 6}deg`)
+  el.style.setProperty('--rx', `${(0.5 - py) * 4}deg`)
+  el.style.setProperty('--mx', `${px * 100}%`)
+  el.style.setProperty('--my', `${py * 100}%`)
+}
+function untilt(e: ReactPointerEvent<HTMLElement>) {
+  const el = e.currentTarget
+  el.style.setProperty('--ry', '0deg')
+  el.style.setProperty('--rx', '0deg')
+}
+
+interface TileProps {
+  r: ArtRoom & { done: boolean; progress: number }
+  i: number
+  onPick: (e: MouseEvent<HTMLAnchorElement>, id: string) => void
+  children: ReactNode
+  below?: ReactNode
+  extra?: ReactNode
+}
+
+// A jigsaw as a picture on the wall, as on the jigsaws page: it lifts and tilts towards the pointer,
+// with what's below under it. extra goes over it (the delete button).
+export function Tile({ r, i, onPick, children, below, extra }: TileProps) {
   return (
-    <div className="profile-rooms" aria-busy="true" aria-label="Loading jigsaws">
-      {Array.from({ length: count }, (_, k) => (
-        <div key={k} className="profile-room" aria-hidden="true">
-          <div className="card ghost">
-            <span className="card-pic" />
-            <span className="ghost-bar stats" />
-          </div>
-          <span className="profile-share">
-            <span className="ghost-bar caption" />
-          </span>
-        </div>
-      ))}
-    </div>
+    <a
+      className="tile art"
+      href={paths.room(r.id)}
+      draggable={false}
+      style={{ '--i': Math.min(i, 14) } as CSSProperties}
+      onClick={(e) => onPick(e, r.id)}
+      onPointerMove={tilt}
+      onPointerLeave={untilt}
+      aria-label={r.done ? 'Finished jigsaw' : `Jigsaw, ${Math.round(r.progress * 100)}% done`}
+    >
+      <span className="pic">{children}</span>
+      {below}
+      {extra}
+    </a>
   )
 }

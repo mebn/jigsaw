@@ -274,6 +274,12 @@ export const Wrench = (p: IconProps) => (
   </Svg>
 )
 
+export const PodiumIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3.5 20v-6h5.5M9 20V8.5h6V20M15 11.5h5.5V20M3 20h18" />
+  </Svg>
+)
+
 export const Share = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 15V4M8 7.5 12 3.5l4 4" />

@@ -624,7 +624,7 @@ export function NoteButton({ createRef }: NoteButtonProps) {
       ghost="note-ghost"
       label="Note"
       shortcut="N"
-      title="Drag a note onto the board"
+      title="Note"
     >
       <NoteIcon />
     </PlaceButton>

@@ -5,11 +5,10 @@ import type { IncomingMessage } from 'node:http'
 import { LIMITS, PREVIEW_H, PREVIEW_W } from '../shared/protocol.ts'
 import type { NewRoom, PlayerRef, RoomDetails } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
-import { fail, ipOf, ok, printable, rateLimit, readJson, siteOrigin } from './http.ts'
+import { fail, ipOf, ok, printable, rateLimit, readJson } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
 import type { SharedRoom } from './meta.ts'
-import type { createMailer } from './mail.ts'
 import type { Players } from './players.ts'
 import type { createTable } from './table.ts'
 
@@ -48,7 +47,7 @@ const SECONDS = '(SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_i
 // A room's pieces: long pieces are stored per cell, so units counts them when there are any.
 const PIECES = '(CASE WHEN r.units > 0 THEN r.units ELSE (SELECT COUNT(*) FROM pieces p WHERE p.room_id = r.id) END)'
 
-export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: Players, table: Table, mailer: ReturnType<typeof createMailer>) {
+export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: Players, table: Table) {
   const q = {
     list: prepare<{ n: number; groups: number } & Record<string, unknown>>(`
       SELECT r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
@@ -81,11 +80,6 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     insertPiece: prepare('INSERT INTO pieces (room_id, idx, x, y, r, g) VALUES (?, ?, ?, ?, ?, ?)'),
     join: prepare('INSERT OR IGNORE INTO room_players (room_id, player_id, joined) VALUES (?, ?, ?)'),
     member: prepare('SELECT 1 FROM room_players WHERE room_id = ? AND player_id = ?'),
-    // Players who can be invited by email (never the address itself), and whether they already have the room.
-    invitable: prepare<PlayerRef & { joined: number }>(`
-      SELECT p.id, p.name, EXISTS (SELECT 1 FROM room_players m WHERE m.room_id = ?1 AND m.player_id = p.id) AS joined
-      FROM players p WHERE p.email IS NOT NULL AND p.id != ?2 ORDER BY p.name COLLATE NOCASE`),
-    emailOf: prepare<{ id: string; email: string }>('SELECT id, email FROM players WHERE id = ? AND email IS NOT NULL'),
     times: prepare<{ user: string; seconds: number }>('SELECT user, seconds FROM times WHERE room_id = ?'),
     addTime: prepare<{ seconds: number }>(`
       INSERT INTO times (room_id, user, seconds, seen) VALUES (?, ?, ?, ?)
@@ -95,7 +89,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     seen: prepare<{ user: string; seen: number }>('SELECT user, seen FROM times WHERE room_id = ? AND seen > 0'),
     // Everyone who has left a mark on a room, so their names can be shown.
     roomPlayers: prepare<PlayerRef>(`
-      SELECT id, name FROM players WHERE id IN (
+      SELECT id, name, avatar_at AS avatar FROM players WHERE id IN (
         SELECT "by" FROM pieces WHERE room_id = ?1
         UNION SELECT player_id FROM scores WHERE room_id = ?1
         UNION SELECT author FROM notes WHERE room_id = ?1
@@ -105,11 +99,13 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
         UNION SELECT player_id FROM note_reactions WHERE room_id = ?1
         UNION SELECT user FROM times WHERE room_id = ?1
       )`),
-    profile: prepare<PlayerRef & { created: number }>('SELECT id, name, created FROM players WHERE id = ?'),
+    profile: prepare<PlayerRef & { created: number }>('SELECT id, name, avatar_at AS avatar, created FROM players WHERE id = ?'),
     // The jigsaws a player made, made connections in or spent time in, with their share of each.
     // Private ones only when the asking player (?2) has the link too.
     playerRooms: prepare<{ n: number; groups: number; theirs: number } & Record<string, unknown>>(`
-      SELECT r.id, r.name, r.created, r.thumb, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
+      SELECT r.id, r.name, r.created, r.width, r.height, r.thumb, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
+             COALESCE((SELECT MAX(s.t) FROM snapshots s WHERE s.room_id = r.id),
+                      (SELECT MAX(t2.seen) FROM times t2 WHERE t2.room_id = r.id), 0) AS finished,
              COALESCE(m.n, 0) AS connections, COALESCE(t.seconds, 0) AS theirs, COALESCE(t.seen, 0) AS seen
       FROM rooms r
       LEFT JOIN scores m ON m.room_id = r.id AND m.player_id = ?1
@@ -122,32 +118,6 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
   // New jigsaws per address.
   const uploads = rateLimit(30, 60 * 60 * 1000)
 
-  // Emails a private jigsaw's link to players with an email, and adds it to their list. Players who
-  // already have it are skipped, so nobody gets the same invite twice. Returns how many were invited.
-  function invite(room: Room, from: PlayerRef, ids: unknown, origin: string | null) {
-    // Without an address to trust for the link (see siteOrigin()), the email points to their list.
-    const where = origin ? `Open it here: ${origin}/r/${room.id}` : 'Log in and you will find it in your list of jigsaws.'
-    let n = 0
-    for (const id of new Set((Array.isArray(ids) ? ids : []).slice(0, 50).map(String))) {
-      const p = q.emailOf.get(id)
-      if (!p || p.id === from.id || q.member.get(room.id, p.id)) continue
-      q.join.run(room.id, p.id, Date.now())
-      mailer.send({
-        to: p.email,
-        subject: `${from.name} invited you to a jigsaw`,
-        text: `${from.name} invited you to play a private jigsaw.\n\n${where}\n\nOnly people with its link can see and play it.`,
-      })
-      n++
-    }
-    return n
-  }
-
-  // GET /api/players/invitable[?room=]: players who can get an email invite, for a logged in player.
-  function invitable(req: IncomingMessage, roomId: string): Reply {
-    const who = players.asking(req)
-    if (!who) return fail(403, 'log in to invite players')
-    return ok(q.invitable.all(roomId, who.id).map((p) => ({ ...p, joined: !!p.joined })))
-  }
 
   // GET /api/players/:id: a player's name and the jigsaws they have played. Private jigsaws only show
   // to players who have them too.
@@ -207,11 +177,10 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       if (hidden) q.join.run(id, owner.id, Date.now())
       for (const p of pieces) q.insertPiece.run(id, p.i, p.x, p.y, p.r, p.g)
     })
-    if (hidden) invite(q.room.get(id)!, owner, b.invite, siteOrigin(req, mailer.sent))
     return ok({ id })
   }
 
-  // /api/rooms/:id[/image|thumb|preview|snapshots|join|invite|time]
+  // /api/rooms/:id[/image|thumb|preview|snapshots|join|time]
   async function room(req: IncomingMessage, id: string, action: string | undefined): Promise<Reply> {
     const room = q.room.get(id)
     if (!room) return fail(404, 'not found')
@@ -272,12 +241,6 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       if (room.private && who) q.join.run(id, who.id, Date.now())
       return ok({ ok: true })
     }
-    // Anyone logged in with a private jigsaw's link may invite others to it.
-    if (route === 'POST invite') {
-      if (!who) return fail(403, 'log in to invite players')
-      if (!room.private) return fail(400, 'only private jigsaws take invites')
-      return ok({ invited: invite(room, who, b.players, siteOrigin(req, mailer.sent)) })
-    }
     if (route === 'POST time') {
       const secs = Math.max(0, Math.min(300, Math.round(Number(b.seconds) || 0)))
       if (!who || !secs) return ok({ ok: true })
@@ -305,7 +268,6 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
   return {
     exists: (id: string) => !!q.room.get(id),
     sharing,
-    invitable,
     profile,
     rooms,
     room,

@@ -30,26 +30,42 @@ function checkPassword(password: unknown, stored: string | null) {
   return want.length === got.length && timingSafeEqual(got, want)
 }
 
+// A profile picture as the page sends it: a small square JPEG, PNG or WebP as a data URL.
+const AVATAR_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
+const AVATAR_MAX = 256 * 1024
+function avatarOf(data: unknown): { type: string; bytes: Buffer } | null {
+  const m = typeof data === 'string' ? /^data:([^;,]+);base64,(.*)$/s.exec(data) : null
+  const type = m ? m[1].trim().toLowerCase() : ''
+  if (!m || !AVATAR_TYPES.has(type)) return null
+  const bytes = Buffer.from(m[2], 'base64')
+  return bytes.length > 0 && bytes.length <= AVATAR_MAX ? { type, bytes } : null
+}
+
 interface PlayerBody {
   name: string
   passphrase: string
   email: string
   password: string
+  image: string | null
 }
 
 export function createPlayers({ prepare, tx }: Db, hub: Hub) {
   const q = {
-    player: prepare<PlayerRef>('SELECT id, name FROM players WHERE id = ?'),
+    player: prepare<PlayerRef>('SELECT id, name, avatar_at AS avatar FROM players WHERE id = ?'),
     // A passphrase, or the token of a device logged in with an email and password.
     bySecret: prepare<PlayerRow>(`
-      SELECT id, name, email FROM players WHERE secret = ?1
-      UNION SELECT p.id, p.name, p.email FROM sessions s JOIN players p ON p.id = s.player_id WHERE s.token = ?1`),
-    byEmail: prepare<PlayerRow & { password: string | null }>('SELECT id, name, email, password FROM players WHERE email = ?'),
+      SELECT id, name, email, avatar_at AS avatar FROM players WHERE secret = ?1
+      UNION SELECT p.id, p.name, p.email, p.avatar_at AS avatar FROM sessions s JOIN players p ON p.id = s.player_id WHERE s.token = ?1`),
+    byEmail: prepare<PlayerRow & { password: string | null }>('SELECT id, name, email, password, avatar_at AS avatar FROM players WHERE email = ?'),
     secretTaken: prepare('SELECT 1 FROM players WHERE secret = ?'),
     named: prepare('SELECT 1 FROM players WHERE name = ? LIMIT 1'),
     insert: prepare('INSERT INTO players (id, name, secret, created) VALUES (?, ?, ?, ?)'),
-    rename: prepare<PlayerRef>('UPDATE players SET name = ? WHERE id = ? RETURNING id, name'),
+    rename: prepare<PlayerRef>('UPDATE players SET name = ? WHERE id = ? RETURNING id, name, avatar_at AS avatar'),
     useEmail: prepare('UPDATE players SET email = ?, password = ?, secret = NULL WHERE id = ?'),
+    setAvatar: prepare<PlayerRef>(
+      'UPDATE players SET avatar = ?, avatar_type = ?, avatar_at = ? WHERE id = ? RETURNING id, name, avatar_at AS avatar',
+    ),
+    avatar: prepare<{ avatar: Uint8Array | null; avatar_type: string | null }>('SELECT avatar, avatar_type FROM players WHERE id = ?'),
     insertSession: prepare('INSERT INTO sessions (token, player_id, created) VALUES (?, ?, ?)'),
   }
   // Wrong passphrases, tokens and passwords per address, to keep them from being guessed: wherever
@@ -91,9 +107,10 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
   const asking = (req: IncomingMessage) => whoIs(req.headers['x-passphrase'], ipOf(req))
   const byId = (id: unknown) => (id ? q.player.get(String(id)) || null : null)
 
-  // POST /api/players[/claim|login|email-login|email|rename]
+  // POST /api/players[/claim|login|email-login|email|rename|avatar]
   async function route(req: IncomingMessage, action: string | undefined): Promise<Reply> {
-    const b = await readJson<PlayerBody>(req)
+    // A profile picture is a bigger body than the rest.
+    const b = await readJson<PlayerBody>(req, action === 'avatar' ? 512 * 1024 : undefined)
     const ip = ipOf(req)
     const tooMany = fail(429, 'too many tries, wait a few minutes')
     if ((action === undefined || action === 'claim') && signups.blocked(ip)) return fail(429, 'too many new players from here, try again later')
@@ -127,7 +144,7 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
         guesses.count(ip)
         return fail(404, 'wrong email or password')
       }
-      return ok({ id: p.id, name: p.name, email: p.email, passphrase: newSession(p.id) })
+      return ok({ id: p.id, name: p.name, email: p.email, avatar: p.avatar, passphrase: newSession(p.id) })
     }
     // Switch from a passphrase to an email and password. The passphrase stops working, on every
     // device, and this one carries on with a new token.
@@ -145,7 +162,7 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
         q.useEmail.run(email, hashPassword(b.password), who.id)
         passphrase = newSession(who.id)
       })
-      return ok({ id: who.id, name: who.name, email, passphrase })
+      return ok({ id: who.id, name: who.name, email, avatar: who.avatar, passphrase })
     }
     if (action === 'rename') {
       const name = cleanName(b.name)
@@ -157,9 +174,28 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
       hub.renamed(p)
       return ok(p)
     }
+    // A new profile picture (see src/lib/avatars.ts), or none when image is empty.
+    if (action === 'avatar') {
+      if (guesses.blocked(ip)) return tooMany
+      const who = whoIs(b.passphrase, ip)
+      if (!who) return fail(404, ERRORS.unknownPassphrase)
+      const picture = avatarOf(b.image)
+      if (b.image && !picture) return fail(400, 'that picture is not a JPEG, PNG or WebP of at most 256 KB')
+      const p = q.setAvatar.get(picture?.bytes ?? null, picture?.type ?? null, picture ? Date.now() : 0, who.id)!
+      hub.renamed(p)
+      return ok(p)
+    }
   }
 
-  return { whoIs, asking, byId, route }
+  // GET /api/players/:id/avatar: their profile picture. Its address changes with it (?v=), so it's
+  // cached for good.
+  function avatar(id: string): Reply {
+    const row = q.avatar.get(id)
+    if (!row?.avatar || !row.avatar_type) return
+    return { file: Buffer.from(row.avatar), type: row.avatar_type }
+  }
+
+  return { whoIs, asking, byId, route, avatar }
 }
 
 export type Players = ReturnType<typeof createPlayers>

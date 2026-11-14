@@ -179,7 +179,6 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
         thumb: thumb.data,
         preview: renderPreview(img),
         private: hidden,
-        invite: [],
         pieces: scatter(room),
         passphrase: currentPlayer()?.passphrase,
       })

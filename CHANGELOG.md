@@ -1,5 +1,16 @@
 # Changelog
 
+## 14 November 2026
+
+- **Profile pictures**: add one in Settings > Account.
+- **Install on your phone**: add Jigsaw to your home screen to play it like an app.
+- **Feedback**: send it from Settings > General.
+- A player's jigsaws now look like the ones on the jigsaws page.
+- View mode (`V`) has been removed.
+- Private jigsaws can no longer invite players by email.
+- Main buttons are now blue.
+- Fixes for the podium and share buttons, player windows, draw and reactions, and pulling down on phones.
+
 ## 13 November 2026
 
 - Your score now counts every connection you make, also when joining two groups.

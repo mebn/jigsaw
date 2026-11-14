@@ -15,6 +15,8 @@
   --dot: rgba(0, 0, 0, 0.13);
   --shadow: rgba(0, 0, 0, 0.4);
   --sel: #2f6fed;
+  /* Main buttons (.primary) and buttons that are on. */
+  --accent: #2563eb;
   --radius: 10px;
   /* Liquid glass (see "liquid glass" below and lib/glass.ts): a thin pane for the bars over the
      table, a thick one for windows and menus, which need to be read. */
@@ -64,6 +66,7 @@
     --dot: rgba(255, 255, 255, 0.09);
     --shadow: rgba(0, 0, 0, 0.85);
     --sel: #5b8cff;
+    --accent: #3b74f0;
     --field: rgba(245, 245, 245, 0.035);
     --line-strong: rgba(245, 245, 245, 0.32);
     --ring: rgba(245, 245, 245, 0.1);
@@ -98,6 +101,7 @@
   --dot: rgba(255, 255, 255, 0.09);
   --shadow: rgba(0, 0, 0, 0.85);
   --sel: #5b8cff;
+  --accent: #3b74f0;
   --glass: rgba(255, 255, 255, 0.05);
   --glass-thick: rgba(22, 22, 24, 0.72);
   --glass-line: rgba(255, 255, 255, 0.12);
@@ -121,6 +125,8 @@ body,
 #root {
   margin: 0;
   height: 100%;
+  /* No pull down to reload on phones: a drag at the top is for the table or the page. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -169,12 +175,12 @@ button {
   cursor: default;
 }
 .icon-btn.on {
-  background: var(--fg);
-  color: var(--bg);
+  background: var(--accent);
+  color: #fff;
 }
 /* A button that's on keeps its fill under the pointer, a shade lighter. */
 .icon-btn.on:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--fg) 85%, var(--bg));
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
 }
 .icon-btn svg {
   width: 18px;
@@ -204,8 +210,6 @@ button {
 .players-menu,
 .player-card,
 .ui-tip,
-.podium-btn,
-.share-btn,
 .more-btn {
   border: 1px solid var(--glass-line);
   background-color: var(--glass);
@@ -271,15 +275,11 @@ button {
 }
 /* After a few seconds without the pointer or keyboard (see Room.tsx), the controls fade away. */
 .room .float,
-.room .players,
-.room .podium-btn,
-.room .share-btn {
+.room .players {
   transition: opacity 0.2s ease;
 }
 .room.idle .float,
-.room.idle .players,
-.room.idle .podium-btn,
-.room.idle .share-btn {
+.room.idle .players {
   opacity: 0;
   pointer-events: none;
 }
@@ -291,6 +291,9 @@ button {
   inset: 0;
   z-index: 100;
   display: grid;
+  /* One column as wide as the screen, so a window with a long row in it (a player's jigsaws) can't
+     widen it and end up off centre. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: calc(16px + var(--notch)) 16px 16px;
   --scrim: rgba(0, 0, 0, 0.28);
@@ -499,7 +502,6 @@ button {
 .gallery.going .gallery-actions,
 .gallery.going .gallery-head h1,
 .gallery.going .gallery-tabs,
-.gallery.going .canvas-where,
 .gallery.going .tile {
   opacity: 0;
   transition: opacity 0.22s ease;
@@ -626,28 +628,6 @@ button {
 .gallery.going .canvas-heading {
   opacity: 0;
 }
-/* Where on the canvas the middle of the screen is. */
-.canvas-where {
-  position: absolute;
-  bottom: 20px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: pre;
-  left: 24px;
-  pointer-events: none;
-  transition: opacity 0.2s;
-}
-@media (max-width: 600px) {
-  .canvas-where {
-    display: none;
-  }
-}
-
 /* A jigsaw on the page: rises into place as the page comes in, the later ones a little later. */
 .tile {
   position: relative;
@@ -826,9 +806,7 @@ button {
 }
 .room.leaving .float:not(.tl),
 .room.leaving .tr,
-.room.leaving .notes-clip,
-.room.leaving .podium-btn,
-.room.leaving .share-btn {
+.room.leaving .notes-clip {
   opacity: 0;
   transition: opacity 0.15s;
 }
@@ -844,150 +822,6 @@ button {
   .room.leaving {
     animation-duration: 0.01s;
     animation-delay: 0s;
-  }
-}
-
-/* A jigsaw card: the picture in a frame, with a thin progress line and the numbers under it, quiet
-   like the rest of the window. */
-.card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 6px 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  background: var(--field);
-  color: var(--fg);
-  text-decoration: none;
-  transition:
-    background 0.2s,
-    border-color 0.2s,
-    box-shadow 0.3s,
-    transform 0.35s var(--ease);
-}
-.card:hover {
-  border-color: var(--line-strong);
-  background: var(--hover);
-  box-shadow: var(--glass-drop);
-  transform: translateY(-2px);
-}
-.card:focus-visible {
-  outline: 2px solid var(--sel);
-  outline-offset: 2px;
-}
-.card-pic {
-  display: block;
-  aspect-ratio: 4 / 3;
-  overflow: hidden;
-  border-radius: 14px;
-  background: var(--hover);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.card .thumb {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.card .progress {
-  display: block;
-  height: 3px;
-  margin: 0 4px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: var(--line);
-}
-.card .progress span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--fg);
-}
-.card-stats {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 17px;
-  padding: 0 4px;
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.card-stats > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.card-stats svg {
-  width: 13px;
-  height: 13px;
-}
-.card-stats .pct {
-  margin-left: auto;
-  color: var(--fg);
-  font-weight: 600;
-}
-.card.done .progress span {
-  background: var(--line-strong);
-}
-.card.done .pct svg {
-  stroke-width: 2.4;
-}
-
-/* A stand-in while the jigsaws load (see CardGhosts in Card.tsx): a light sweeps across its
-   picture and its line of numbers. */
-.card.ghost {
-  pointer-events: none;
-}
-.card.ghost .card-pic,
-.ghost-bar {
-  background: linear-gradient(100deg, var(--hover) 30%, color-mix(in srgb, var(--hover) 40%, var(--bg)) 50%, var(--hover) 70%) var(--hover);
-  background-size: 300% 100%;
-  box-shadow: none;
-  animation: ghost 1.4s ease-in-out infinite;
-}
-.ghost-bar {
-  display: block;
-  height: 10px;
-  border-radius: 999px;
-  background-color: var(--line);
-  background-image: linear-gradient(100deg, var(--line) 30%, color-mix(in srgb, var(--line) 40%, var(--bg)) 50%, var(--line) 70%);
-}
-.ghost-bar.stats {
-  width: 45%;
-  /* As tall as a card's progress line and numbers together. */
-  margin: 10px 4px 8px;
-}
-.ghost-bar.caption {
-  width: 45%;
-  height: 8px;
-}
-/* Later cards shimmer a little after the earlier ones, with their lines under them in a player's window. */
-.card.ghost:nth-child(3n + 2) .card-pic,
-.card.ghost:nth-child(3n + 2) .ghost-bar,
-.profile-room:nth-child(3n + 2) .card-pic,
-.profile-room:nth-child(3n + 2) .ghost-bar {
-  animation-delay: 0.15s;
-}
-.card.ghost:nth-child(3n) .card-pic,
-.card.ghost:nth-child(3n) .ghost-bar,
-.profile-room:nth-child(3n) .card-pic,
-.profile-room:nth-child(3n) .ghost-bar {
-  animation-delay: 0.3s;
-}
-@keyframes ghost {
-  from {
-    background-position: 100% 0;
-  }
-  to {
-    background-position: 0 0;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .card.ghost .card-pic,
-  .ghost-bar {
-    animation: none;
   }
 }
 
@@ -1048,6 +882,16 @@ button {
   padding: 0 14px;
   font-size: 14px;
 }
+/* The feedback window's box (see Feedback.tsx): a text field several lines tall. */
+textarea.text {
+  height: auto;
+  min-height: 120px;
+  padding: 12px 16px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  resize: vertical;
+}
 .text.bad,
 .text.bad:focus {
   border-color: #d33;
@@ -1072,13 +916,13 @@ button {
 }
 /* Glass like the bars (see "liquid glass"). The main button is tinted dark, still see-through. */
 .primary {
-  border-color: color-mix(in srgb, var(--fg) 30%, var(--glass-line));
-  background-color: color-mix(in srgb, var(--fg) 76%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--glass-line));
+  background-color: color-mix(in srgb, var(--accent) 88%, transparent);
   background-image: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 60%);
-  color: var(--bg);
+  color: #fff;
 }
 .primary:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--fg) 88%, transparent);
+  background-color: var(--accent);
 }
 .secondary {
   color: var(--fg);
@@ -1114,7 +958,7 @@ button {
   width: 16px;
   height: 16px;
   border-color: transparent;
-  border-top-color: var(--bg);
+  border-top-color: #fff;
 }
 .secondary .spin {
   width: 16px;
@@ -1572,12 +1416,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   }
 }
 
-@media (max-width: 480px) {
-  .card-stats {
-    gap: 8px;
-  }
-}
-
 
 /* ---- header stats & notes ---- */
 
@@ -1994,16 +1832,15 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   pointer-events: none;
 }
 /* On a narrow screen the play tools go to the bottom middle, in reach of a thumb, and the podium
-   and share buttons sit above them. */
+   and share bar sits above them. */
 @media (max-width: 640px) {
   .float.tc,
   :root[data-notch] .room .tc {
     top: auto;
     bottom: calc(16px + env(safe-area-inset-bottom));
   }
-  .room .podium-btn,
-  .room .share-btn {
-    bottom: calc(74px + env(safe-area-inset-bottom));
+  .float.bc {
+    bottom: calc(76px + env(safe-area-inset-bottom));
   }
 }
 
@@ -2070,6 +1907,21 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   letter-spacing: 0.01em;
   white-space: nowrap;
   user-select: none;
+}
+/* With a profile picture, the picture fills the circle. */
+.player-dot.pic img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+/* Here: the ring around it shows, with the gap inside it. */
+.player-dot.pic.online {
+  padding: 2px;
+}
+.player-dot.pic.big.online {
+  padding: 3px;
 }
 /* Your own circle: a small You tag across its bottom edge. */
 .player-dot.you {
@@ -2398,34 +2250,32 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .profile-rooms {
   display: flex;
   gap: 16px;
-  margin: -6px -16px -24px -22px;
-  padding: 6px 16px 24px 22px;
+  /* At most as far down as the window's body is padded (see .profile .dialog-body), or the body
+     scrolls up and down by the difference. */
+  margin: -6px -16px -32px -22px;
+  padding: 6px 16px 32px 22px;
   overflow-x: auto;
+  /* Sideways only: a tilted or rising picture (see .tile) mustn't make it scroll up and down. */
+  overflow-y: hidden;
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   scroll-padding: 0 16px 0 22px;
   scrollbar-width: thin;
 }
-/* The placeholders while loading stay put: the ones that don't fit are cut off, not scrolled to. */
-.profile-rooms[aria-busy='true'] {
-  overflow-x: hidden;
-}
-.profile-rooms > * {
-  flex: none;
-  width: 220px;
-  scroll-snap-align: start;
-}
+/* Each as on the jigsaws page, as wide as its picture (see artSize in PlayerDialog.tsx). */
 .profile-room {
+  flex: none;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  scroll-snap-align: start;
+}
+.profile-room .tile {
+  animation-delay: calc(var(--i, 0) * 40ms);
 }
 @media (max-width: 480px) {
-  .profile-rooms > * {
-    width: 170px;
-  }
   .profile-empty {
-    height: calc((170px - 14px) * 3 / 4 + 78px);
+    height: 174px;
   }
 }
 /* What they did in a jigsaw, under its card. */
@@ -2454,7 +2304,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
      its height when the cards turn out to be none. */
   display: grid;
   place-items: center;
-  height: calc((220px - 14px) * 3 / 4 + 78px);
+  height: 204px;
   margin: 0;
   color: var(--muted);
   text-align: center;
@@ -2886,69 +2736,14 @@ button.link:hover {
   color: #fff;
 }
 
-/* View mode: presses on notes fall through to the table, which pans. */
-.room.pan-mode .note {
-  pointer-events: none;
-}
-.play-tools .view-btn {
-  cursor: pointer;
-  touch-action: manipulation;
-}
 
 /* ---- podium (finished jigsaws) ---- */
 
-.podium-btn {
-  position: absolute;
-  bottom: 16px;
-  /* Centred together with the share button beside it (44px each, 8px apart). */
-  left: calc(50% - 26px);
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0 0 6px;
-  border-radius: 999px;
-  color: inherit;
-  cursor: pointer;
+/* A finished jigsaw's podium and share buttons, in a bar at the bottom middle. */
+.float.bc {
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  left: 50%;
   transform: translateX(-50%);
-  animation: podium-in 0.5s cubic-bezier(0.3, 1.6, 0.5, 1);
-}
-.podium-btn:hover {
-  background: var(--glass-thick);
-}
-.podium-icon {
-  display: flex;
-  align-items: flex-end;
-  gap: 1px;
-  height: 22px;
-}
-.podium-icon span {
-  display: grid;
-  place-items: start center;
-  width: 9px;
-  padding-top: 1px;
-  border-radius: 2px 2px 0 0;
-  color: var(--podium-ink);
-  font: 700 7px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
-}
-.podium-icon .p1 {
-  height: 22px;
-  background: var(--gold);
-}
-.podium-icon .p2 {
-  height: 16px;
-  background: var(--silver);
-}
-.podium-icon .p3 {
-  height: 12px;
-  background: var(--bronze);
-}
-@keyframes podium-in {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(24px) scale(0.6);
-  }
 }
 
 /* The podium itself: a sticker on the table, with the table only slightly blurred behind it. */
@@ -3102,6 +2897,24 @@ button.link:hover {
   flex: none;
 }
 
+/* ---- profile picture (see AccountPanel.tsx) ---- */
+
+.avatar-field {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.avatar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.avatar-actions .modal-note,
+.avatar-actions .modal-error {
+  margin: 0;
+}
+
 /* ---- email login ---- */
 
 /* A field, what's wrong with it, and its button, close together. */
@@ -3120,80 +2933,6 @@ button.link:hover {
   overflow-wrap: anywhere;
 }
 
-
-/* ---- invites ---- */
-
-.invite {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.invite-list {
-  max-height: 220px;
-  margin: 0;
-  padding: 4px;
-  overflow-y: auto;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  list-style: none;
-  scrollbar-width: thin;
-}
-.invite-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  height: 36px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 12px;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-}
-.invite-row:hover:not(:disabled) {
-  background: var(--hover);
-}
-.invite-row:disabled {
-  cursor: default;
-  color: var(--muted);
-}
-.invite-box {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-}
-.invite-row.on .invite-box {
-  border-color: var(--fg);
-  background: var(--fg);
-  color: var(--bg);
-}
-.invite-row:disabled .invite-box {
-  opacity: 0.5;
-}
-.invite-box svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.2;
-}
-.invite-name {
-  flex: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.invite-note {
-  flex: none;
-  font-size: 12px;
-}
-.modal.private-room {
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-}
 
 /* ---- right click menu ---- */
 
@@ -3350,29 +3089,6 @@ button.link:hover {
   outline-offset: 2px;
 }
 
-
-/* Next to the podium button: copies a picture of the finished jigsaw and the podium. */
-.share-btn {
-  position: absolute;
-  bottom: 16px;
-  left: calc(50% + 4px);
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 999px;
-  color: inherit;
-  cursor: pointer;
-}
-.share-btn:hover {
-  background: var(--glass-thick);
-}
-.share-btn svg {
-  width: 20px;
-  height: 20px;
-}
 
 /* Sharing a finished jigsaw (see ShareDialog.tsx): the picture and the timelapse side by side,
    each with its own button. */

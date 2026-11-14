@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import qrcode from 'qrcode-generator'
 import { api } from '../lib/api.ts'
 import { LIMITS } from '../../shared/protocol.ts'
@@ -7,6 +7,8 @@ import type { PlayerLogin as Player } from '../../shared/protocol.ts'
 import { EmailForm, looksLikePassphrase, Passphrase, PassphraseWarning } from './Account.tsx'
 import { Key, Logout, User } from './icons.tsx'
 import Confirm from './Confirm.tsx'
+import { Dot } from './Players.tsx'
+import { avatarFromFile } from '../lib/avatars.ts'
 import TextField from './TextField.tsx'
 
 // Where a phone can reach this page; noLan when this machine isn't on a network.
@@ -101,10 +103,67 @@ function PhoneLink({ player }: { player: Player | null }) {
 
   return (
     <>
-      <p className="modal-text">Scan to open this jigsaw on your phone, logged in as you. Only scan it with your own phone.</p>
+      <p className="modal-text">Scan to open this jigsaw on your phone, logged in as you.</p>
       {noLan && <p className="modal-error">This computer isn't on a network, so a phone may not be able to reach it.</p>}
       <div className="qr-wrap">{link ? <QrCode text={link} /> : <span className="spin" />}</div>
     </>
+  )
+}
+
+// Your profile picture, shown in your circle everywhere: pick a picture (it's cut to a square from
+// its middle and made small before it's sent), or take it away.
+function AvatarField({ player }: { player: Player }) {
+  const { setAvatar } = useApp()
+  const input = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const save = async (image: string | null) => {
+    setBusy(true)
+    setError('')
+    try {
+      await setAvatar(image)
+    } catch (e) {
+      setError((e as Error).message || "Couldn't save the picture, try again.")
+    } finally {
+      setBusy(false)
+    }
+  }
+  const pick = async (file: File | undefined) => {
+    if (!file) return
+    try {
+      await save(await avatarFromFile(file))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+  return (
+    <div className="avatar-field">
+      <Dot p={player} here={false} big />
+      <div className="avatar-actions">
+        <div className="row">
+          <button className="secondary small" disabled={busy} onClick={() => input.current?.click()}>
+            {busy ? <span className="spin" /> : player.avatar ? 'Change picture' : 'Choose picture'}
+          </button>
+          {!!player.avatar && (
+            <button className="secondary small" disabled={busy} onClick={() => save(null)}>
+              Remove
+            </button>
+          )}
+        </div>
+        <p className="modal-note">A JPEG, PNG, WebP or other picture. It's cut to a square from the middle.</p>
+        {error && <p className="modal-error">{error}</p>}
+      </div>
+      <input
+        ref={input}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          pick(e.target.files?.[0])
+          e.target.value = ''
+        }}
+      />
+    </div>
   )
 }
 
@@ -146,6 +205,10 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
     <>
       {player ? (
         <>
+          <section className="field">
+            <h2 className="label">Profile picture</h2>
+            <AvatarField player={player} />
+          </section>
           <section className="field">
             <h2 className="label">Name</h2>
             <NameField />

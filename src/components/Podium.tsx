@@ -10,17 +10,6 @@ import type { RankedPlayer } from './Players.tsx'
 // How far the podium turns towards the pointer at most, in degrees.
 const TILT = 16
 
-// The little podium drawn on the button that opens the real one.
-export function PodiumIcon() {
-  return (
-    <span className="podium-icon" aria-hidden="true">
-      <span className="p2">2</span>
-      <span className="p1">1</span>
-      <span className="p3">3</span>
-    </span>
-  )
-}
-
 // The top three players of a finished jigsaw, as a sticker: no dialog box, no dimmed background.
 // Clicking anywhere or Escape puts it away; the button under it opens sharing (onShare). It turns a
 // little towards the pointer.

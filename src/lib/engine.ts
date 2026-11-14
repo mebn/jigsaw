@@ -796,7 +796,6 @@ export class Engine {
   panKeys: Set<string>
   panSince: number
   panV?: number[]
-  panMode: boolean
   // Draw mode: the left button (and a finger) draws strokes that fade away, seen by everyone.
   drawMode: boolean
   strokes: Map<string, Stroke>
@@ -1049,8 +1048,6 @@ export class Engine {
     this.panKeys = new Set()
     // When the pan keys were first pressed, for speeding up while held.
     this.panSince = 0
-    // View mode: the left button (and a finger) moves the table instead of pieces or selecting.
-    this.panMode = false
     this.drawMode = false
     // Strokes by '<client>:<id>' ('me:<id>' for this player's).
     this.strokes = new Map()
@@ -1882,9 +1879,9 @@ export class Engine {
       this.endTrim()
     }
     // Draw mode: the left button draws.
-    if (e.button === 0 && this.drawMode && !this.panMode) return this.startInk(e.pointerId, sx, sy)
+    if (e.button === 0 && this.drawMode) return this.startInk(e.pointerId, sx, sy)
     // A tray's buttons: its auto sort switch, and its menu, opened below the button.
-    if (e.button === 0 && !this.panMode) {
+    if (e.button === 0) {
       const b = this.trayButtonAt(sx, sy)
       if (b?.kind === 'auto') return this.setTrayAuto(b.tray.id, !b.tray.auto)
       if (b) {
@@ -1898,8 +1895,8 @@ export class Engine {
         return this.openMenu({ kind: 'ref', id: ref.id, sx: x0, sy: y1 + 4 })
       }
     }
-    // Right (or middle) button drags the table, as does any press in view mode.
-    if (e.button === 1 || e.button === 2 || (this.panMode && e.button === 0)) {
+    // Right (or middle) button drags the table.
+    if (e.button === 1 || e.button === 2) {
       let menu: Omit<MenuOpen, 'sx' | 'sy'> | null = null
       if (e.button === 2) {
         const { rh, th, i: at } = this.pick(sx, sy)
@@ -2433,14 +2430,8 @@ export class Engine {
       this.setHighlight(null)
       return this.showTip(this.trim.box ? null : { text: 'Drag over the image to pick the part to keep', sx, sy })
     }
-    if (this.drawMode && !this.panMode) {
+    if (this.drawMode) {
       this.canvas.style.cursor = 'crosshair'
-      this.setHighlight(null)
-      this.setHovered(null)
-      return this.showTip(null)
-    }
-    if (this.panMode) {
-      this.canvas.style.cursor = 'grab'
       this.setHighlight(null)
       this.setHovered(null)
       return this.showTip(null)
@@ -3720,15 +3711,9 @@ export class Engine {
 
   // ---- draw mode ----------------------------------------------------------
 
-  setPanMode(on: boolean) {
-    this.panMode = on
-    this.modeCursor()
-    this.setHighlight(null)
-  }
-
   // The cursor over the table for the mode it's in.
   modeCursor() {
-    this.canvas.style.cursor = this.panMode ? 'grab' : this.drawMode ? 'crosshair' : ''
+    this.canvas.style.cursor = this.drawMode ? 'crosshair' : ''
   }
 
   setDrawMode(on: boolean) {

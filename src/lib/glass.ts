@@ -6,7 +6,7 @@
 
 // Every pane of glass; the same elements as the glass rules in styles.css.
 const PANES =
-  '.float, .modal, .tabs, .primary, .secondary, .context-menu:not(.sub-menu), .players-menu, .player-card, .ui-tip, .podium-btn, .share-btn, .more-btn'
+  '.float, .modal, .tabs, .primary, .secondary, .context-menu:not(.sub-menu), .players-menu, .player-card, .ui-tip, .more-btn'
 // The bars a soft light follows the pointer over.
 const LIT = '.float'
 

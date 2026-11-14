@@ -43,14 +43,6 @@ export type Reply = [number, unknown] | { file: Buffer; type: string } | undefin
 export const ok = (body: unknown): Reply => [200, body]
 export const fail = (status: number, error: string): Reply => [status, { error }]
 
-// Where links in emails point: APP_URL. Without it, the address the browser used, but whoever asks
-// can make that up, so only while mail is printed to the log (sent: false, see mail.ts): an email
-// that is really sent then goes without a link (null).
-export function siteOrigin(req: IncomingMessage, sent: boolean) {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, '')
-  return sent ? null : req.headers.origin || `http://${req.headers.host}`
-}
-
 // The address a request came from. Behind a proxy every request comes from the proxy, so
 // CLIENT_IP_HEADER names the header the proxy puts the player's own address in (such as
 // CF-Connecting-IP). Only set it when the server can't be reached around the proxy: anyone who can

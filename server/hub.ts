@@ -60,7 +60,7 @@ export function createHub({ prepare }: Db) {
     setPlayer(roomId: string, ws: RoomSocket, player: PlayerRef | null) {
       const before = ws.player
       ws.player = player
-      if (player) broadcast(roomId, { type: 'player', client: ws.client, player: { id: player.id, name: player.name } }, ws)
+      if (player) broadcast(roomId, { type: 'player', client: ws.client, player: { id: player.id, name: player.name, avatar: player.avatar } }, ws)
       if (before?.id !== player?.id) presence(roomId, before)
     },
     // The room was deleted: its pages are told, and their sockets closed.

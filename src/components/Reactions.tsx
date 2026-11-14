@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { Engine } from '../lib/engine.ts'
 import type { RoomSocket } from '../lib/api.ts'
@@ -33,14 +34,16 @@ function spawn(layer: HTMLElement, sx: number, sy: number) {
 }
 
 // Header button that turns reactions on. While they are on, pressing on the board throws them out of
-// the pointer, for everyone in the room.
+// the pointer, for everyone in the room. Room keeps whether they're on (on, setOn), so that they and
+// draw mode are never on together.
 interface ReactionsProps {
   engine: Engine
   sock: RoomSocket
+  on: boolean
+  setOn: Dispatch<SetStateAction<boolean>>
 }
 
-export default function Reactions({ engine, sock }: ReactionsProps) {
-  const [on, setOn] = useState(false)
+export default function Reactions({ engine, sock, on, setOn }: ReactionsProps) {
   const layer = useRef<HTMLDivElement>(null)
   const host = engine.canvas.parentElement!
 
@@ -59,7 +62,7 @@ export default function Reactions({ engine, sock }: ReactionsProps) {
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
-  }, [engine])
+  }, [engine, setOn])
 
   useOverlay(on, () => setOn(false), { keepTyping: true })
 

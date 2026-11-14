@@ -43,6 +43,9 @@ export const isNoteReaction = (k: unknown): k is NoteReactionKind => NOTE_REACTI
 export interface PlayerRef {
   id: string
   name: string
+  // When their profile picture was set (ms since epoch), or 0 or missing when they have none; see
+  // avatarUrl() in src/lib/avatars.ts.
+  avatar?: number
 }
 
 // A player as they log in: for a player with an email, passphrase is this device's login token.
@@ -95,6 +98,8 @@ export interface PlayerRoom {
   id: string
   name: string
   created: number
+  width: number
+  height: number
   thumb: string
   owner: string | null
   private: number
@@ -104,6 +109,8 @@ export interface PlayerRoom {
   n: number
   progress: number
   done: boolean
+  // When it was finished (ms since epoch), or 0 when not known.
+  finished: number
   connections: number
   time: number
 }
@@ -111,11 +118,6 @@ export interface PlayerRoom {
 export interface PlayerProfile extends PlayerRef {
   created: number
   rooms: PlayerRoom[]
-}
-
-// A player who can be invited to a private jigsaw; joined when they already have it.
-export interface InvitablePlayer extends PlayerRef {
-  joined: boolean
 }
 
 // A piece as stored: cell i at (x, y), turned r quarter turns, in group g, last moved by player by,
@@ -258,14 +260,13 @@ export const PREVIEW_W = 1200
 export const PREVIEW_H = 630
 
 // What a new jigsaw is made from: image, thumb and preview (its link preview picture) are data
-// URLs; invite: the ids of players to invite to a private one.
+// URLs.
 export interface NewRoom extends PuzzleSpec {
   name: string
   image: string
   thumb: string
   preview?: string
   private: boolean
-  invite: string[]
   pieces: PiecePlacement[]
   passphrase?: string
 }

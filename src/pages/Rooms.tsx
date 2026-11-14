@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import { api } from '../lib/api.ts'
 import type { RoomSummary } from '../../shared/protocol.ts'
 import { useApp } from '../lib/app.ts'
 import { lastRoom, store } from '../lib/storage.ts'
 import { navigate, paths } from '../lib/router.ts'
-import { Back, Lock, Plus, Trash } from '../components/icons.tsx'
+import { Back, Plus, Trash } from '../components/icons.tsx'
+import { Art, ArtInfo, Tile } from '../components/Card.tsx'
 import Dialog from '../components/Dialog.tsx'
 import Tabs from '../components/Tabs.tsx'
 import Settings from '../components/Settings.tsx'
@@ -128,89 +129,6 @@ const TABS: { key: TabKey; title: string; hint: string; test: (r: RoomSummary) =
   { key: 'private', title: 'Private', hint: 'Private jigsaws', test: (r) => !!r.private },
 ]
 
-// When a jigsaw was finished, for the line under its picture: "4 Nov 2026".
-const finishedOn = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-
-// How long a jigsaw took, for the line under its picture: "45 min", "3 h 12 min".
-function took(seconds: number) {
-  const m = Math.round(seconds / 60)
-  if (m < 1) return 'Under a minute'
-  const h = Math.floor(m / 60)
-  return h ? `${h} h ${m % 60} min` : `${m} min`
-}
-
-// A jigsaw's picture, the small one first and the full one over it once loaded.
-function Art({ r, w, h }: { r: RoomSummary; w: number; h: number }) {
-  const [full, setFull] = useState(false)
-  return (
-    <span className="art-pic" style={{ width: w, height: h }}>
-      <img src={r.thumb} alt="" draggable={false} />
-      <img className={`full${full ? ' on' : ''}`} src={api.imageUrl(r.id)} alt="" draggable={false} loading="lazy" decoding="async" onLoad={() => setFull(true)} />
-    </span>
-  )
-}
-
-interface TileProps {
-  r: RoomSummary
-  i: number
-  mine: boolean
-  onPick: (e: MouseEvent<HTMLAnchorElement>, id: string) => void
-  onDelete: (r: RoomSummary) => void
-  children: ReactNode
-  below?: ReactNode
-}
-
-// The jigsaw under the pointer tilts towards it, with a soft light where it is.
-function tilt(e: ReactPointerEvent<HTMLElement>) {
-  if (e.pointerType !== 'mouse' || e.buttons) return
-  const el = e.currentTarget
-  const pic = el.querySelector<HTMLElement>('.pic')!
-  const b = pic.getBoundingClientRect()
-  const px = (e.clientX - b.left) / b.width
-  const py = (e.clientY - b.top) / b.height
-  el.style.setProperty('--ry', `${(px - 0.5) * 6}deg`)
-  el.style.setProperty('--rx', `${(0.5 - py) * 4}deg`)
-  el.style.setProperty('--mx', `${px * 100}%`)
-  el.style.setProperty('--my', `${py * 100}%`)
-}
-function untilt(e: ReactPointerEvent<HTMLElement>) {
-  const el = e.currentTarget
-  el.style.setProperty('--ry', '0deg')
-  el.style.setProperty('--rx', '0deg')
-}
-
-function Tile({ r, i, mine, onPick, onDelete, children, below }: TileProps) {
-  return (
-    <a
-      className="tile art"
-      href={paths.room(r.id)}
-      draggable={false}
-      style={{ '--i': Math.min(i, 14) } as CSSProperties}
-      onClick={(e) => onPick(e, r.id)}
-      onPointerMove={tilt}
-      onPointerLeave={untilt}
-      aria-label={r.done ? 'Finished jigsaw' : `Jigsaw, ${Math.round(r.progress * 100)}% done`}
-    >
-      <span className="pic">{children}</span>
-      {below}
-      {mine && (
-        <button
-          className="icon-btn del"
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            onDelete(r)
-          }}
-          aria-label="Delete"
-          data-tip="Delete jigsaw"
-        >
-          <Trash />
-        </button>
-      )}
-    </a>
-  )
-}
-
 // Scrolling eases to where it's sent with this time constant (ms), so it glides to a stop, also at
 // either end.
 const EASE_MS = 70
@@ -223,7 +141,6 @@ const EASE_MS = 70
 function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; gap: number; render: (p: Placed) => ReactNode }) {
   const field = useRef<HTMLDivElement>(null)
   const cells = useRef<(HTMLDivElement | null)[]>([])
-  const where = useRef<HTMLSpanElement>(null)
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight })
   const { placed, headings, w: W, h: H } = layout(list, col, gap, Math.min(view.w - 2 * gap, MAX_WIDTH))
   const heads = useRef<(HTMLDivElement | null)[]>([])
@@ -259,7 +176,6 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       const el = heads.current[k]
       if (el) el.style.transform = `translate3d(${cx + hd.x - c.x}px, ${cy + hd.y - c.y}px, 0)`
     })
-    if (where.current) where.current.textContent = `Y ${Math.round(c.y + H / 2)}`
     // Still drifting towards the pointer.
     return Math.abs(m.x - m.sx) + Math.abs(m.y - m.sy) > 0.002
   }
@@ -447,9 +363,6 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
           <span className="n">{hd.n}</span>
         </div>
       ))}
-      <div className="canvas-where" aria-hidden="true">
-        <span ref={where} />
-      </div>
     </div>
   )
 }
@@ -529,24 +442,23 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
     <Tile
       r={p.r}
       i={p.i}
-      mine={!!playerId && p.r.owner === playerId}
       onPick={pick}
-      onDelete={setDoomed}
-      below={
-        p.r.done ? (
-          <span className="art-info">
-            <span title="Time it took">{took(p.r.seconds)}</span>
-            {p.r.finished > 0 && (
-              <>
-                <span className="dot" aria-hidden="true">·</span>
-                <span title="Finished on">{finishedOn(p.r.finished)}</span>
-              </>
-            )}
-          </span>
-        ) : (
-          <span className="art-info" title="Pieces connected">
-            {Math.round(p.r.progress * 100)}% done{!!p.r.private && <Lock aria-label="Private" />}
-          </span>
+      below={<ArtInfo r={p.r} />}
+      extra={
+        !!playerId &&
+        p.r.owner === playerId && (
+          <button
+            className="icon-btn del"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDoomed(p.r)
+            }}
+            aria-label="Delete"
+            data-tip="Delete jigsaw"
+          >
+            <Trash />
+          </button>
         )
       }
     >

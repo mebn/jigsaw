@@ -9,8 +9,8 @@ import { send } from './http.ts'
 import type { Reply } from './http.ts'
 import { createHub } from './hub.ts'
 import type { RoomSocket } from './hub.ts'
-import { createMailer } from './mail.ts'
 import { roomPage } from './meta.ts'
+import { createFeedback } from './feedback.ts'
 import { createPlayers } from './players.ts'
 import { createRooms } from './rooms.ts'
 import { createTable } from './table.ts'
@@ -30,7 +30,8 @@ function createApi(dbFile: string) {
   const hub = createHub(db)
   const players = createPlayers(db, hub)
   const table = createTable(db, hub, players)
-  const rooms = createRooms(db, hub, players, table, createMailer())
+  const rooms = createRooms(db, hub, players, table)
+  const feedback = createFeedback(db, players)
   // The script the built page loads (it's named after its contents), or null while developing.
   let build: string | null = null
 
@@ -39,10 +40,11 @@ function createApi(dbFile: string) {
     const get = req.method === 'GET'
     if (area === 'lan' && get) return [200, { address: lanAddress() }]
     if (area === 'players') {
-      if (id === 'invitable' && get) return rooms.invitable(req, query.get('room') || '')
-      if (id && get) return rooms.profile(req, id)
+      if (id && get && action === 'avatar') return players.avatar(id)
+      if (id && get && !action) return rooms.profile(req, id)
       if (req.method === 'POST' && !action) return players.route(req, id)
     }
+    if (area === 'feedback' && req.method === 'POST' && !id) return feedback.route(req)
     if (area === 'rooms') return id ? rooms.room(req, id, action) : rooms.rooms(req)
   }
 

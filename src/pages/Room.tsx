@@ -13,17 +13,18 @@ import { lastRoom, roomOnce, store } from '../lib/storage.ts'
 import { navigate, paths } from '../lib/router.ts'
 import { useTimes } from '../lib/times.ts'
 import { isPlainKey, isTyping, onTable, overlays, useEscapeFallback, useOverlay } from '../lib/overlays.ts'
-import { Hand, Pencil, Picture, Rooms, Share } from '../components/icons.tsx'
+import { Pencil, Picture, PodiumIcon, Rooms, Share } from '../components/icons.tsx'
 import Settings from '../components/Settings.tsx'
 import { BasicsDialog } from '../components/Help.tsx'
 import type { OpenSettings } from '../components/Settings.tsx'
 import Players, { rankPlayers } from '../components/Players.tsx'
 import type { NameOf, Stats } from '../components/Players.tsx'
-import Podium, { PodiumIcon } from '../components/Podium.tsx'
+import Podium from '../components/Podium.tsx'
 import Reactions from '../components/Reactions.tsx'
 import Celebration from '../components/Celebration.tsx'
 import DevMenu from '../components/DevMenu.tsx'
 import { useLinger } from '../lib/linger.ts'
+import { learnAvatars } from '../lib/avatars.ts'
 import { NoteButton, NotesLayer } from '../components/Notes.tsx'
 import type { CreateNote } from '../components/Notes.tsx'
 import ContextMenu from '../components/ContextMenu.tsx'
@@ -57,7 +58,7 @@ function useIdle() {
     const busy = () => over || touch || overlays.count() > 0 || document.querySelector('.float :focus-visible, .players :focus-visible')
     const sleep: () => void = () => (busy() ? (timer = setTimeout(sleep, IDLE_MS)) : setIdle(true))
     const wake = (e: Event) => {
-      if (e.type !== 'keydown') over = !!(e.target as Element | null)?.closest?.('.float, .players, .podium-btn, .share-btn')
+      if (e.type !== 'keydown') over = !!(e.target as Element | null)?.closest?.('.float, .players')
       if ((e as PointerEvent).pointerType) touch = (e as PointerEvent).pointerType === 'touch'
       setIdle(false)
       clearTimeout(timer)
@@ -121,6 +122,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const [, setNamesVer] = useState(0)
   const learn = useCallback((list: (PlayerRef | null)[]) => {
     for (const p of list) if (p?.id) names.current.set(p.id, String(p.name || '').slice(0, LIMITS.name))
+    learnAvatars(list)
     setNamesVer((v) => v + 1)
   }, [])
   const nameOf: NameOf = useCallback((pid) => (pid ? names.current.get(pid) || 'Someone' : ''), [])
@@ -160,8 +162,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const [error, setError] = useState(false)
   // Why the table can't be drawn here (WebGPU didn't start), shown instead of it.
   const [gpuError, setGpuError] = useState<string | null>(null)
-  // View mode: dragging with the left button (or a finger) moves the table, never pieces or notes.
-  const [panMode, setPanMode] = useState(() => store.get('panMode') === '1')
   // Split screen: the table two to four times, to carry pieces between far apart places, cut up as
   // splitPanes says (see SplitButton).
   const [split, setSplit] = useState(() => store.get('split') === '1')
@@ -171,6 +171,15 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   })
   // Draw mode: dragging draws strokes that fade away after a few seconds, for everyone to see.
   const [drawMode, setDrawMode] = useState(false)
+  // Reactions: pressing on the board throws them (see Reactions). Turning it or draw mode on turns
+  // the other off, as both would want the same presses.
+  const [reacting, setReacting] = useState(false)
+  useEffect(() => {
+    if (drawMode) setReacting(false)
+  }, [drawMode])
+  useEffect(() => {
+    if (reacting) setDrawMode(false)
+  }, [reacting])
   // The picture as a map over the table, just for this player (Q, see PictureMap).
   const [map, setMap] = useState(false)
   const [mapShown, mapClosing] = useLinger(map)
@@ -322,12 +331,12 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
 
   // Logging in, out or renaming: act as the new player from here on, and tell the room.
   useEffect(() => {
-    if (playerId) learn([{ id: playerId, name: name || '' }])
+    if (playerId) learn([{ id: playerId, name: name || '', avatar: player?.avatar || 0 }])
     if (!engine) return
     engine.user = playerId
     engine.userName = name
     engine.invalidate()
-  }, [engine, playerId, name, learn])
+  }, [engine, playerId, name, player?.avatar, learn])
   const sock = session?.sock
   const passphraseNow = player?.passphrase
   useEffect(() => sock?.hello(), [sock, passphraseNow])
@@ -340,12 +349,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   useEffect(() => {
     engine?.setColors(readColors())
   }, [engine, theme])
-
-  useEffect(() => {
-    store.set('panMode', panMode ? '1' : '0')
-    if (!engine) return
-    engine.setPanMode(panMode)
-  }, [engine, panMode])
 
   useEffect(() => {
     engine?.setDrawMode(drawMode)
@@ -393,7 +396,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     return overlays.watch(check)
   }, [engine])
 
-  // H help, V view mode, N note, T tray, I image, Q the picture as a map, + and - zoom, C fits to screen, F fullscreen. Arrow keys and WASD pan (see the engine). New notes, trays and images go under the pointer when it's on the table.
+  // H help, N note, T tray, I image, Q the picture as a map, + and - zoom, C fits to screen, F fullscreen. Arrow keys and WASD pan (see the engine). New notes, trays and images go under the pointer when it's on the table.
   useEffect(() => {
     if (!engine) return
     const key = (e: KeyboardEvent) => {
@@ -406,7 +409,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       const there = over ? engine.clientToWorld(...over) : undefined
       const k = e.key.toLowerCase()
       if (k === 'h') openSettings.current?.('help')
-      else if (k === 'v') setPanMode((v) => !v)
       else if (k === 'x') setSplit((v) => !v)
       else if (k === 'e') setDrawMode((v) => !v)
       else if (k === 'n') createNote.current?.(over?.[0] ?? null, over?.[1] ?? null)
@@ -453,17 +455,6 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const play = session && engine && (
     <>
       <button
-        className={`icon-btn view-btn${panMode ? ' on' : ''}`}
-        onClick={() => setPanMode((v) => !v)}
-        aria-pressed={panMode}
-        aria-label="View mode"
-        aria-keyshortcuts="V"
-        data-tip={panMode ? 'View mode on: dragging moves the table' : 'View mode: drag to move the table'}
-        data-key="V"
-      >
-        <Hand />
-      </button>
-      <button
         className={`icon-btn draw-btn${drawMode ? ' on' : ''}`}
         onClick={() => setDrawMode((v) => !v)}
         aria-pressed={drawMode}
@@ -474,7 +465,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
       >
         <Pencil />
       </button>
-      <Reactions engine={engine} sock={session.sock} />
+      <Reactions engine={engine} sock={session.sock} on={reacting} setOn={setReacting} />
       <SplitButton
         on={split}
         panes={splitPanes}
@@ -491,7 +482,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         onClick={() => engine.addRef()}
         aria-label="Reference image"
         aria-keyshortcuts="I"
-        data-tip="Add the reference image to the board"
+        data-tip="Reference image"
         data-key="I"
       >
         <Picture />
@@ -504,7 +495,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const ranked = (podiumShown || shareShown) && rankPlayers({ stats, times: playerId ? { ...times, [playerId]: myTime.get() } : times, nameOf })
   return (
     <div
-      className={`room${panMode ? ' pan-mode' : ''}${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${leaving ? ' leaving' : ''}`}
+      className={`room${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${leaving ? ' leaving' : ''}`}
     >
       <canvas ref={canvas} className="board" tabIndex={0} />
       <div ref={tip} className="tip" />
@@ -572,14 +563,14 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         />
       )}
       {engine && done && (
-        <button className="podium-btn" onClick={() => setPodium(true)} aria-label="Podium" data-tip="Top players">
-          <PodiumIcon />
-        </button>
-      )}
-      {engine && done && (
-        <button className="share-btn" onClick={() => setSharing(true)} aria-label="Share" data-tip="Share a picture or a timelapse">
-          <Share />
-        </button>
+        <div className="float bc" onContextMenu={noMenu}>
+          <button className="icon-btn" onClick={() => setPodium(true)} aria-label="Podium" data-tip="Top players">
+            <PodiumIcon />
+          </button>
+          <button className="icon-btn" onClick={() => setSharing(true)} aria-label="Share" data-tip="Share a picture or a timelapse">
+            <Share />
+          </button>
+        </div>
       )}
       {podiumShown && ranked && (
         <Podium

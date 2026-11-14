@@ -52,13 +52,7 @@ Vite only strips the types when it builds or serves the app, so type errors don'
 
 ## Email
 
-Players can switch their login to an email and password, and invite players who have an email to private jigsaws. Invites are sent over SMTP, set up with environment variables:
-
-- `SMTP_URL`, such as `smtps://user:pass@smtp.example.com`, or `SMTP_HOST`, `SMTP_PORT` (default 587, 465 uses TLS), `SMTP_USER` and `SMTP_PASS`
-- `MAIL_FROM`, the sender, such as `Jigsaw <jigsaw@example.com>`
-- `APP_URL`, the public address used for links in emails, such as `https://jigsaw.example.com`. Without it, emails that are really sent carry no link (the address a browser says it is on can't be trusted); mail printed to the log uses the address the inviting browser was on.
-
-Without SMTP settings, emails are printed to the server log instead of being sent.
+Players can switch their login to an email and password. No email is ever sent.
 
 ## Behind a proxy
 

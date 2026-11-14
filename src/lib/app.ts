@@ -17,6 +17,8 @@ export interface AppContext {
   currentPlayer: () => PlayerLogin | null
   name: string | null
   setName: (v: string) => Promise<void>
+  // A new profile picture (a data URL, see src/lib/avatars.ts), or null to take it away.
+  setAvatar: (image: string | null) => Promise<void>
   // Resolves with the player's id, asking for a name first if needed (null if they cancel).
   requireName: () => Promise<string | null>
   // For event handlers: true if logged in, otherwise opens the prompt.

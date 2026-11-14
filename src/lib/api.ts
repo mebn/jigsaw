@@ -1,7 +1,6 @@
 import { newBuild } from './update.ts'
 import type {
   ClientMessage,
-  InvitablePlayer,
   NewRoom,
   PlayerLogin,
   PlayerProfile,
@@ -45,14 +44,14 @@ export const api = {
   loginEmail: (email: string, password: string) => post<PlayerLogin>('/api/players/email-login', { email, password }),
   useEmail: (passphrase: string, email: string, password: string) => post<PlayerLogin>('/api/players/email', { passphrase, email, password }),
   rename: (passphrase: string, name: string) => post<PlayerRef>('/api/players/rename', { passphrase, name }),
+  // image: a data URL from avatarFromFile (see src/lib/avatars.ts), or null to take it away.
+  setAvatar: (passphrase: string, image: string | null) => post<PlayerRef>('/api/players/avatar', { passphrase, image }),
+  feedback: (text: string, passphrase?: string | null, room?: string | null) => post<{ ok: true }>('/api/feedback', { text, passphrase, room }),
   lan: () => request<{ address: string | null }>('/api/lan'),
   // Private jigsaws only come back for a player who has them.
   rooms: (passphrase?: string | null) => request<RoomSummary[]>('/api/rooms', { as: passphrase }),
   room: (id: string) => request<RoomDetails>(`/api/rooms/${id}`),
   player: (id: string, passphrase?: string | null) => request<PlayerProfile>(`/api/players/${encodeURIComponent(id)}`, { as: passphrase }),
-  invitable: (passphrase: string, room = '') =>
-    request<InvitablePlayer[]>(`/api/players/invitable?room=${encodeURIComponent(room)}`, { as: passphrase }),
-  invite: (id: string, passphrase: string, players: string[]) => post<{ invited: number }>(`/api/rooms/${id}/invite`, { passphrase, players }),
   join: (id: string, passphrase: string) => post<{ ok: true }>(`/api/rooms/${id}/join`, { passphrase }),
   imageUrl: (id: string) => `/api/rooms/${id}/image`,
   snapshots: (id: string) => request<Snapshot[]>(`/api/rooms/${id}/snapshots`),

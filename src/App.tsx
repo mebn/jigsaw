@@ -10,6 +10,7 @@ import type { AppContext, Theme } from './lib/app.ts'
 import { ERRORS } from '../shared/protocol.ts'
 import type { PlayerLogin } from '../shared/protocol.ts'
 import { useLinger } from './lib/linger.ts'
+import { learnAvatars } from './lib/avatars.ts'
 import { useNotch } from './lib/fullscreen.ts'
 import { navigate, isGallery, paths, roomOf, takeLinkLogin, usePath } from './lib/router.ts'
 import { setSound, soundOn } from './lib/sound.ts'
@@ -28,7 +29,9 @@ interface Prompt {
 // passphrase is this device's login token, never shown.
 function readPlayer() {
   const p = store.json<PlayerLogin>('player')
-  return p?.id && p.name ? p : null
+  if (!p?.id || !p.name) return null
+  learnAvatars([p])
+  return p
 }
 
 const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -118,7 +121,8 @@ export default function App() {
   const playerRef = useRef(player)
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const savePlayer = useCallback((p: PlayerLogin | null) => {
-    store.setJson('player', p && { id: p.id, name: p.name, passphrase: p.passphrase, email: p.email || null })
+    store.setJson('player', p && { id: p.id, name: p.name, avatar: p.avatar || 0, passphrase: p.passphrase, email: p.email || null })
+    if (p) learnAvatars([p])
     playerRef.current = p
     setPlayerState(p)
   }, [])
@@ -163,6 +167,14 @@ export default function App() {
     [savePlayer],
   )
   const logout = useCallback(() => savePlayer(null), [savePlayer])
+  const setAvatar = useCallback(
+    async (image: string | null) => {
+      const p = playerRef.current
+      if (!p) return
+      savePlayer({ ...p, ...(await api.setAvatar(p.passphrase, image)), passphrase: p.passphrase, email: p.email })
+    },
+    [savePlayer],
+  )
   const switchToEmail = useCallback(
     async (email: string, password: string) => {
       const p = playerRef.current
@@ -211,6 +223,7 @@ export default function App() {
     currentPlayer: () => playerRef.current,
     name: player?.name || null,
     setName,
+    setAvatar,
     requireName,
     ensureName,
     openLogin,

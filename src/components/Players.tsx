@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useAvatar } from '../lib/avatars.ts'
 import type { CSSProperties, RefObject } from 'react'
 import { cursorColor } from '../lib/colors.ts'
 import { formatTime, plural, timeAgo } from '../lib/format.ts'
@@ -53,7 +54,7 @@ export function rankPlayers({ stats, times, nameOf }: RankInput) {
 }
 
 
-// A player's circle: the first two letters of their name on their cursor colour, ringed while
+// A player's circle: their profile picture, or the first two letters of their name on their cursor colour, ringed while
 // they're here. With you, it carries a You tag.
 interface DotProps {
   p: { id: string; name: string }
@@ -63,13 +64,14 @@ interface DotProps {
 }
 
 export function Dot({ p, here, big = false, you = false }: DotProps) {
+  const avatar = useAvatar(p.id)
   return (
     <span
-      className={`player-dot${here ? ' online' : ''}${big ? ' big' : ''}${you ? ' you' : ''}`}
+      className={`player-dot${here ? ' online' : ''}${big ? ' big' : ''}${you ? ' you' : ''}${avatar ? ' pic' : ''}`}
       style={{ '--c': cursorColor(p.id) } as CSSProperties}
       aria-hidden="true"
     >
-      {[...p.name].slice(0, 2).join('')}
+      {avatar ? <img src={avatar} alt="" draggable={false} /> : [...p.name].slice(0, 2).join('')}
     </span>
   )
 }
