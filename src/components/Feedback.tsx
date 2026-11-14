@@ -10,7 +10,7 @@ import Dialog from './Dialog.tsx'
 export default function Feedback({ onClose, closing }: { onClose: () => void; closing: boolean }) {
   const { player, roomId } = useApp()
   const [text, setText] = useState('')
-  const [state, setState] = useState<'idle' | 'sending' | 'sent' | 'failed'>('idle')
+  const [state, setState] = useState<'idle' | 'sending' | 'failed'>('idle')
 
   const send = async (e: FormEvent) => {
     e.preventDefault()
@@ -18,7 +18,7 @@ export default function Feedback({ onClose, closing }: { onClose: () => void; cl
     setState('sending')
     try {
       await api.feedback(text.trim(), player?.passphrase, roomId)
-      setState('sent')
+      onClose()
     } catch {
       setState('failed')
     }
@@ -26,40 +26,29 @@ export default function Feedback({ onClose, closing }: { onClose: () => void; cl
 
   return (
     <Dialog title="Feedback" className="feedback" onClose={onClose} closing={closing} keepTyping>
-      {state === 'sent' ? (
-        <>
-          <p className="modal-text">Thanks, your feedback was sent.</p>
-          <div className="row modal-actions">
-            <button className="primary" autoFocus onClick={onClose}>
-              Done
-            </button>
-          </div>
-        </>
-      ) : (
-        <form className="prompt-form" onSubmit={send}>
-          <p className="modal-text">Found a bug, or have an idea? Tell us.</p>
-          <textarea
-            className="text feedback-text"
-            value={text}
-            onChange={(e) => (setText(e.target.value), state === 'failed' && setState('idle'))}
-            onKeyDown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && send(e)}
-            placeholder="Your feedback"
-            aria-label="Your feedback"
-            maxLength={LIMITS.text}
-            rows={6}
-            autoFocus
-          />
-          {state === 'failed' && <p className="modal-error">Couldn't send it, try again.</p>}
-          <div className="row modal-actions">
-            <button type="button" className="secondary" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="primary" disabled={!text.trim() || state === 'sending'}>
-              {state === 'sending' ? <span className="spin" /> : 'Send'}
-            </button>
-          </div>
-        </form>
-      )}
+      <form className="prompt-form" onSubmit={send}>
+        <p className="modal-text">Found a bug, or have an idea? Tell us.</p>
+        <textarea
+          className="text feedback-text"
+          value={text}
+          onChange={(e) => (setText(e.target.value), state === 'failed' && setState('idle'))}
+          onKeyDown={(e) => (e.metaKey || e.ctrlKey) && e.key === 'Enter' && send(e)}
+          placeholder="Your feedback"
+          aria-label="Your feedback"
+          maxLength={LIMITS.text}
+          rows={6}
+          autoFocus
+        />
+        {state === 'failed' && <p className="modal-error">Couldn't send it, try again.</p>}
+        <div className="row modal-actions">
+          <button type="button" className="secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary" disabled={!text.trim() || state === 'sending'}>
+            {state === 'sending' ? <span className="spin" /> : 'Send'}
+          </button>
+        </div>
+      </form>
     </Dialog>
   )
 }
