@@ -16,8 +16,11 @@ jobs:
           script_stop: true
           script: |
             cd /home/marcus/apps/jigsaw
-            git pull
-            npm i
+            # npm can rewrite the lockfile on the server; drop that so the pull never stops on it.
+            git checkout -- package-lock.json
+            git pull --ff-only
+            # Installs exactly what the lockfile says, without changing it.
+            npm ci
 
             TARGET=$(tmux list-windows -a -F '#{session_name}:#{window_name}' | grep ':jigsaw$' | head -1)
             if [ -z "$TARGET" ]; then
