@@ -1,5 +1,9 @@
 # Changelog
 
+## 13 November 2026
+
+- Your score now counts every connection you make, also when joining two groups.
+
 ## 12 November 2026
 
 - The jigsaws page has a new address, `jigsaw.marnil.dev/home`. Old links to it still work.

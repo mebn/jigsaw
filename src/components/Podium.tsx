@@ -69,9 +69,9 @@ export default function Podium({ ranked, closing, onClose, onShare }: PodiumProp
                 </span>
                 <div className="stand-block">
                   <span className="stand-rank">{place + 1}</span>
-                  <span className="stand-stat" title="Pieces connected">
+                  <span className="stand-stat" title="Connections made">
                     <Piece />
-                    {p.pieces}
+                    {p.connections}
                   </span>
                   <span className="stand-stat" title="Time spent">
                     <Clock />

@@ -97,6 +97,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     roomPlayers: prepare<PlayerRef>(`
       SELECT id, name FROM players WHERE id IN (
         SELECT "by" FROM pieces WHERE room_id = ?1
+        UNION SELECT player_id FROM scores WHERE room_id = ?1
         UNION SELECT author FROM notes WHERE room_id = ?1
         UNION SELECT author FROM refs WHERE room_id = ?1
         UNION SELECT author FROM trays WHERE room_id = ?1
@@ -105,17 +106,15 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
         UNION SELECT user FROM times WHERE room_id = ?1
       )`),
     profile: prepare<PlayerRef & { created: number }>('SELECT id, name, created FROM players WHERE id = ?'),
-    // The jigsaws a player made, connected pieces in or spent time in, with their share of each.
+    // The jigsaws a player made, made connections in or spent time in, with their share of each.
     // Private ones only when the asking player (?2) has the link too.
-    playerRooms: prepare<{ n: number; groups: number; total: number; cells: number; theirs: number } & Record<string, unknown>>(`
-      WITH mine AS (SELECT room_id, COUNT(*) AS cells FROM pieces WHERE "by" = ?1 GROUP BY room_id)
-      SELECT r.id, r.name, r.created, r.thumb, r.owner, r.private, ${PIECES} AS n,
-             (SELECT COUNT(*) FROM pieces p WHERE p.room_id = r.id) AS total, ${GROUPS} AS groups, ${SECONDS} AS seconds,
-             COALESCE(m.cells, 0) AS cells, COALESCE(t.seconds, 0) AS theirs, COALESCE(t.seen, 0) AS seen
+    playerRooms: prepare<{ n: number; groups: number; theirs: number } & Record<string, unknown>>(`
+      SELECT r.id, r.name, r.created, r.thumb, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
+             COALESCE(m.n, 0) AS connections, COALESCE(t.seconds, 0) AS theirs, COALESCE(t.seen, 0) AS seen
       FROM rooms r
-      LEFT JOIN mine m ON m.room_id = r.id
+      LEFT JOIN scores m ON m.room_id = r.id AND m.player_id = ?1
       LEFT JOIN times t ON t.room_id = r.id AND t.user = ?1
-      WHERE (r.owner = ?1 OR m.cells > 0 OR t.seconds > 0)
+      WHERE (r.owner = ?1 OR m.n > 0 OR t.seconds > 0)
         AND (r.private = 0 OR r.id IN (SELECT room_id FROM room_players WHERE player_id = ?2))
       ORDER BY t.seen DESC, r.created DESC`),
   }
@@ -155,11 +154,9 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
   function profile(req: IncomingMessage, id: string): Reply {
     const p = q.profile.get(id)
     if (!p) return fail(404, 'not found')
-    const rooms = q.playerRooms.all(p.id, players.asking(req)?.id || '').map(({ total, cells, theirs, ...r }) => ({
+    const rooms = q.playerRooms.all(p.id, players.asking(req)?.id || '').map(({ theirs, ...r }) => ({
       ...r,
       ...progress(r.n, r.groups),
-      // Pieces they connected. Long pieces are stored per cell, so those are scaled down.
-      pieces: total ? Math.round((cells * r.n) / total) : 0,
       time: theirs,
     }))
     return ok({ ...p, rooms })

@@ -4,10 +4,10 @@ import { CLOCK_PATH, PIECE_PATH } from '../components/icons.tsx'
 // A picture to draw from: an image element or a canvas.
 export type Picture = (HTMLImageElement | HTMLCanvasElement) & { naturalWidth?: number; naturalHeight?: number }
 
-// A player on the podium: their name, how many pieces they connected and how long they played.
+// A player on the podium: their name, how many connections they made and how long they played.
 interface SharePlayer {
   name: string
-  pieces: number
+  connections: number
   seconds: number
 }
 
@@ -108,7 +108,7 @@ export function drawAddress(ctx: CanvasRenderingContext2D, right: number, bottom
 }
 
 // image: the picture (a canvas or an image element), ranked: the players, best first, each with
-// name, pieces and seconds.
+// name, connections and seconds.
 export function renderShare({ image, ranked }: { image: Picture; ranked: SharePlayer[] }): Promise<Blob> {
   const iw = image.naturalWidth || image.width
   const ih = image.naturalHeight || image.height
@@ -169,7 +169,7 @@ export function renderShare({ image, ranked }: { image: Picture; ranked: SharePl
     ctx.font = `600 ${13 * K}px ${FONT}`
     const row = 20 * K
     const line = rankY + size / 2 + 6 * K + row / 2
-    stat(ctx, PIECE, String(p.pieces), x + sw / 2, line, K)
+    stat(ctx, PIECE, String(p.connections), x + sw / 2, line, K)
     stat(ctx, CLOCK, formatTime(p.seconds), x + sw / 2, line + row + 6 * K, K)
     // The name, in a dark pill above the block.
     ctx.font = `700 ${16 * K}px ${FONT}`

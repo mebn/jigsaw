@@ -146,11 +146,6 @@ interface EngineColors {
   line?: string
   sel: string
 }
-// How many pieces a player connected, see contributors().
-interface Contributor {
-  id: string
-  pieces: number
-}
 // What undo and redo can do, see onHistory.
 interface HistoryState {
   undo: boolean
@@ -191,7 +186,6 @@ interface EngineOptions {
   nameOf?: (id: string) => string
   guard?: () => boolean
   tooltip?: HTMLElement | null
-  onStats?: () => void
   onComplete?: () => void
   onSnap?: (e: SnapEvent) => void
   onMenu?: (sx: number, sy: number, kind: MenuKind, id: string | undefined, opts: { rename: boolean }) => void
@@ -695,7 +689,6 @@ export class Engine {
   tooltip: HTMLElement | null | undefined
   // The room's socket, once connect() is given it.
   sock: RoomSocket | null
-  onStats: (() => void) | undefined
   onSnap: ((e: SnapEvent) => void) | undefined
   onMenu: EngineOptions['onMenu']
   onHistory: ((h: HistoryState) => void) | undefined
@@ -863,11 +856,10 @@ export class Engine {
   trackpadUntil?: number
   cursorsDrawn?: boolean
   camTimer?: number
-  statsTimer?: number
   idleTimer?: number
   fitTimer?: number
 
-  constructor(canvas: HTMLCanvasElement, { room, image, pieces, refs, trays, overlay, user, userName, nameOf, guard, tooltip, onStats, onComplete, onSnap, onMenu, onHistory }: EngineOptions) {
+  constructor(canvas: HTMLCanvasElement, { room, image, pieces, refs, trays, overlay, user, userName, nameOf, guard, tooltip, onComplete, onSnap, onMenu, onHistory }: EngineOptions) {
     this.canvas = canvas
     // The table is drawn with WebGPU on a canvas stacked under the board (see startGpu() and
     // drawGpu()), the whole of it every frame. The board canvas only holds the small things on
@@ -896,7 +888,6 @@ export class Engine {
     this.guard = guard
     this.tooltip = tooltip
     this.sock = null
-    this.onStats = onStats
     // Pieces just connected, by this player (local) or another: onSnap({ seams, local }). The sound ignores seams.
     this.onSnap = onSnap
     // A right click on a piece, image, tray or note, without dragging: onMenu(sx, sy, kind, id, { rename }).
@@ -1215,7 +1206,7 @@ export class Engine {
     this.ro.disconnect()
     // A camera move not saved yet is saved now, so the jigsaw opens where it was left.
     if (this.camTimer) this.writeCam()
-    for (const t of [this.checkTimer, this.camTimer, this.statsTimer, this.idleTimer, this.fitTimer]) clearTimeout(t)
+    for (const t of [this.checkTimer, this.camTimer, this.idleTimer, this.fitTimer]) clearTimeout(t)
     for (const t of Object.values(this.out)) t.cancel()
     cancelAnimationFrame(this.raf)
     this.raf = -1
@@ -1569,17 +1560,6 @@ export class Engine {
     return true
   }
 
-  // Per player id: how many pieces they connected.
-  contributors() {
-    const m = new Map<string, Contributor>()
-    const get = (id: string) => {
-      if (!m.has(id)) m.set(id, { id, pieces: 0 })
-      return m.get(id)!
-    }
-    for (let i = 0; i < this.n; i++) if (this.by[i] && (!this.unit || this.unit[i] === i)) get(this.by[i]!).pieces++
-    return m
-  }
-
   // The cells of the piece cell i is part of: just i, or all of a long piece.
   cellsOf(i: number) {
     return (this.unit && this.longs.get(this.unit[i])) || [i]
@@ -1596,11 +1576,6 @@ export class Engine {
     const out: number[] = []
     for (let i = 0; i < this.n; i++) if (this.g[i] === gid) out.push(i)
     return out
-  }
-
-  emitStats() {
-    clearTimeout(this.statsTimer)
-    this.statsTimer = setTimeout(() => this.onStats?.(), 120)
   }
 
   toTop(set: Set<number>) {
@@ -2834,7 +2809,6 @@ export class Engine {
       }),
     })
     this.checkGroups(new Set([...changed].map((i) => this.g[i])))
-    this.emitStats()
     this.invalidate()
     this.checkComplete(true)
   }
@@ -4015,7 +3989,6 @@ export class Engine {
     this.checkGroups(new Set([...touched].map((i) => this.g[i])))
     this.growSelection()
     this.joined(g0, touched, false)
-    this.emitStats()
     this.checkComplete()
     this.invalidate()
   }
