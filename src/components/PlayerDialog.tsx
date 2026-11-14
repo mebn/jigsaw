@@ -5,9 +5,9 @@ import type { PlayerProfile } from '../../shared/protocol.ts'
 import { useApp } from '../lib/app.ts'
 import { learnAvatars } from '../lib/avatars.ts'
 import { navigate, paths } from '../lib/router.ts'
-import { formatTime, plural } from '../lib/format.ts'
+import { plural } from '../lib/format.ts'
 import type { PlayerRoom } from '../../shared/protocol.ts'
-import { Art, ArtInfo, Tile } from './Card.tsx'
+import { Art, Tile } from './Card.tsx'
 import Dialog from './Dialog.tsx'
 import { Dot, Spent, presence } from './Players.tsx'
 import type { RankedPlayer } from './Players.tsx'
@@ -130,24 +130,9 @@ export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccou
               const { w, h } = artSize(r)
               return (
               <div key={r.id} className="profile-room" style={{ width: w }}>
-                <Tile r={r} i={i} onPick={open} below={<ArtInfo r={r} />}>
+                <Tile r={r} i={i} onPick={open}>
                   <Art r={r} w={w} h={h} />
                 </Tile>
-                <span className="profile-share">
-                  {r.owner === p.id && (
-                    <span title="Made this jigsaw">
-                      <Crown className="crown" />
-                    </span>
-                  )}
-                  <span title="Connections they made">
-                    <Piece />
-                    <span className="t">{r.connections}</span>
-                  </span>
-                  <span title="Time they spent">
-                    <Clock />
-                    <span className="t">{formatTime(r.time)}</span>
-                  </span>
-                </span>
               </div>
               )
             })}

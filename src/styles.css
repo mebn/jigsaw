@@ -2043,8 +2043,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .player-card-row.owner svg,
 .profile-stat.owner svg,
-.powner,
-.profile-share svg.crown {
+.powner {
   color: #e5a50a;
 }
 /* A dot by "Here now" or "Away". */
@@ -2248,22 +2247,39 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   height: 15px;
   color: var(--muted);
 }
-/* Their jigsaws in one row that scrolls sideways. It reaches to the window's edges, and leaves room
-   above and below, so a lifted card's shadow isn't cut off. */
+/* Their jigsaws in one row that scrolls sideways. It reaches to the window's sides and well below
+   the cards, so their shadows (lifted ones too) aren't cut off. */
 .profile-rooms {
   display: flex;
   gap: 16px;
   /* At most as far down as the window's body is padded (see .profile .dialog-body), or the body
      scrolls up and down by the difference. */
-  margin: -6px -16px -32px -22px;
-  padding: 6px 16px 32px 22px;
+  margin: -6px -16px -16px -22px;
+  padding: 6px 16px 52px 22px;
   overflow-x: auto;
   /* Sideways only: a tilted or rising picture (see .tile) mustn't make it scroll up and down. */
   overflow-y: hidden;
   overscroll-behavior-x: contain;
   scroll-snap-type: x proximity;
   scroll-padding: 0 16px 0 22px;
-  scrollbar-width: thin;
+}
+/* Its scrollbar stops short of the window's rounded corners. Firefox can't inset it, so there it's
+   only thin. */
+.profile-rooms::-webkit-scrollbar {
+  height: 6px;
+}
+.profile-rooms::-webkit-scrollbar-track {
+  margin: 0 32px;
+  background: transparent;
+}
+.profile-rooms::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+@supports (-moz-appearance: none) {
+  .profile-rooms {
+    scrollbar-width: thin;
+  }
 }
 /* Each as on the jigsaws page, as wide as its picture (see artSize in PlayerDialog.tsx). */
 .profile-room {
@@ -2278,44 +2294,15 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 @media (max-width: 480px) {
   .profile-empty {
-    height: 174px;
+    height: 156px;
   }
 }
-/* What they did in a jigsaw, under its card. */
-.profile-share {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  /* Fixed, so the placeholders' lines (see CardGhosts) are just as tall. */
-  height: 18px;
-  padding: 0 4px;
-  color: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-.profile-share > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-/* On a narrow card the numbers end in an ellipsis rather than run into the next card. */
-.profile-share .t {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.profile-share svg {
-  flex: none;
-  width: 13px;
-  height: 13px;
-}
 .profile-empty {
-  /* As tall as the row of cards it stands in for (a card and its line under it), so the window keeps
+  /* As tall as the row of cards it stands in for, so the window keeps
      its height when the cards turn out to be none. */
   display: grid;
   place-items: center;
-  height: 204px;
+  height: 186px;
   margin: 0;
   color: var(--muted);
   text-align: center;
