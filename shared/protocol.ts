@@ -310,6 +310,9 @@ export type ClientMessage =
   | { type: 'cursor'; hide: true }
   | { type: 'cursor'; x: number; y: number; name: string; player: string; box?: number[] }
   | { type: 'react'; x: number; y: number }
+  // This player's time in the jigsaw right now (seconds, saved or not) and whether it's counting up,
+  // so the others can count it up too between saves. Sent when it starts or stops, and now and then.
+  | { type: 'clock'; seconds: number; on: boolean }
   | { type: 'ink'; id: string; pts: number[]; end?: boolean }
   | { type: 'note'; live: boolean; note: NoteInput }
   | { type: 'note-delete'; id: string }
@@ -330,6 +333,7 @@ export type ServerMessage =
   | { type: 'player'; client?: string; player: PlayerRef }
   | { type: 'presence'; client?: undefined; online: string[]; seen: Record<string, number> }
   | { type: 'time'; client?: string; user: string; seconds: number }
+  | { type: 'clock'; client: string; player: string; seconds: number; on: boolean }
   // A player's score after connections they just made.
   | { type: 'score'; client?: undefined; player: string; n: number }
   | { type: 'deleted'; client?: undefined }

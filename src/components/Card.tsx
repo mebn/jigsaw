@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { api } from '../lib/api.ts'
+import { formatDuration, plural } from '../lib/format.ts'
 import { paths } from '../lib/router.ts'
 import { Lock } from './icons.tsx'
 
@@ -9,6 +10,8 @@ interface ArtRoom {
   id: string
   thumb: string
   private: number
+  // How many pieces it has.
+  n: number
   seconds: number
   progress: number
   done: boolean
@@ -16,14 +19,6 @@ interface ArtRoom {
 }
 
 const finishedOn = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
-
-// How long a jigsaw took, for the line under its picture: "45 min", "3 h 12 min".
-function took(seconds: number) {
-  const m = Math.round(seconds / 60)
-  if (m < 1) return 'Under a minute'
-  const h = Math.floor(m / 60)
-  return h ? `${h} h ${m % 60} min` : `${m} min`
-}
 
 // A jigsaw's picture, the small one first and the full one over it once loaded.
 export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
@@ -36,11 +31,12 @@ export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
   )
 }
 
-// The line under a jigsaw's picture: how long it took when finished, or how far along it is.
+// The line under a jigsaw's picture: how long it took when finished, or how far along it is, and
+// how many pieces it has.
 export function ArtInfo({ r }: { r: ArtRoom }) {
   return r.done ? (
     <span className="art-info">
-      <span title="Time it took">{took(r.seconds)}</span>
+      <span title="Time it took">{formatDuration(r.seconds)}</span>
       {r.finished > 0 && (
         <>
           <span className="dot" aria-hidden="true">·</span>
@@ -49,8 +45,11 @@ export function ArtInfo({ r }: { r: ArtRoom }) {
       )}
     </span>
   ) : (
-    <span className="art-info" title="Pieces connected">
-      {Math.round(r.progress * 100)}% done{!!r.private && <Lock aria-label="Private" />}
+    <span className="art-info">
+      <span title="Pieces connected">{Math.round(r.progress * 100)}% done</span>
+      <span className="dot" aria-hidden="true">·</span>
+      <span>{plural(r.n, 'piece')}</span>
+      {!!r.private && <Lock aria-label="Private" />}
     </span>
   )
 }

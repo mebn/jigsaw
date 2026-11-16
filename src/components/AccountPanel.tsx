@@ -5,7 +5,8 @@ import { LIMITS } from '../../shared/protocol.ts'
 import { useApp } from '../lib/app.ts'
 import type { PlayerLogin as Player } from '../../shared/protocol.ts'
 import { EmailForm, looksLikePassphrase, Passphrase, PassphraseWarning } from './Account.tsx'
-import { Key, Logout, User } from './icons.tsx'
+import { Clock, Crown, Key, Logout, Piece, User } from './icons.tsx'
+import { formatDuration, plural } from '../lib/format.ts'
 import Confirm from './Confirm.tsx'
 import { Dot } from './Players.tsx'
 import { avatarFromFile } from '../lib/avatars.ts'
@@ -88,8 +89,10 @@ function QrCode({ text }: { text: string }) {
   )
 }
 
-// A QR code that opens this page on a phone, logged in as this player.
+// A QR code that opens this page on a phone, logged in as this player (if logged in).
 function PhoneLink({ player }: { player: Player | null }) {
+  // The link opens the page this is on: a jigsaw, or the jigsaws page.
+  const { roomId } = useApp()
   const [known, setKnown] = useState(phoneKnown)
 
   useEffect(() => {
@@ -103,7 +106,9 @@ function PhoneLink({ player }: { player: Player | null }) {
 
   return (
     <>
-      <p className="modal-text">Scan to open this jigsaw on your phone, logged in as you.</p>
+      <p className="modal-text">
+        Scan to open {roomId ? 'this jigsaw' : 'the jigsaws page'} on your phone{player ? ', logged in as you' : ''}.
+      </p>
       {noLan && <p className="modal-error">This computer isn't on a network, so a phone may not be able to reach it.</p>}
       <div className="qr-wrap">{link ? <QrCode text={link} /> : <span className="spin" />}</div>
     </>
@@ -167,6 +172,51 @@ function AvatarField({ player }: { player: Player }) {
   )
 }
 
+// What this player has done in all their jigsaws together: jigsaws made, connections made and time
+// spent, added up from their profile (see api.player()).
+function Stats({ player }: { player: Player }) {
+  const [stats, setStats] = useState<{ made: number; connections: number; seconds: number } | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let dead = false
+    setStats(null)
+    setFailed(false)
+    api
+      .player(player.id, player.passphrase)
+      .then((d) => {
+        if (dead) return
+        setStats({
+          made: d.rooms.filter((r) => r.owner === player.id).length,
+          connections: d.rooms.reduce((t, r) => t + r.connections, 0),
+          seconds: d.rooms.reduce((t, r) => t + r.time, 0),
+        })
+      })
+      .catch(() => !dead && setFailed(true))
+    return () => {
+      dead = true
+    }
+  }, [player.id, player.passphrase])
+
+  if (failed) return <p className="modal-note">Couldn't load your stats.</p>
+  if (!stats) return <span className="spin" aria-label="Loading stats" />
+  return (
+    <div className="profile-stats">
+      <span className="profile-stat">
+        <Crown />
+        {plural(stats.made, 'jigsaw')} made
+      </span>
+      <span className="profile-stat">
+        <Piece />
+        {plural(stats.connections, 'connection')} made
+      </span>
+      <span className="profile-stat">
+        <Clock />
+        {formatDuration(stats.seconds)} spent
+      </span>
+    </div>
+  )
+}
+
 // Asks before logging out, showing how to log back in. onDone runs either way.
 function LogoutConfirm({ onDone }: { onDone: () => void }) {
   const { player, logout } = useApp()
@@ -212,6 +262,10 @@ export function AccountPanel({ onClose }: { onClose: () => void }) {
           <section className="field">
             <h2 className="label">Name</h2>
             <NameField />
+          </section>
+          <section className="field">
+            <h2 className="label">Stats</h2>
+            <Stats player={player} />
           </section>
           {player.email ? (
             <section className="field">

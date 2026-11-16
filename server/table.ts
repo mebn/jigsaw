@@ -278,6 +278,12 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
         const pts = Array.isArray(m.pts) ? m.pts.slice(0, LIMITS.inkPoints).filter((v): v is number => typeof v === 'number' && isFinite(v)) : []
         return relay({ type: 'ink', client, id: str(m.id, LIMITS.inkId), pts, end: m.end ? true : undefined })
       }
+      // A player's clock (see useTimes): only relayed, the time itself is saved through the api.
+      case 'clock': {
+        const seconds = Number(m.seconds)
+        if (ws.player && isFinite(seconds) && seconds >= 0) relay({ type: 'clock', client, player: author, seconds, on: !!m.on })
+        return
+      }
       case 'react': {
         const x = Number(m.x)
         const y = Number(m.y)
