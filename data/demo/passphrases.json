@@ -1,0 +1,102 @@
+[
+ {
+  "name": "Ryan",
+  "level": "core",
+  "passphrase": "eel honey swift carrot"
+ },
+ {
+  "name": "edgehunter",
+  "level": "core",
+  "passphrase": "grape gentle carrot planet"
+ },
+ {
+  "name": "Megan",
+  "level": "core",
+  "passphrase": "pilot fire silly apple"
+ },
+ {
+  "name": "jigsaw_joe",
+  "level": "regular",
+  "passphrase": "gate cedar plum copper"
+ },
+ {
+  "name": "Josh",
+  "level": "regular",
+  "passphrase": "hotel goat orchid pillow"
+ },
+ {
+  "name": "Emily",
+  "level": "regular",
+  "passphrase": "bowl bugle coffee salmon"
+ },
+ {
+  "name": "captain_cardboard",
+  "level": "regular",
+  "passphrase": "rusty rocket branch rain"
+ },
+ {
+  "name": "corner_queen",
+  "level": "regular",
+  "passphrase": "jumpy gravel crab hotel"
+ },
+ {
+  "name": "Tyler",
+  "level": "casual",
+  "passphrase": "llama teapot moose eagle"
+ },
+ {
+  "name": "Chris",
+  "level": "casual",
+  "passphrase": "chalk heart rosy school"
+ },
+ {
+  "name": "Kevin",
+  "level": "casual",
+  "passphrase": "gentle winter jar pumpkin"
+ },
+ {
+  "name": "Brittany",
+  "level": "casual",
+  "passphrase": "moose bright slow tractor"
+ },
+ {
+  "name": "lostpiece",
+  "level": "casual",
+  "passphrase": "saddle ocean planet shadow"
+ },
+ {
+  "name": "night_owl",
+  "level": "casual",
+  "passphrase": "merry fork cable bed"
+ },
+ {
+  "name": "puzzlewizard",
+  "level": "casual",
+  "passphrase": "guitar blossom butter school"
+ },
+ {
+  "name": "TabsAndBlanks",
+  "level": "rare",
+  "passphrase": "eagle tuna apron helmet"
+ },
+ {
+  "name": "Ashley",
+  "level": "rare",
+  "passphrase": "sled pebble cricket tuna"
+ },
+ {
+  "name": "Hannah",
+  "level": "rare",
+  "passphrase": "stream tent city jumpy"
+ },
+ {
+  "name": "Jake",
+  "level": "rare",
+  "passphrase": "pear lucky tomato cobra"
+ },
+ {
+  "name": "Sarah",
+  "level": "rare",
+  "passphrase": "rosy blossom scarf egg"
+ }
+]

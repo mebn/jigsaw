@@ -1,5 +1,7 @@
 node_modules
 .env
 dist
-data
+data/*
+!data/demo/
 .DS_Store
+ignore
