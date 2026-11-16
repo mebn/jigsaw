@@ -46,12 +46,15 @@ const GROUPS = '(SELECT COUNT(DISTINCT p.g) FROM pieces p WHERE p.room_id = r.id
 const SECONDS = '(SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_id = r.id)'
 // A room's pieces: long pieces are stored per cell, so units counts them when there are any.
 const PIECES = '(CASE WHEN r.units > 0 THEN r.units ELSE (SELECT COUNT(*) FROM pieces p WHERE p.room_id = r.id) END)'
+// Where room r's thumbnail is (see GET thumb), or '' when it has none. A link, not the picture, so
+// the list stays small and browsers keep each thumbnail.
+const THUMB = "(CASE WHEN length(r.thumb) > 0 THEN '/api/rooms/' || r.id || '/thumb' ELSE '' END) AS thumb"
 
 export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: Players, table: Table) {
   const q = {
     list: prepare<{ n: number; groups: number } & Record<string, unknown>>(`
       SELECT r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
-             r.thumb, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
+             ${THUMB}, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
              -- When a finished jigsaw was finished: its last snapshot (the biggest group last grew,
              -- to the whole picture), or for one finished before snapshots, when someone was last in it.
              COALESCE((SELECT MAX(s.t) FROM snapshots s WHERE s.room_id = r.id),
@@ -103,7 +106,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     // The jigsaws a player made, made connections in or spent time in, with their share of each.
     // Private ones only when the asking player (?2) has the link too.
     playerRooms: prepare<{ n: number; groups: number; theirs: number } & Record<string, unknown>>(`
-      SELECT r.id, r.name, r.created, r.width, r.height, r.thumb, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
+      SELECT r.id, r.name, r.created, r.width, r.height, ${THUMB}, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
              COALESCE((SELECT MAX(s.t) FROM snapshots s WHERE s.room_id = r.id),
                       (SELECT MAX(t2.seen) FROM times t2 WHERE t2.room_id = r.id), 0) AS finished,
              COALESCE(m.n, 0) AS connections, COALESCE(t.seconds, 0) AS theirs, COALESCE(t.seen, 0) AS seen

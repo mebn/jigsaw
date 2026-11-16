@@ -3,6 +3,7 @@
 ## 16 November 2026
 
 - Drag the lines in split screen to resize the panes; double-click one to even them out.
+- The jigsaws page loads faster.
 
 ## 15 November 2026
 

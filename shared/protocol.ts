@@ -79,6 +79,7 @@ export interface RoomSummary {
   width: number
   height: number
   longPieces: number
+  // Where its thumbnail is, or '' when it has none.
   thumb: string
   owner: string | null
   private: number
@@ -100,6 +101,7 @@ export interface PlayerRoom {
   created: number
   width: number
   height: number
+  // Where its thumbnail is, or '' when it has none.
   thumb: string
   owner: string | null
   private: number
