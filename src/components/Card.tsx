@@ -31,24 +31,28 @@ export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
   )
 }
 
-// The line under a jigsaw's picture: how long it took when finished, or how far along it is, and
-// how many pieces it has.
+// The line under a jigsaw's picture: how long it took and when it was finished, or how far along it
+// is, and how many pieces it has.
 export function ArtInfo({ r }: { r: ArtRoom }) {
+  const dot = <span className="dot" aria-hidden="true">·</span>
+  const pieces = <span>{plural(r.n, 'piece')}</span>
   return r.done ? (
     <span className="art-info">
       <span title="Time it took">{formatDuration(r.seconds)}</span>
       {r.finished > 0 && (
         <>
-          <span className="dot" aria-hidden="true">·</span>
+          {dot}
           <span title="Finished on">{finishedOn(r.finished)}</span>
         </>
       )}
+      {dot}
+      {pieces}
     </span>
   ) : (
     <span className="art-info">
       <span title="Pieces connected">{Math.round(r.progress * 100)}% done</span>
-      <span className="dot" aria-hidden="true">·</span>
-      <span>{plural(r.n, 'piece')}</span>
+      {dot}
+      {pieces}
       {!!r.private && <Lock aria-label="Private" />}
     </span>
   )
