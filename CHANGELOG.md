@@ -4,6 +4,10 @@
 
 - Drag the lines in split screen to resize the panes; double-click one to even them out.
 - The jigsaws page loads faster.
+- Everyone's play time now counts up live in the players list, not just your own.
+- **Stats** in Settings > Account: jigsaws made, connections made and time spent.
+- The jigsaws page shows how many pieces each jigsaw has.
+- Fix for the feedback window's text being cut off at the top.
 
 ## 15 November 2026
 

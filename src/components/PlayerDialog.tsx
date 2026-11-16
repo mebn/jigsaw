@@ -11,7 +11,7 @@ import { Art, Tile } from './Card.tsx'
 import Dialog from './Dialog.tsx'
 import { Dot, Spent, presence } from './Players.tsx'
 import type { RankedPlayer } from './Players.tsx'
-import type { LiveSeconds } from '../lib/times.ts'
+import type { LiveTimes } from '../lib/times.ts'
 import { Clock, Crown, Piece, User } from './icons.tsx'
 
 // Their jigsaws' pictures are all this tall, as wide as the picture is, in a row (smaller on a phone).
@@ -30,14 +30,14 @@ interface PlayerDialogProps {
   here: boolean
   owner: string | null | undefined
   me: string | null | undefined
-  myTime?: LiveSeconds
+  live?: LiveTimes
   seen: number | undefined
   onAccount?: () => void
   onClose: () => void
   closing: boolean
 }
 
-export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccount, onClose, closing }: PlayerDialogProps) {
+export default function PlayerDialog({ p, here, owner, me, live, seen, onAccount, onClose, closing }: PlayerDialogProps) {
   const { player, roomId } = useApp()
   const [info, setInfo] = useState<PlayerProfile | null>(null)
   const [failed, setFailed] = useState(false)
@@ -106,7 +106,7 @@ export default function PlayerDialog({ p, here, owner, me, myTime, seen, onAccou
           </span>
           <span className="profile-stat">
             <Clock />
-            <Spent p={p} me={me} myTime={myTime} /> spent
+            <Spent p={p} live={live} /> spent
           </span>
         </div>
       </section>

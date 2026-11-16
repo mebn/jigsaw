@@ -7,7 +7,7 @@ import { useLinger } from '../lib/linger.ts'
 import { Clock, Crown, Piece, Users } from './icons.tsx'
 import PlayerDialog from './PlayerDialog.tsx'
 import { useMenu } from '../lib/overlays.ts'
-import type { LiveSeconds, Times } from '../lib/times.ts'
+import type { LiveTimes, Times } from '../lib/times.ts'
 
 // At most this many circles in the header; everyone is in the menu behind the players button.
 const SHOWN = 5
@@ -76,14 +76,14 @@ export function Dot({ p, here, big = false, you = false }: DotProps) {
   )
 }
 
-// This player's own time, counting up each second (see useTimes), with plus more seconds added.
-export function LiveTime({ live, plus = 0 }: { live: LiveSeconds; plus?: number }) {
-  return formatTime(plus + useSyncExternalStore(live.subscribe, live.get))
+// The time the players ids spent together, counting up each second while they play (see useTimes).
+export function LiveTime({ live, ids }: { live: LiveTimes; ids: string[] }) {
+  return formatTime(useSyncExternalStore(live.subscribe, () => ids.reduce((t, id) => t + live.get(id), 0)))
 }
 
-// The time a player spent: counting up when it's this player's own.
-export function Spent({ p, me, myTime }: { p: RankedPlayer; me: string | null | undefined; myTime?: LiveSeconds }) {
-  return p.id === me && myTime ? <LiveTime live={myTime} /> : formatTime(p.seconds)
+// The time a player spent: counting up while they play, with live.
+export function Spent({ p, live }: { p: RankedPlayer; live?: LiveTimes }) {
+  return live ? <LiveTime live={live} ids={[p.id]} /> : formatTime(p.seconds)
 }
 
 // Where someone is: here now, or when they were last online (seen, ms), if known, as "20 minutes ago".
@@ -103,11 +103,11 @@ interface HoverCardProps {
   seen: number | undefined
   owner: string | null | undefined
   me: string | null | undefined
-  myTime?: LiveSeconds
+  live?: LiveTimes
   at?: { top: number; right: number }
 }
 
-function HoverCard({ p, here, seen, owner, me, myTime, at }: HoverCardProps) {
+function HoverCard({ p, here, seen, owner, me, live, at }: HoverCardProps) {
   return (
     <div className={`player-card${at ? ' side' : ''}`} role="tooltip" style={at}>
       <div className="player-card-head">
@@ -135,7 +135,7 @@ function HoverCard({ p, here, seen, owner, me, myTime, at }: HoverCardProps) {
       </div>
       <div className="player-card-row">
         <Clock />
-        <Spent p={p} me={me} myTime={myTime} /> spent
+        <Spent p={p} live={live} /> spent
       </div>
     </div>
   )
@@ -148,8 +148,8 @@ function HoverCard({ p, here, seen, owner, me, myTime, at }: HoverCardProps) {
 interface PlayersProps {
   stats: Stats
   times: Times
-  // This player's own time, counting up (see useTimes): times only has it as last saved.
-  myTime?: LiveSeconds
+  // Everyone's time, counting up while they play (see useTimes): times only has it as last saved.
+  live?: LiveTimes
   me: string | null | undefined
   owner: string | null | undefined
   nameOf: NameOf
@@ -160,7 +160,7 @@ interface PlayersProps {
 }
 
 // Kept as it is while the room draws again for something else.
-export default memo(function Players({ stats, times, myTime, me, owner, nameOf, online, seen = NONE, openRef, onAccount }: PlayersProps) {
+export default memo(function Players({ stats, times, live, me, owner, nameOf, online, seen = NONE, openRef, onAccount }: PlayersProps) {
   const [open, setOpen] = useState(false)
   const [menuShown, menuClosing] = useLinger(open)
   // P opens and closes the list (see Room).
@@ -231,8 +231,6 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
   // The window keeps up with the player's numbers here while it's open.
   const current = profileShown && (list.find((p) => p.id === profileShown.id) || profileShown)
 
-  // Everyone else's time together: this player's own counts up beside it.
-  const others = list.reduce((t, p) => t + (myTime && p.id === me ? 0 : p.seconds), 0)
 
   if (!list.length) return null
   return (
@@ -251,7 +249,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
             >
               <Dot p={p} here={online.has(p.id)} you={p.id === me} />
             </button>
-            {hover === p.id && !open && <HoverCard p={p} here={online.has(p.id)} seen={seen[p.id]} owner={owner} me={me} myTime={myTime} />}
+            {hover === p.id && !open && <HoverCard p={p} here={online.has(p.id)} seen={seen[p.id]} owner={owner} me={me} live={live} />}
           </li>
         ))}
       </ul>
@@ -271,7 +269,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
           <p className="players-total" title="Time spent by all players together">
             <Clock />
             Total time{' '}
-            {myTime && list.some((p) => p.id === me) ? <LiveTime live={myTime} plus={others} /> : formatTime(others)}
+            {live ? <LiveTime live={live} ids={list.map((p) => p.id)} /> : formatTime(list.reduce((t, p) => t + p.seconds, 0))}
           </p>
           <div className="players-list">
             {(
@@ -313,7 +311,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
                         </span>
                         <span className="pstat ptime">
                           <Clock />
-                          <Spent p={p} me={me} myTime={myTime} />
+                          <Spent p={p} live={live} />
                         </span>
                       </button>
                     ))}
@@ -330,7 +328,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
           seen={seen[rowHover.p.id]}
           owner={owner}
           me={me}
-          myTime={myTime}
+          live={live}
           at={rowHover.at}
         />
       )}
@@ -340,7 +338,7 @@ export default memo(function Players({ stats, times, myTime, me, owner, nameOf, 
           here={online.has(current.id)}
           owner={owner}
           me={me}
-          myTime={myTime}
+          live={live}
           seen={seen[current.id]}
           onAccount={openAccount}
           onClose={closeProfile}

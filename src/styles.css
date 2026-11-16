@@ -2644,6 +2644,11 @@ button.basics-more {
   color: var(--muted);
   line-height: 1.5;
 }
+/* First in a window's body, which scrolls and so would cut off what's pulled up out of it. */
+.dialog-body > .modal-text:first-child,
+.dialog-body > :first-child > .modal-text:first-child {
+  margin-top: 0;
+}
 .modal-error {
   margin: -8px 0 0;
   color: var(--danger);

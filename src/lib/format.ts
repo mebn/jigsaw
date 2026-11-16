@@ -6,6 +6,14 @@ export function formatTime(total: number): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`
 }
 
+// A longer time in words: "45 min", "3 h 12 min".
+export function formatDuration(seconds: number) {
+  const m = Math.round(seconds / 60)
+  if (m < 1) return 'Under a minute'
+  const h = Math.floor(m / 60)
+  return h ? `${h} h ${m % 60} min` : `${m} min`
+}
+
 const ago = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
 const STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['year', 365 * 86400],
