@@ -103,7 +103,8 @@ export interface View extends Cam {
 }
 // How the screen is cut into panes for split screen: 1, not at all; 2, in halves side by side; 3,
 // a half on the left and two quarters on the right; 4, in quarters. Each pane's [x0, y0, x1, y1] as
-// fractions of the screen, in the order they're numbered.
+// fractions of the screen, in the order they're numbered; the halves are moved to where the player
+// dragged the lines between panes (see cutX).
 type SplitLayout = 1 | 2 | 3 | 4
 const PANE_LAYOUTS: Record<SplitLayout, [number, number, number, number][]> = {
   1: [[0, 0, 1, 1]],
@@ -775,6 +776,10 @@ export class Engine {
   // number as they were when last shown, so they come back when split screen is turned on again or
   // the layout changes.
   layout: SplitLayout
+  // Where the panes meet, as fractions of the canvas: the line down at cutX, the line across at
+  // cutY (see setCut()). PANE_LAYOUTS' halves are cut there.
+  cutX = 0.5
+  cutY = 0.5
   panes: PaneRect[]
   pane: number
   cams: Cam[]
@@ -1225,8 +1230,8 @@ export class Engine {
       c.height = ch
     }
     // The panes, cut on whole device pixels.
-    const mx = Math.max(1, Math.round(cw / 2))
-    const my = Math.max(1, Math.round(ch / 2))
+    const mx = Math.min(cw - 1, Math.max(1, Math.round(cw * this.cutX)))
+    const my = Math.min(ch - 1, Math.max(1, Math.round(ch * this.cutY)))
     const d = this.dpr
     this.panes = PANE_LAYOUTS[this.layout].map(([x0, y0, x1, y1]) => {
       const dx = x0 ? mx : 0
@@ -1324,6 +1329,39 @@ export class Engine {
     }
     this.showTip(null)
     this.setHighlight(null)
+    this.viewsVer++
+    this.invalidate()
+  }
+
+  // Moves the lines between the panes (see cutX). The table stays still on the screen in every pane,
+  // so a moving line only uncovers or covers the table beside it.
+  setCut(cutX: number, cutY: number) {
+    if (cutX === this.cutX && cutY === this.cutY) return
+    this.cutX = cutX
+    this.cutY = cutY
+    if (!this.split) return
+    this.camAnim = null
+    this.usePane(0)
+    this.cams[0] = this.cam
+    const old = this.panes
+    this.resize()
+    this.cams = this.panes.map((p, k) => {
+      const o = old[k]
+      const cam = this.cams[k]
+      if (!o) return cam
+      // The camera looks at the pane's centre, so it follows the centre's move.
+      return {
+        ...cam,
+        x: cam.x + (p.x + p.w / 2 - (o.x + o.w / 2)) / cam.z,
+        y: cam.y + (p.y + p.h / 2 - (o.y + o.h / 2)) / cam.z,
+      }
+    })
+    this.pane = -1
+    for (let k = this.panes.length - 1; k >= 0; k--) {
+      this.usePane(k)
+      this.clampCam()
+    }
+    this.saveCam()
     this.viewsVer++
     this.invalidate()
   }

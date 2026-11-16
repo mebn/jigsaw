@@ -1343,36 +1343,52 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 }
 .room.split .notes-clip {
   position: absolute;
-  inset: 0 50% 0 0;
+  inset: 0 calc(100% - var(--cut-x, 50%)) 0 0;
   z-index: 4;
   display: block;
   overflow: hidden;
   pointer-events: none;
 }
 .room.split-4 .notes-clip {
-  bottom: 50%;
+  bottom: calc(100% - var(--cut-y, 50%));
 }
-/* The line between the two panes, over everything on the table. */
+/* The line between the panes, over everything on the table, dragged to resize them (see
+   SplitLines). Its ::before is a wider strip to grab it by. */
 .split-line {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: 50%;
+  left: var(--cut-x, 50%);
   z-index: 5;
   width: 2px;
   margin-left: -1px;
   background: var(--line-strong);
-  pointer-events: none;
+  cursor: col-resize;
+  touch-action: none;
+  transition: background 0.15s;
+}
+.split-line::before {
+  content: '';
+  position: absolute;
+  inset: 0 -5px;
+}
+.split-line:hover,
+.split-line:active {
+  background: var(--sel);
 }
 /* The line across: under the right half with a half and two quarters, all the way with quarters. */
 .split-line.across {
-  top: 50%;
+  top: var(--cut-y, 50%);
   bottom: auto;
-  left: 50%;
+  left: var(--cut-x, 50%);
   right: 0;
   width: auto;
   height: 2px;
   margin: -1px 0 0;
+  cursor: row-resize;
+}
+.split-line.across::before {
+  inset: -5px 0;
 }
 .room.split-4 .split-line.across {
   left: 0;
