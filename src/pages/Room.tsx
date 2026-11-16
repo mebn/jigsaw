@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MouseEvent } from 'react'
+import type { CSSProperties, MouseEvent } from 'react'
 import { api, openRoomSocket } from '../lib/api.ts'
 import { renderPreview } from '../lib/preview.ts'
 import type { RoomSocket } from '../lib/api.ts'
@@ -32,6 +32,8 @@ import type { MenuAt } from '../components/ContextMenu.tsx'
 import { TrayButton } from '../components/Trays.tsx'
 import SplitButton from '../components/SplitButton.tsx'
 import type { SplitPanes } from '../components/SplitButton.tsx'
+import SplitLines from '../components/SplitLines.tsx'
+import type { SplitCut } from '../components/SplitLines.tsx'
 import ShareDialog from '../components/ShareDialog.tsx'
 import PictureMap from '../components/PictureMap.tsx'
 import Search from '../components/Search.tsx'
@@ -168,6 +170,12 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const [splitPanes, setSplitPanes] = useState<SplitPanes>(() => {
     const n = Number(store.get('splitPanes'))
     return n === 3 || n === 4 ? n : 2
+  })
+  // Where the lines between the panes are, dragged by the player (see SplitLines).
+  const [splitCut, setSplitCut] = useState<SplitCut>(() => {
+    const [x, y] = (store.get('splitCut') || '').split(',').map(Number)
+    const ok = (f: number | undefined) => (f !== undefined && f > 0 && f < 1 ? f : 0.5)
+    return { x: ok(x), y: ok(y) }
   })
   // Draw mode: dragging draws strokes that fade away after a few seconds, for everyone to see.
   const [drawMode, setDrawMode] = useState(false)
@@ -356,6 +364,12 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
 
   useOverlay(drawMode, () => setDrawMode(false), { keepTyping: true })
 
+  // Before the layout below, so the panes start where they were cut.
+  useEffect(() => {
+    store.set('splitCut', `${splitCut.x},${splitCut.y}`)
+    engine?.setCut(splitCut.x, splitCut.y)
+  }, [engine, splitCut])
+
   useEffect(() => {
     store.set('split', split ? '1' : '0')
     store.set('splitPanes', String(splitPanes))
@@ -496,6 +510,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   return (
     <div
       className={`room${split && engine ? ` split split-${splitPanes}` : ''}${idle ? ' idle' : ''}${leaving ? ' leaving' : ''}`}
+      style={{ '--cut-x': `${splitCut.x * 100}%`, '--cut-y': `${splitCut.y * 100}%` } as CSSProperties}
     >
       <canvas ref={canvas} className="board" tabIndex={0} />
       <div ref={tip} className="tip" />
@@ -511,8 +526,7 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           )}
         </div>
       )}
-      {engine && split && <div className="split-line" />}
-      {engine && split && splitPanes > 2 && <div className="split-line across" />}
+      {engine && split && <SplitLines across={splitPanes > 2} cut={splitCut} onCut={setSplitCut} />}
       {session && (
         <div className="notes-clip">
           <NotesLayer
