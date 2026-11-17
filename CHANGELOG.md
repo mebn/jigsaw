@@ -1,5 +1,10 @@
 # Changelog
 
+## 17 November 2026
+
+- Jigsaws open faster, and other players show up sooner.
+- On phones, the jigsaws page no longer lets text run into other pictures.
+
 ## 16 November 2026
 
 - Drag the lines in split screen to resize the panes; double-click one to even them out.

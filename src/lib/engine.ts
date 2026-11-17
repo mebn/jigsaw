@@ -548,6 +548,8 @@ const LIVE_MS = 33
 // The burst where two pieces join: how long it lasts, after waiting for the pieces to land.
 const POP_MS = 520
 const POP_DELAY = 80
+// How long a piece takes to fade in once its shape is ready, while a jigsaw opens.
+const FADE_IN_MS = 300
 const MAX_POPS = 12
 // Pieces held with a finger ride this far (screen px) above it, so the finger doesn't hide them.
 const TOUCH_LIFT = 72
@@ -737,6 +739,8 @@ export class Engine {
   sprite: SpriteFormat
   spriteBuilder: SpriteBuilder
   sprites: (ShapePixels | true | undefined)[]
+  // Pieces fading in, with when their shape reached the GPU (see setSprite()).
+  fading = new Map<number, number>()
   built: number
   refs: Ref[]
   refSel: string | null
@@ -1086,6 +1090,7 @@ export class Engine {
     const gpu = await createGpu(this.gpuEl, this.gpuTop, { cells: this.n, spw, sph, levels })
     if (this.raf === -1) return gpu.destroy()
     this.gpu = gpu
+    // A jigsaw opened after this starts WebGPU afresh, see warmGpu().
     gpu.onLost = (why) => console.error('WebGPU device lost:', why)
     gpu.setRefImage(this.refImg)
     gpu.setCorners(spriteCorners(this.geo, this.sprite))
@@ -1114,6 +1119,7 @@ export class Engine {
     if (!this.gpu) return
     this.gpu.upload(i, lv)
     this.sprites[i] = true
+    this.fading.set(i, performance.now())
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -1542,8 +1548,8 @@ export class Engine {
     this.frame(this.everything(), 0.82, animate)
   }
 
-  // Arriving from the jigsaws page: zooms in from far out to everything on the table, centred.
-  arrive(f = 0.3, ms = 700) {
+  // Arriving from the jigsaws page: zooms in a little, to everything on the table, centred.
+  arrive(f = 0.75, ms = 450) {
     const to = this.framed(this.everything(), 0.82)
     this.camAnim = { from: { ...to, z: to.z * f }, to, t0: performance.now(), ms, pane: this.pane }
     this.invalidate()
@@ -5234,6 +5240,10 @@ export class Engine {
     if (this.stepObjs(dt)) again = true
 
     if (this.pops.length) again = true
+    for (const [i, t0] of this.fading) {
+      if (now - t0 >= FADE_IN_MS) this.fading.delete(i)
+      else again = true
+    }
     for (const [key, s] of this.strokes) {
       if (this.inkAlpha(s, now) <= 0) this.strokes.delete(key)
       else again = true
@@ -5544,7 +5554,9 @@ export class Engine {
   gpuPiece(i: number, x: number, y: number, a: number, s: number, v: View) {
     if (this.sprites[i] !== true) return false
     const [px, py] = project(v, v.w, v.h, x, y)
-    this.gPieces.put(i, a, v.z * this.dpr * s, px * this.dpr, py * this.dpr)
+    const t0 = this.fading.get(i)
+    const k = t0 === undefined ? 1 : Math.min(1, (performance.now() - t0) / FADE_IN_MS)
+    this.gPieces.put(i, a, v.z * this.dpr * s, px * this.dpr, py * this.dpr, k * k * (3 - 2 * k))
     return true
   }
 

@@ -684,22 +684,27 @@ button {
 .tile.art {
   align-items: stretch;
 }
+/* Its lines (see infoLines in Card.tsx, which measures them with these sizes). */
 .art-info {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
   margin-top: 12px;
   color: var(--muted);
   font-size: 12px;
+  line-height: 17px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
   text-align: left;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   transition: color 0.2s;
 }
-.art-info > span {
+.art-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.art-line > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

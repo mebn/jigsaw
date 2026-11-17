@@ -7,6 +7,7 @@ import type { PlayerRef, RefRow, RoomDetails } from '../../shared/protocol.ts'
 import { LIMITS } from '../../shared/protocol.ts'
 import { Engine } from '../lib/engine.ts'
 import { warmSprites } from '../lib/spriteBuilder.ts'
+import { warmGpu } from '../lib/gpu.ts'
 import { cursorColor } from '../lib/colors.ts'
 import { useApp } from '../lib/app.ts'
 import { lastRoom, roomOnce, store } from '../lib/storage.ts'
@@ -233,8 +234,9 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
     }
     ;(async () => {
       try {
-        // The workers that cut the pieces start loading, and the picture with the jigsaw.
+        // The workers that cut the pieces and WebGPU start loading, and the picture with the jigsaw.
         warmSprites()
+        warmGpu().catch(() => {})
         const image = new Image()
         image.src = api.imageUrl(id)
         const decoded = image.decode()
@@ -265,23 +267,9 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
             setParty(true)
           },
         })
-        try {
-          await eng.ready
-        } catch (err) {
-          if (!dead) setGpuError(String((err as Error)?.message || err))
-          return
-        }
-        if (dead) return
+        // The room's live channel opens while WebGPU starts, the engine listening from the start so
+        // no move made meanwhile is missed.
         show(room)
-        eng.setColors(readColors())
-        setDone(eng.isComplete())
-        // Already finished before this player opened it: nothing left to celebrate.
-        if (eng.isComplete()) celebrated.mark()
-        // A jigsaw from before link previews gets one when its maker opens it (anyone logged in, when
-        // it has no maker). Private ones never show theirs, see sharing() in server/rooms.ts.
-        const mine = passphrase.current && (!room.owner || room.owner === playerId)
-        if (!room.preview && !room.private && mine)
-          setTimeout(() => !dead && passphrase.current && api.preview(id, passphrase.current, renderPreview(image)).catch(() => {}), 1000)
         const e = eng
         sock = openRoomSocket(
           id,
@@ -315,6 +303,25 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
           offEngine()
           offs.forEach((off) => off())
         }
+        try {
+          await e.ready
+        } catch (err) {
+          if (dead) return
+          disconnect()
+          sock.close()
+          setGpuError(String((err as Error)?.message || err))
+          return
+        }
+        if (dead) return
+        e.setColors(readColors())
+        setDone(e.isComplete())
+        // Already finished before this player opened it: nothing left to celebrate.
+        if (e.isComplete()) celebrated.mark()
+        // A jigsaw from before link previews gets one when its maker opens it (anyone logged in, when
+        // it has no maker). Private ones never show theirs, see sharing() in server/rooms.ts.
+        const mine = passphrase.current && (!room.owner || room.owner === playerId)
+        if (!room.preview && !room.private && mine)
+          setTimeout(() => !dead && passphrase.current && api.preview(id, passphrase.current, renderPreview(image)).catch(() => {}), 1000)
         setSession({ engine: e, sock, room })
         // Pieces left out of line in their group (see Engine.repair) are put right, now that it can say so.
         e.checkGroups()
