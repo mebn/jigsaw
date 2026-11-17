@@ -6,13 +6,14 @@ import { useApp } from '../lib/app.ts'
 import { lastRoom, store } from '../lib/storage.ts'
 import { navigate, paths } from '../lib/router.ts'
 import { Back, Plus, Trash } from '../components/icons.tsx'
-import { Art, ArtInfo, Tile } from '../components/Card.tsx'
+import { Art, ArtInfo, infoLines, Tile } from '../components/Card.tsx'
 import Dialog from '../components/Dialog.tsx'
 import Tabs from '../components/Tabs.tsx'
 import Settings from '../components/Settings.tsx'
 import Confirm from '../components/Confirm.tsx'
 import NewRoom from './NewRoom.tsx'
 import { useLinger } from '../lib/linger.ts'
+import { warmGpu } from '../lib/gpu.ts'
 import { isTyping, overlays } from '../lib/overlays.ts'
 
 // The jigsaws page: a gallery on a canvas that drags and scrolls up and down (but doesn't zoom), the
@@ -30,10 +31,13 @@ const COL = 250
 const COL_SMALL = 150
 const GAP = 64
 const GAP_SMALL = 28
+// On narrower screens the columns widen to fill the screen, up to this (CSS px).
+const COL_SMALL_MAX = 220
 // The widest the columns spread on a wide screen, so they stay together in the middle (CSS px).
 const MAX_WIDTH = 1600
-// The line under each jigsaw, with the gap above it (CSS px).
-const CAPTION = 30
+// The caption under each jigsaw: the gap above it, and each of its lines (CSS px, see .art-info).
+const CAPTION_TOP = 13
+const CAPTION_LINE = 17
 // A section's heading, with the room under it, and the extra room between the sections (CSS px).
 const HEADING = 44
 const BETWEEN = 72
@@ -65,6 +69,8 @@ interface Placed {
   y: number
   w: number
   h: number
+  // Its caption's height.
+  cap: number
   depth: number
   // Its place in the list, for coming in one after another.
   i: number
@@ -86,11 +92,13 @@ interface Heading {
 // every other column a little lower. A section with fewer jigsaws than columns uses only as many
 // columns as it has jigsaws, in the middle, so a few don't spread out across the page. Each
 // section's first row goes left to right, then each jigsaw goes in the shortest column so far.
-// Centred on 0, 0.
-function layout(list: RoomSummary[], col: number, gap: number, width: number) {
-  const step = col + gap
+// Columns are at least col wide, widening up to maxCol to fill the width. Each jigsaw's caption
+// takes as many lines as it needs to fit under its picture. Centred on 0, 0.
+function layout(list: RoomSummary[], minCol: number, maxCol: number, gap: number, width: number) {
   const count = (done: boolean) => list.filter((o) => o.done === done).length
-  const fit = Math.max(1, Math.floor((width + gap) / step))
+  const fit = Math.max(1, Math.floor((width + gap) / (minCol + gap)))
+  const col = Math.max(minCol, Math.min(maxCol, Math.floor((width - (fit - 1) * gap) / fit)))
+  const step = col + gap
   const cols = Math.max(1, Math.min(fit, Math.max(count(false), count(true))))
   const stagger = (c: number) => (c % 2 ? step * 0.45 : 0)
   let heights: number[] = []
@@ -109,8 +117,9 @@ function layout(list: RoomSummary[], col: number, gap: number, width: number) {
     if (!i || r.done !== list[i - 1].done) section(r.done, i)
     const c = i - start < heights.length ? i - start : heights.indexOf(Math.min(...heights))
     const h = tallness(r, col)
-    const at = { r, x: left + c * step, y: heights[c], w: col, h, depth: 0.4 + ((i * 7) % 10) / 10, i }
-    heights[c] += h + CAPTION + gap
+    const cap = CAPTION_TOP + infoLines(r, col).length * CAPTION_LINE
+    const at = { r, x: left + c * step, y: heights[c], w: col, h, cap, depth: 0.4 + ((i * 7) % 10) / 10, i }
+    heights[c] += h + cap + gap
     return at
   })
   const w = cols * step - gap
@@ -138,11 +147,11 @@ const EASE_MS = 70
 // screen they can be moved until a gap past their top or bottom reaches the screen's. Scrolling eases
 // smoothly to where it's sent, never past either end.
 // render(p) makes the jigsaw for each place.
-function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; gap: number; render: (p: Placed) => ReactNode }) {
+function Canvas({ list, col, maxCol, gap, render }: { list: RoomSummary[]; col: number; maxCol: number; gap: number; render: (p: Placed) => ReactNode }) {
   const field = useRef<HTMLDivElement>(null)
   const cells = useRef<(HTMLDivElement | null)[]>([])
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight })
-  const { placed, headings, w: W, h: H } = layout(list, col, gap, Math.min(view.w - 2 * gap, MAX_WIDTH))
+  const { placed, headings, w: W, h: H } = layout(list, col, maxCol, gap, Math.min(view.w - 2 * gap, MAX_WIDTH))
   const heads = useRef<(HTMLDivElement | null)[]>([])
   const key = list.map((r) => r.id).join() + col + W
 
@@ -170,7 +179,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
       const sx = cx + p.x - c.x - m.sx * DRIFT * p.depth
       const sy = cy + p.y - c.y - m.sy * DRIFT * p.depth
       cell.style.transform = `translate3d(${sx}px, ${sy}px, 0)`
-      cell.style.visibility = sx > vw + 40 || sy > vh + 40 || sx + p.w < -40 || sy + p.h + CAPTION < -40 ? 'hidden' : ''
+      cell.style.visibility = sx > vw + 40 || sy > vh + 40 || sx + p.w < -40 || sy + p.h + p.cap < -40 ? 'hidden' : ''
     })
     headings.forEach((hd, k) => {
       const el = heads.current[k]
@@ -347,6 +356,7 @@ function Canvas({ list, col, gap, render }: { list: RoomSummary[]; col: number; 
             cells.current[k] = el
           }}
           className="cell"
+          style={{ width: p.w }}
         >
           {render(p)}
         </div>
@@ -377,6 +387,10 @@ interface GalleryProps {
 
 export default function Gallery({ here, closing, newOpen }: GalleryProps) {
   const { player, playerId, openLogin } = useApp()
+  // WebGPU starts now, so a jigsaw opened from here shows sooner.
+  useEffect(() => {
+    warmGpu().catch(() => {})
+  }, [])
   // The jigsaws, null while they load, or 'failed'.
   const [rooms, setRooms] = useState<RoomSummary[] | 'failed' | null>(null)
   const small = useSmall()
@@ -443,7 +457,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
       r={p.r}
       i={p.i}
       onPick={pick}
-      below={<ArtInfo r={p.r} />}
+      below={<ArtInfo r={p.r} width={p.w} />}
       extra={
         !!playerId &&
         p.r.owner === playerId && (
@@ -517,7 +531,7 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
           <p>No {tab} jigsaws.</p>
         </section>
       ) : (
-        <Canvas list={[...progress, ...finished]} col={col} gap={gap} render={render} />
+        <Canvas list={[...progress, ...finished]} col={col} maxCol={small ? COL_SMALL_MAX : COL} gap={gap} render={render} />
       )}
 
       {newShown && (

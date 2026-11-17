@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { api } from '../lib/api.ts'
 import { formatDuration, plural } from '../lib/format.ts'
@@ -31,29 +31,70 @@ export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
   )
 }
 
-// The line under a jigsaw's picture: how long it took and when it was finished, or how far along it
-// is, and how many pieces it has.
-export function ArtInfo({ r }: { r: ArtRoom }) {
-  const dot = <span className="dot" aria-hidden="true">·</span>
-  const pieces = <span>{plural(r.n, 'piece')}</span>
-  return r.done ? (
+// What the line under a jigsaw's picture says: how long it took and when it was finished, or how far
+// along it is, and how many pieces it has.
+function infoParts(r: ArtRoom) {
+  const pieces = { text: plural(r.n, 'piece'), title: '' }
+  return r.done
+    ? [{ text: formatDuration(r.seconds), title: 'Time it took' }, ...(r.finished > 0 ? [{ text: finishedOn(r.finished), title: 'Finished on' }] : []), pieces]
+    : [{ text: `${Math.round(r.progress * 100)}% done`, title: 'Pieces connected' }, pieces]
+}
+
+// The caption's text and the room between its parts and around its dots (CSS px, see .art-info).
+const INFO_FONT_PX = 12
+const INFO_SPACING = 0.02 * INFO_FONT_PX
+const INFO_GAP = 6
+const LOCK_PX = 12
+let measure: CanvasRenderingContext2D | null = null
+const textWidth = (text: string) => {
+  if (!measure) {
+    measure = document.createElement('canvas').getContext('2d')!
+    measure.font = `${INFO_FONT_PX}px ${getComputedStyle(document.body).fontFamily}`
+  }
+  return measure.measureText(text).width + text.length * INFO_SPACING
+}
+
+// The caption's parts in lines that fit in width (CSS px): all on one line when they fit, else as
+// many as fit on each line, a part never split. With no width, one line.
+export function infoLines(r: ArtRoom, width = Infinity) {
+  const parts = infoParts(r)
+  const dot = INFO_GAP + textWidth('·') + INFO_GAP
+  const lines: (typeof parts)[] = []
+  let used = 0
+  parts.forEach((p, k) => {
+    // The lock follows the last part.
+    const w = textWidth(p.text) + (k === parts.length - 1 && !r.done && r.private ? INFO_GAP + LOCK_PX : 0)
+    if (lines.length && used + dot + w <= width) {
+      lines[lines.length - 1].push(p)
+      used += dot + w
+    } else {
+      lines.push([p])
+      used = w
+    }
+  })
+  return lines
+}
+
+// The caption under a jigsaw's picture, in lines that fit in width (see infoLines).
+export function ArtInfo({ r, width }: { r: ArtRoom; width?: number }) {
+  const lines = infoLines(r, width)
+  return (
     <span className="art-info">
-      <span title="Time it took">{formatDuration(r.seconds)}</span>
-      {r.finished > 0 && (
-        <>
-          {dot}
-          <span title="Finished on">{finishedOn(r.finished)}</span>
-        </>
-      )}
-      {dot}
-      {pieces}
-    </span>
-  ) : (
-    <span className="art-info">
-      <span title="Pieces connected">{Math.round(r.progress * 100)}% done</span>
-      {dot}
-      {pieces}
-      {!!r.private && <Lock aria-label="Private" />}
+      {lines.map((line, l) => (
+        <span className="art-line" key={l}>
+          {line.map((p, k) => (
+            <Fragment key={k}>
+              {k > 0 && (
+                <span className="dot" aria-hidden="true">
+                  ·
+                </span>
+              )}
+              <span title={p.title || undefined}>{p.text}</span>
+            </Fragment>
+          ))}
+          {l === lines.length - 1 && !r.done && !!r.private && <Lock aria-label="Private" />}
+        </span>
+      ))}
     </span>
   )
 }

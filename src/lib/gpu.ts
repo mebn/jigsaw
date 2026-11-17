@@ -134,13 +134,14 @@ export class PieceInstances extends Instances {
     super(PIECE_FLOATS)
   }
   // The piece in atlas cell, turned a (radians) and scaled z (device px per sprite unit), its middle
-  // at (x, y) in device px.
-  put(cell: number, a: number, z: number, x: number, y: number) {
+  // at (x, y) in device px, drawn with opacity alpha.
+  put(cell: number, a: number, z: number, x: number, y: number, alpha = 1) {
     const k = this.next()
     const c = Math.cos(a) * z
     const s = Math.sin(a) * z
     this.data.set([c, s, -s, c, x, y], k)
     this.u32[k + 6] = cell
+    this.data[k + 7] = alpha
   }
 }
 
@@ -308,9 +309,10 @@ struct O {
   @location(1) @interpolate(flat) layer: u32,
   @location(2) sp: vec2f,
   @location(3) @interpolate(flat) cell: u32,
+  @location(4) @interpolate(flat) alpha: f32,
 }
 @vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) m: vec4f, @location(1) pos: vec2f,
-              @location(2) cell: u32) -> O {
+              @location(2) cell: u32, @location(3) alpha: f32) -> O {
   let c = corner(vi);
   let l = (c - 0.5) * u.s0.zw;
   var o: O;
@@ -322,6 +324,7 @@ struct O {
   o.layer = cell / perPage;
   o.sp = c * u.s2.xy;
   o.cell = cell;
+  o.alpha = alpha;
   return o;
 }
 // How far inside the piece this pixel is, in pixels of the mip level being read (negative outside;
@@ -365,7 +368,7 @@ fn cover(d: f32, grow: f32) -> f32 {
   // pieces still show.
   let line = clamp(1.25 - abs(d) / max(fwidth(d), 1e-4), 0.0, 1.0) * 0.3 * s.g;
   let rgb = mix(c.rgb / max(c.a, 1e-4), vec3f(0.0), line);
-  return vec4f(rgb * k, k);
+  return vec4f(rgb * k, k) * i.alpha;
 }
 @fragment fn fsMask(i: O) -> @location(0) vec4f {
   return vec4f(cover(inside(i, textureSample(shapes, samp, i.uv, i.layer).r), 0.0));
@@ -491,27 +494,149 @@ const HALVE = /* wgsl */ `
 }
 `
 
-// canvas holds the table, top the trays and everything above the notes (see frame()).
-export async function createGpu(canvas: HTMLCanvasElement, top: HTMLCanvasElement, atlas: GpuAtlasLayout): Promise<Gpu> {
+// What every jigsaw draws with: the device, its layouts and pipelines. Made once, the slow part of
+// starting WebGPU, and kept for every jigsaw opened after; see warmGpu().
+interface GpuCore {
+  device: GPUDevice
+  format: GPUTextureFormat
+  sampler: GPUSampler
+  l0: GPUBindGroupLayout
+  lAtlas: GPUBindGroupLayout
+  lTex: GPUBindGroupLayout
+  lPost: GPUBindGroupLayout
+  pipes: Record<PipeName, GPURenderPipeline>
+  // Called with why, if the device is lost.
+  lost: Set<(why: string) => void>
+}
+
+let core: Promise<GpuCore> | null = null
+
+// Starts WebGPU ahead of time, so it's ready by the time a jigsaw needs it. Made again after a
+// failure or a lost device.
+export function warmGpu(): Promise<GpuCore> {
+  if (!core) {
+    const made = makeCore()
+    core = made
+    made.then(
+      (c) =>
+        c.device.lost.then((info) => {
+          if (core === made) core = null
+          for (const fn of c.lost) fn(info.message || info.reason)
+        }),
+      () => core === made && (core = null),
+    )
+  }
+  return core
+}
+
+async function makeCore(): Promise<GpuCore> {
   if (!navigator.gpu) throw new Error('WebGPU is not available')
   const adapter = await navigator.gpu.requestAdapter()
   if (!adapter) throw new Error('No WebGPU adapter')
-  const device = await adapter.requestDevice({
+  const d = await adapter.requestDevice({
     requiredLimits: {
       maxTextureDimension2D: Math.min(8192, adapter.limits.maxTextureDimension2D),
       maxTextureArrayLayers: adapter.limits.maxTextureArrayLayers,
     },
   })
+  d.addEventListener('uncapturederror', (e) => console.error('WebGPU:', e.error.message))
+  const format = navigator.gpu.getPreferredCanvasFormat()
+  const F = GPUShaderStage.FRAGMENT
+  const V = GPUShaderStage.VERTEX
+  const sampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' })
+  const l0 = d.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: V | F, buffer: {} },
+      { binding: 1, visibility: F, sampler: {} },
+    ],
+  })
+  const lAtlas = d.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: F, texture: { viewDimension: '2d-array' } },
+      { binding: 1, visibility: F, texture: { viewDimension: '2d-array' } },
+      { binding: 2, visibility: F, buffer: { type: 'read-only-storage' } },
+    ],
+  })
+  const lTex = d.createBindGroupLayout({ entries: [{ binding: 0, visibility: F, texture: {} }] })
+  const lPost = d.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: F, texture: {} },
+      { binding: 1, visibility: F, buffer: {} },
+    ],
+  })
+
+  const module = async (code: string) => {
+    const m = d.createShaderModule({ code: COMMON + code })
+    const info = await m.getCompilationInfo()
+    const errors = info.messages.filter((x) => x.type === 'error')
+    if (errors.length) throw new Error(errors.map((x) => `${x.lineNum}:${x.linePos} ${x.message}`).join('\n'))
+    return m
+  }
+  const [mBg, mTray, mRef, mPiece, mPost] = await Promise.all([BG, TRAY, REF, PIECE, POST].map(module))
+  const over: GPUBlendState = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } }
+  const max: GPUBlendState = { color: { operation: 'max', srcFactor: 'one', dstFactor: 'one' }, alpha: { operation: 'max', srcFactor: 'one', dstFactor: 'one' } }
+  const layout = (...groups: GPUBindGroupLayout[]) => d.createPipelineLayout({ bindGroupLayouts: [l0, ...groups] })
+  const attrs = (...formats: GPUVertexFormat[]): GPUVertexAttribute[] => {
+    let offset = 0
+    const sizes: Record<string, number> = { float32x4: 16, float32x2: 8, uint32: 4, float32: 4 }
+    const attributes = formats.map((format, shaderLocation) => {
+      const a = { format, offset, shaderLocation }
+      offset += sizes[format]
+      return a
+    })
+    return attributes
+  }
+  const pieceBuffers: GPUVertexBufferLayout[] = [{ arrayStride: PIECE_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x2', 'uint32', 'float32') }]
+  const pipe = (m: GPUShaderModule, vs: string, fs: string, buffers: GPUVertexBufferLayout[], target: GPUColorTargetState, layoutGroups: GPUBindGroupLayout[]) =>
+    d.createRenderPipelineAsync({
+      layout: layout(...layoutGroups),
+      vertex: { module: m, entryPoint: vs, buffers },
+      fragment: { module: m, entryPoint: fs, targets: [target] },
+      primitive: { topology: 'triangle-list' },
+    })
+  const screen: GPUColorTargetState = { format, blend: over }
+  const trayBuffers: GPUVertexBufferLayout[] = [{ arrayStride: TRAY_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }]
+  const mPicture = d.createShaderModule({ code: PICTURE })
+  const mHalve = d.createShaderModule({ code: HALVE })
+  const [bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline, picture, halveColor] = await Promise.all([
+    pipe(mBg, 'vsFull', 'fsBg', [], { format }, []),
+    pipe(mTray, 'vs', 'fs', trayBuffers, screen, []),
+    pipe(mTray, 'vs', 'fsMask', trayBuffers, { format: 'r8unorm', blend: over }, []),
+    pipe(mRef, 'vs', 'fs', [{ arrayStride: REF_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, [lTex]),
+    pipe(mPiece, 'vs', 'fs', pieceBuffers, screen, [lAtlas]),
+    pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.RED }, [lAtlas]),
+    pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.GREEN }, [lAtlas]),
+    pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'r8unorm', blend: over }, [lAtlas]),
+    pipe(mPost, 'vsFull', 'fsBlur', [], { format: 'r8unorm' }, [lPost]),
+    pipe(mPost, 'vsFull', 'fsShadow', [], screen, [lPost]),
+    pipe(mPost, 'vsFull', 'fsOutline', [], screen, [lPost]),
+    d.createRenderPipelineAsync({
+      layout: 'auto',
+      vertex: { module: mPicture, entryPoint: 'vs', buffers: [{ arrayStride: 8, stepMode: 'instance', attributes: [{ format: 'float32x2', offset: 0, shaderLocation: 0 }] }] },
+      fragment: { module: mPicture, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+      primitive: { topology: 'triangle-list' },
+    }),
+    d.createRenderPipelineAsync({
+      layout: 'auto',
+      vertex: { module: mHalve, entryPoint: 'vs' },
+      fragment: { module: mHalve, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+      primitive: { topology: 'triangle-list' },
+    }),
+  ])
+  const pipes: Record<PipeName, GPURenderPipeline> = { bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline, picture, halveColor }
+  return { device: d, format, sampler, l0, lAtlas, lTex, lPost, pipes, lost: new Set() }
+}
+
+// canvas holds the table, top the trays and everything above the notes (see frame()).
+export async function createGpu(canvas: HTMLCanvasElement, top: HTMLCanvasElement, atlas: GpuAtlasLayout): Promise<Gpu> {
+  const c = await warmGpu()
   const ctx = canvas.getContext('webgpu')
   if (!ctx) throw new Error('No WebGPU canvas context')
-  const format = navigator.gpu.getPreferredCanvasFormat()
-  ctx.configure({ device, format, alphaMode: 'opaque' })
+  ctx.configure({ device: c.device, format: c.format, alphaMode: 'opaque' })
   const ctxTop = top.getContext('webgpu')
   if (!ctxTop) throw new Error('No WebGPU canvas context')
-  ctxTop.configure({ device, format, alphaMode: 'premultiplied' })
-  const gpu = new Gpu(device, ctx, ctxTop, format, atlas)
-  await gpu.init()
-  return gpu
+  ctxTop.configure({ device: c.device, format: c.format, alphaMode: 'premultiplied' })
+  return new Gpu(c, ctx, ctxTop, atlas)
 }
 
 export type { Gpu }
@@ -537,13 +662,15 @@ class Gpu {
   declare buffers: Record<string, GPUBuffer>
   declare size: [number, number]
   declare xs: ExtraMask[]
-  // Made in init().
+  // Shared by every jigsaw, see GpuCore.
   declare sampler: GPUSampler
   declare lTex: GPUBindGroupLayout
   declare lPost: GPUBindGroupLayout
+  declare pipes: Record<PipeName, GPURenderPipeline>
+  declare core: GpuCore
+  declare lostFn: (why: string) => void
   declare g0: GPUBindGroup
   declare gAtlas: GPUBindGroup
-  declare pipes: Record<PipeName, GPURenderPipeline>
   // Made in setRefImage().
   declare refTex: GPUTexture
   declare gRef: GPUBindGroup
@@ -560,14 +687,20 @@ class Gpu {
 
   // atlas: { cells, spw, sph, levels }: how many sprites, their size in pixels, and how many mip
   // levels each comes with (the sprite and its halved copies).
-  constructor(device: GPUDevice, ctx: GPUCanvasContext, ctxTop: GPUCanvasContext, format: GPUTextureFormat, { cells, spw, sph, levels }: GpuAtlasLayout) {
+  constructor(core: GpuCore, ctx: GPUCanvasContext, ctxTop: GPUCanvasContext, { cells, spw, sph, levels }: GpuAtlasLayout) {
+    const device = core.device
+    this.core = core
     this.device = device
     this.ctx = ctx
     this.ctxTop = ctxTop
-    this.format = format
+    this.format = core.format
+    this.sampler = core.sampler
+    this.lTex = core.lTex
+    this.lPost = core.lPost
+    this.pipes = core.pipes
     this.onLost = null
-    device.lost.then((info) => this.onLost?.(info.message || info.reason))
-    device.addEventListener('uncapturederror', (e) => console.error('WebGPU:', e.error.message))
+    this.lostFn = (why) => this.onLost?.(why)
+    core.lost.add(this.lostFn)
 
     // Every cell is a multiple of the coarsest mip level's step, with a clear gutter, so the
     // halved copies land exactly in their cell and never bleed into a neighbour's.
@@ -609,43 +742,15 @@ class Gpu {
     this.size = [0, 0]
     // Masks, settings and bind groups for other players' outlines, made as they're needed.
     this.xs = []
-  }
-
-  async init() {
-    const d = this.device
-    const F = GPUShaderStage.FRAGMENT
-    const V = GPUShaderStage.VERTEX
-    this.sampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' })
-    const l0 = d.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: V | F, buffer: {} },
-        { binding: 1, visibility: F, sampler: {} },
-      ],
-    })
-    const lAtlas = d.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: F, texture: { viewDimension: '2d-array' } },
-        { binding: 1, visibility: F, texture: { viewDimension: '2d-array' } },
-        { binding: 2, visibility: F, buffer: { type: 'read-only-storage' } },
-      ],
-    })
-    const lTex = d.createBindGroupLayout({ entries: [{ binding: 0, visibility: F, texture: {} }] })
-    const lPost = d.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: F, texture: {} },
-        { binding: 1, visibility: F, buffer: {} },
-      ],
-    })
-    this.lTex = lTex
-    this.lPost = lPost
-    this.g0 = d.createBindGroup({
+    const { l0, lAtlas } = core
+    this.g0 = device.createBindGroup({
       layout: l0,
       entries: [
         { binding: 0, resource: { buffer: this.ubuf } },
         { binding: 1, resource: this.sampler },
       ],
     })
-    this.gAtlas = d.createBindGroup({
+    this.gAtlas = device.createBindGroup({
       layout: lAtlas,
       entries: [
         { binding: 0, resource: this.atlas.createView({ dimension: '2d-array' }) },
@@ -653,70 +758,6 @@ class Gpu {
         { binding: 2, resource: { buffer: this.corners } },
       ],
     })
-
-    const module = async (code: string) => {
-      const m = d.createShaderModule({ code: COMMON + code })
-      const info = await m.getCompilationInfo()
-      const errors = info.messages.filter((x) => x.type === 'error')
-      if (errors.length) throw new Error(errors.map((x) => `${x.lineNum}:${x.linePos} ${x.message}`).join('\n'))
-      return m
-    }
-    const [mBg, mTray, mRef, mPiece, mPost] = await Promise.all([BG, TRAY, REF, PIECE, POST].map(module))
-    const over: GPUBlendState = { color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } }
-    const max: GPUBlendState = { color: { operation: 'max', srcFactor: 'one', dstFactor: 'one' }, alpha: { operation: 'max', srcFactor: 'one', dstFactor: 'one' } }
-    const layout = (...groups: GPUBindGroupLayout[]) => d.createPipelineLayout({ bindGroupLayouts: [l0, ...groups] })
-    const attrs = (...formats: GPUVertexFormat[]): GPUVertexAttribute[] => {
-      let offset = 0
-      const sizes: Record<string, number> = { float32x4: 16, float32x2: 8, uint32: 4 }
-      const attributes = formats.map((format, shaderLocation) => {
-        const a = { format, offset, shaderLocation }
-        offset += sizes[format]
-        return a
-      })
-      return attributes
-    }
-    const pieceBuffers: GPUVertexBufferLayout[] = [{ arrayStride: PIECE_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x2', 'uint32') }]
-    const pipe = (m: GPUShaderModule, vs: string, fs: string, buffers: GPUVertexBufferLayout[], target: GPUColorTargetState, layoutGroups: GPUBindGroupLayout[]) =>
-      d.createRenderPipelineAsync({
-        layout: layout(...layoutGroups),
-        vertex: { module: m, entryPoint: vs, buffers },
-        fragment: { module: m, entryPoint: fs, targets: [target] },
-        primitive: { topology: 'triangle-list' },
-      })
-    const screen: GPUColorTargetState = { format: this.format, blend: over }
-    const trayBuffers: GPUVertexBufferLayout[] = [{ arrayStride: TRAY_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }]
-    const [bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline] = await Promise.all([
-      pipe(mBg, 'vsFull', 'fsBg', [], { format: this.format }, []),
-      pipe(mTray, 'vs', 'fs', trayBuffers, screen, []),
-      pipe(mTray, 'vs', 'fsMask', trayBuffers, { format: 'r8unorm', blend: over }, []),
-      pipe(mRef, 'vs', 'fs', [{ arrayStride: REF_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, [lTex]),
-      pipe(mPiece, 'vs', 'fs', pieceBuffers, screen, [lAtlas]),
-      pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.RED }, [lAtlas]),
-      pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.GREEN }, [lAtlas]),
-      pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'r8unorm', blend: over }, [lAtlas]),
-      pipe(mPost, 'vsFull', 'fsBlur', [], { format: 'r8unorm' }, [lPost]),
-      pipe(mPost, 'vsFull', 'fsShadow', [], screen, [lPost]),
-      pipe(mPost, 'vsFull', 'fsOutline', [], screen, [lPost]),
-    ])
-    this.pipes = { bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline } as Record<PipeName, GPURenderPipeline>
-    const mPicture = d.createShaderModule({ code: PICTURE })
-    const mHalve = d.createShaderModule({ code: HALVE })
-    const halve = (format: GPUTextureFormat) =>
-      d.createRenderPipelineAsync({
-        layout: 'auto',
-        vertex: { module: mHalve, entryPoint: 'vs' },
-        fragment: { module: mHalve, entryPoint: 'fs', targets: [{ format }] },
-        primitive: { topology: 'triangle-list' },
-      })
-    ;[this.pipes.picture, this.pipes.halveColor] = await Promise.all([
-      d.createRenderPipelineAsync({
-        layout: 'auto',
-        vertex: { module: mPicture, entryPoint: 'vs', buffers: [{ arrayStride: 8, stepMode: 'instance', attributes: [{ format: 'float32x2', offset: 0, shaderLocation: 0 }] }] },
-        fragment: { module: mPicture, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
-        primitive: { topology: 'triangle-list' },
-      }),
-      halve('rgba8unorm'),
-    ])
     // Until an image is set, images draw from a single clear pixel.
     this.setRefImage(null)
   }
@@ -1102,8 +1143,18 @@ class Gpu {
     d.queue.submit([enc.finish()])
   }
 
+  // Frees what this jigsaw put on the GPU. The device and pipelines stay for the next one.
   destroy() {
     this.onLost = null
-    this.device.destroy()
+    this.core.lost.delete(this.lostFn)
+    this.ctx.unconfigure()
+    this.ctxTop.unconfigure()
+    for (const t of [this.atlas, this.shapes, this.refTex, this.mask, this.shA, this.shB]) t?.destroy()
+    for (const b of [this.corners, this.ubuf, ...Object.values(this.post), ...Object.values(this.buffers)]) b.destroy()
+    for (const x of this.xs) {
+      x.tex.destroy()
+      x.buf.destroy()
+    }
+    this.xs = []
   }
 }
