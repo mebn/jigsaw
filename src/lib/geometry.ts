@@ -526,7 +526,7 @@ export function buildPuzzle({ cols, rows, width, height, shape, seed, longPieces
 
 // For each line of piece p's outline, from one point to the next, which side (0 to 3: top, right,
 // bottom, left) it's on, plus 4 when that side is cut (not inside a long piece).
-export function sideCodes(p: Piece): number[] {
+export function sideCodes(p: Pick<Piece, 'sides' | 'inner'>): number[] {
   const out: number[] = []
   for (let s = 0; s < 4; s++) {
     for (let k = p.sides[s]; k < p.sides[s + 1]; k++) out.push(s | (p.inner?.[s] ? 0 : 4))
@@ -548,7 +548,7 @@ export function outlinePath(outline: ArrayLike<number>): Path2D {
 // little over the sides inside the piece (grow), so the cells overlap instead of leaving a hairline
 // between them. pts is its corners as x, y pairs, and code[k] the line from corner k to the next's
 // side code (see sideCodes()). Null for a cell that's a piece of its own.
-export function longPaths(p: Piece, grow: number): LongPaths | null {
+export function longPaths(p: Pick<Piece, 'outline' | 'sides' | 'inner'>, grow: number): LongPaths | null {
   if (!p.inner) return null
   const o = p.outline
   // The corners, as x, y pairs, and for each line from one to the next which side it's on and

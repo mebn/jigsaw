@@ -9,6 +9,7 @@ import { C, hex } from './screen.ts'
 import type { Cells, Rgb, Scene, Terminal } from './screen.ts'
 import type { Session } from './session.ts'
 import { Table } from './table.ts'
+import { decode, encode } from '../../shared/wire.ts'
 import { View } from './view.ts'
 import type { Marks, Picture } from './view.ts'
 
@@ -137,13 +138,18 @@ export class Game implements Scene {
 
   // ---- the socket ----
 
+  // As protobuf (see shared/wire.ts), as the pages send. One that can't go is left out.
   private send(msg: ClientMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
-    else if (msg.type === 'moves') this.queue.push(msg)
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(encode(msg))
+      } catch {}
+    } else if (msg.type === 'moves') this.queue.push(msg)
   }
 
   private open(again: boolean) {
     const ws = new WebSocket(`${this.session.origin.replace(/^http/, 'ws')}/api/ws?room=${encodeURIComponent(this.room.id)}&client=${this.clientId}`)
+    ws.binaryType = 'arraybuffer'
     this.ws = ws
     ws.onopen = async () => {
       this.retry = 0
@@ -159,9 +165,11 @@ export class Game implements Scene {
       }
       this.term.invalidate()
     }
-    ws.onmessage = (e) => {
+    ws.onmessage = (e: MessageEvent<ArrayBuffer | string>) => {
+      if (typeof e.data === 'string') return
+      const msg = decode(new Uint8Array(e.data)) as ServerMessage | null
       try {
-        this.onMessage(JSON.parse(String(e.data)) as ServerMessage)
+        if (msg) this.onMessage(msg)
       } catch {}
     }
     ws.onclose = () => {

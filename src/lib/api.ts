@@ -1,4 +1,5 @@
 import { newBuild } from './update.ts'
+import { decode, encode } from '../../shared/wire.ts'
 import type {
   ClientMessage,
   NewRoom,
@@ -27,15 +28,34 @@ interface RequestOptions {
   as?: string | null
 }
 
+// A body that's a picture (Blob) or a form with pictures in it (FormData) goes as it is, with the
+// type the browser gives it; anything else as JSON.
 async function request<T>(url: string, { method = 'GET', body, as }: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {}
-  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const raw = body instanceof Blob || body instanceof FormData
+  if (body !== undefined && !raw) headers['Content-Type'] = 'application/json'
   if (as) headers['X-Passphrase'] = as
-  const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  const res = await fetch(url, { method, headers, body: body === undefined ? undefined : raw ? body : JSON.stringify(body) })
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
   return res.json()
 }
 const post = <T>(url: string, body: unknown) => request<T>(url, { method: 'POST', body })
+
+// A picture given as a base64 data URL, as a Blob of its type, to send as the picture itself.
+export function dataUrlBlob(url: string) {
+  const type = /^data:([^;,]+)/.exec(url)?.[1] || 'application/octet-stream'
+  const text = atob(url.slice(url.indexOf(',') + 1))
+  const bytes = new Uint8Array(text.length)
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i)
+  return new Blob([bytes], { type })
+}
+
+// A new jigsaw's pictures: the picture itself, its thumbnail and its link preview picture.
+export interface NewRoomPictures {
+  image: Blob
+  thumb: Blob
+  preview?: Blob
+}
 
 export const api = {
   signUp: (name: string) => post<PlayerLogin>('/api/players', { name }),
@@ -44,8 +64,10 @@ export const api = {
   loginEmail: (email: string, password: string) => post<PlayerLogin>('/api/players/email-login', { email, password }),
   useEmail: (passphrase: string, email: string, password: string) => post<PlayerLogin>('/api/players/email', { passphrase, email, password }),
   rename: (passphrase: string, name: string) => post<PlayerRef>('/api/players/rename', { passphrase, name }),
-  // image: a data URL from avatarFromFile (see src/lib/avatars.ts), or null to take it away.
-  setAvatar: (passphrase: string, image: string | null) => post<PlayerRef>('/api/players/avatar', { passphrase, image }),
+  // image: a data URL from avatarFromFile (see src/lib/avatars.ts), or null to take it away. Sent as
+  // the picture itself (nothing, to take it away).
+  setAvatar: (passphrase: string, image: string | null) =>
+    request<PlayerRef>('/api/players/avatar', { method: 'POST', body: image ? dataUrlBlob(image) : undefined, as: passphrase }),
   feedback: (text: string, passphrase?: string | null, room?: string | null) => post<{ ok: true }>('/api/feedback', { text, passphrase, room }),
   lan: () => request<{ address: string | null }>('/api/lan'),
   // Private jigsaws only come back for a player who has them.
@@ -55,10 +77,19 @@ export const api = {
   join: (id: string, passphrase: string) => post<{ ok: true }>(`/api/rooms/${id}/join`, { passphrase }),
   imageUrl: (id: string) => `/api/rooms/${id}/image`,
   snapshots: (id: string) => request<Snapshot[]>(`/api/rooms/${id}/snapshots`),
-  create: (body: NewRoom) => post<{ id: string }>('/api/rooms', body),
-  // A link preview picture for a jigsaw that has none yet (see src/lib/preview.ts); image: a JPEG data URL.
-  // Only taken from the jigsaw's maker (anyone logged in, for a jigsaw without one).
-  preview: (id: string, passphrase: string, image: string) => post<{ ok: true }>(`/api/rooms/${id}/preview`, { passphrase, image }),
+  // The pictures go as files, the rest as JSON beside them, so a big picture isn't made into text.
+  create: (room: NewRoom, pictures: NewRoomPictures) => {
+    const form = new FormData()
+    form.append('room', JSON.stringify(room))
+    form.append('image', pictures.image)
+    form.append('thumb', pictures.thumb)
+    if (pictures.preview) form.append('preview', pictures.preview)
+    return post<{ id: string }>('/api/rooms', form)
+  },
+  // A link preview picture for a jigsaw that has none yet (see src/lib/preview.ts); image: a JPEG data URL,
+  // sent as the picture itself. Only taken from the jigsaw's maker (anyone logged in, for a jigsaw without one).
+  preview: (id: string, passphrase: string, image: string) =>
+    request<{ ok: true }>(`/api/rooms/${id}/preview`, { method: 'POST', body: dataUrlBlob(image), as: passphrase }),
   remove: (id: string, passphrase: string | undefined) => request<{ ok: true }>(`/api/rooms/${id}`, { method: 'DELETE', body: { passphrase } }),
   // Adds seconds to the time this player spent on a jigsaw. beacon: the page is going away, so it's
   // sent in a way that outlives it.
@@ -97,20 +128,31 @@ export function openRoomSocket(id: string, passphrase: () => string | null, onOp
   const queue: ClientMessage[] = []
   const listeners = new Map<string, Set<(msg: ServerMessage) => void>>()
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  // As protobuf (see shared/wire.ts). A message that can't go is a bug, and left out.
+  const put = (msg: ClientMessage) => {
+    try {
+      ws!.send(encode(msg))
+    } catch (e) {
+      console.error(e)
+    }
+  }
   const hello = () => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'hello', passphrase: passphrase() } satisfies ClientMessage))
+    if (ws?.readyState === WebSocket.OPEN) put({ type: 'hello', passphrase: passphrase() })
   }
   const open = () => {
     ws = new WebSocket(`${proto}//${location.host}/api/ws?room=${id}&client=${clientId}`)
+    ws.binaryType = 'arraybuffer'
     ws.onopen = () => {
       retry = 0
       hello()
-      for (const msg of queue.splice(0)) ws!.send(JSON.stringify(msg))
+      for (const msg of queue.splice(0)) put(msg)
       onOpen?.(opened)
       opened = true
     }
-    ws.onmessage = (e) => {
-      const msg: ServerMessage = JSON.parse(e.data)
+    ws.onmessage = (e: MessageEvent<ArrayBuffer | string>) => {
+      if (typeof e.data === 'string') return
+      const msg = decode(new Uint8Array(e.data)) as ServerMessage | null
+      if (!msg) return
       if (msg.type === 'build') newBuild(msg.build)
       else if (msg.client !== clientId) for (const fn of listeners.get(msg.type) || []) fn(msg)
     }
@@ -123,7 +165,7 @@ export function openRoomSocket(id: string, passphrase: () => string | null, onOp
   return {
     hello,
     send: (msg) => {
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
+      if (ws?.readyState === WebSocket.OPEN) put(msg)
       else if (!transient(msg)) queue.push(msg)
     },
     on: (type, fn) => {

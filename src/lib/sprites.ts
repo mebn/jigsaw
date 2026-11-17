@@ -41,13 +41,53 @@ export type ShapePixels = ShapeLevel[]
 type ShapeContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
 // What sprites.worker.ts is sent: a job's number, the sprite size [w, h] in pixels, sprite pixels
-// per world unit, how many mip levels (see mipLevels()) and the pieces to work out.
+// per world unit, how many mip levels (see mipLevels()), the grid's short side S and the pieces to
+// work out (see packPieces()).
 export interface SpriteJob {
   job: number
   size: [number, number]
   sc: number
   levels: number
-  items: (ShapeOutline & { i: number })[]
+  S: number
+  pieces: PackedPieces
+}
+
+// A run of pieces, from first on, as a worker is sent them: their outlines one after another,
+// where each starts in outlines (in floats, one more for the end), their sides (five each, see
+// Piece) and, four each, which sides are inside a long piece (1), or 2 for a piece of its own.
+export interface PackedPieces {
+  first: number
+  outlines: Float32Array
+  starts: Int32Array
+  sides: Int32Array
+  inner: Uint8Array
+}
+
+// Packs pieces[from] to pieces[to - 1] to send to a worker, in a few arrays rather than one object
+// each.
+export function packPieces(pieces: readonly Piece[], from: number, to: number): PackedPieces {
+  const count = Math.max(0, to - from)
+  const starts = new Int32Array(count + 1)
+  for (let k = 0; k < count; k++) starts[k + 1] = starts[k] + pieces[from + k].outline.length
+  const outlines = new Float32Array(starts[count])
+  const sides = new Int32Array(count * 5)
+  const inner = new Uint8Array(count * 4)
+  for (let k = 0; k < count; k++) {
+    const p = pieces[from + k]
+    outlines.set(p.outline, starts[k])
+    for (let s = 0; s < 5; s++) sides[k * 5 + s] = p.sides[s]
+    for (let s = 0; s < 4; s++) inner[k * 4 + s] = p.inner ? (p.inner[s] ? 1 : 0) : 2
+  }
+  return { first: from, outlines, starts, sides, inner }
+}
+
+// The k-th of packed pieces again, as much of it as shapeOutline() needs.
+export function unpackPiece({ outlines, starts, sides, inner }: PackedPieces, k: number): Pick<Piece, 'outline' | 'sides' | 'inner'> {
+  return {
+    outline: outlines.subarray(starts[k], starts[k + 1]),
+    sides: Array.from(sides.subarray(k * 5, k * 5 + 5)),
+    inner: inner[k * 4] === 2 ? undefined : Array.from(inner.subarray(k * 4, k * 4 + 4), (v) => v === 1),
+  }
 }
 
 // What sprites.worker.ts posts back.
@@ -68,7 +108,7 @@ export function spriteSize({ w, h }: Pick<PuzzleGeometry, 'w' | 'h'>, margin: nu
 // What piece p's shape is made from, in arrays of their own that can be sent to a worker: pts, the
 // corners of its outline (pushed out over the inner sides of a long piece) as x, y pairs, and codes,
 // each line's (from one corner to the next) side code.
-export function shapeOutline(p: Piece, geo: Pick<PuzzleGeometry, 'S'>): ShapeOutline {
+export function shapeOutline(p: Pick<Piece, 'outline' | 'sides' | 'inner'>, geo: Pick<PuzzleGeometry, 'S'>): ShapeOutline {
   const long = longPaths(p, geo.S * GROW)
   return {
     pts: long ? Float64Array.from(long.pts) : Float64Array.from(p.outline),

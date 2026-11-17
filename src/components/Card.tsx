@@ -1,6 +1,5 @@
-import { Fragment, useState } from 'react'
+import { Fragment } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
-import { api } from '../lib/api.ts'
 import { formatDuration, plural } from '../lib/format.ts'
 import { paths } from '../lib/router.ts'
 import { Lock } from './icons.tsx'
@@ -20,13 +19,11 @@ interface ArtRoom {
 
 const finishedOn = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 
-// A jigsaw's picture, the small one first and the full one over it once loaded.
+// A jigsaw's picture. The thumbnail is sharp enough for a tile even on a high density screen.
 export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
-  const [full, setFull] = useState(false)
   return (
     <span className="art-pic" style={{ width: w, height: h }}>
-      <img src={r.thumb} alt="" draggable={false} />
-      <img className={`full${full ? ' on' : ''}`} src={api.imageUrl(r.id)} alt="" draggable={false} loading="lazy" decoding="async" onLoad={() => setFull(true)} />
+      <img src={r.thumb} alt="" draggable={false} decoding="async" />
     </span>
   )
 }

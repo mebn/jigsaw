@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { api } from '../lib/api.ts'
+import { api, dataUrlBlob } from '../lib/api.ts'
 import { renderPreview } from '../lib/preview.ts'
 import { SHAPES, buildPuzzle, gridFor, outlinePath, samplePiecePath, scatter } from '../lib/geometry.ts'
 import { useApp } from '../lib/app.ts'
@@ -19,17 +19,26 @@ const clampCount = (n: number) => Math.min(MAX, Math.max(MIN, Math.round(n)))
 // The stored image's long side: 2400px, or more for big jigsaws so each piece keeps about 55px.
 const maxSide = (cols: number, rows: number) => Math.min(4000, Math.max(2400, Math.max(cols, rows) * 55))
 
+// The file as an image, loaded. Its object URL is let go once loaded: the image keeps its pixels.
 function loadImage(file: File) {
   return new Promise<HTMLImageElement>((ok, fail) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
-    img.onload = () => ok(img)
-    img.onerror = fail
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      ok(img)
+    }
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url)
+      fail(e)
+    }
     img.src = url
   })
 }
 
-function encode(img: HTMLImageElement, maxSide: number, quality: number) {
+// The image as a JPEG at most maxSide on its longest side. Encoded with toBlob, which doesn't hold
+// up the page the way toDataURL does.
+async function encode(img: HTMLImageElement, maxSide: number, quality: number) {
   const k = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight))
   const c = document.createElement('canvas')
   c.width = Math.round(img.naturalWidth * k)
@@ -38,7 +47,8 @@ function encode(img: HTMLImageElement, maxSide: number, quality: number) {
   ctx.fillStyle = '#fff'
   ctx.fillRect(0, 0, c.width, c.height)
   ctx.drawImage(img, 0, 0, c.width, c.height)
-  return { data: c.toDataURL('image/jpeg', quality), width: c.width, height: c.height }
+  const blob = await new Promise<Blob>((ok, fail) => c.toBlob((b) => (b ? ok(b) : fail(new Error('could not encode the picture'))), 'image/jpeg', quality))
+  return { blob, width: c.width, height: c.height }
 }
 
 function ShapeIcon({ shape }: { shape: Shape }) {
@@ -169,19 +179,12 @@ export default function NewRoom({ slot }: { slot: HTMLElement | null }) {
     setBusy(true)
     setFailed(false)
     try {
-      const full = encode(img, maxSide(grid.cols, grid.rows), 0.9)
-      const thumb = encode(img, 480, 0.8)
+      const [full, thumb] = await Promise.all([encode(img, maxSide(grid.cols, grid.rows), 0.9), encode(img, 480, 0.8)])
       const room = { cols: grid.cols, rows: grid.rows, width: full.width, height: full.height, shape, seed, longPieces: false }
-      const { id } = await api.create({
-        ...room,
-        name: 'Jigsaw',
-        image: full.data,
-        thumb: thumb.data,
-        preview: renderPreview(img),
-        private: hidden,
-        pieces: scatter(room),
-        passphrase: currentPlayer()?.passphrase,
-      })
+      const { id } = await api.create(
+        { ...room, name: 'Jigsaw', private: hidden, pieces: scatter(room), passphrase: currentPlayer()?.passphrase },
+        { image: full.blob, thumb: thumb.blob, preview: dataUrlBlob(renderPreview(img)) },
+      )
       navigate(paths.room(id))
     } catch {
       setBusy(false)

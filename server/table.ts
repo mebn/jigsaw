@@ -124,12 +124,28 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
     snapshots: prepare<{ t: number; size: number; pieces: Uint8Array }>('SELECT t, size, pieces FROM snapshots WHERE room_id = ? ORDER BY t, rowid'),
   }
 
-  // A stored tray, with the pieces in it (see migration 019), in the order they went in.
-  const trayOut = (row: StoredTray, roomId: string): TrayRow => ({
+  // A stored tray, with the pieces in it (see migration 019), in the order they went in. inTrays: the
+  // pieces of every tray of the room, when they've been read already (see read()).
+  const trayOut = (row: StoredTray, roomId: string, inTrays?: Map<string, number[]>): TrayRow => ({
     ...row,
     auto: !!row.auto,
-    pieces: q.trayPieces.all(roomId, row.id).map((p) => p.idx),
+    pieces: inTrays ? (inTrays.get(row.id) ?? []) : q.trayPieces.all(roomId, row.id).map((p) => p.idx),
   })
+
+  // The pieces in each tray, from all of a room's pieces, in the order trayPieces gives them: when
+  // they went in, then by number.
+  function trayLists(pieces: PieceRow[]) {
+    const lists = new Map<string, PieceRow[]>()
+    for (const p of pieces) {
+      if (p.t === null) continue
+      const list = lists.get(p.t)
+      if (list) list.push(p)
+      else lists.set(p.t, [p])
+    }
+    const out = new Map<string, number[]>()
+    for (const [t, list] of lists) out.set(t, list.sort((a, b) => a.ta - b.ta || a.i - b.i).map((p) => p.i))
+    return out
+  }
 
   // The size of each room's last snapshot, so most moves don't have to read it back.
   const snapped = new Map<string, number>()
@@ -353,15 +369,19 @@ export function createTable({ prepare, tx }: Db, hub: Hub, players: Players) {
   return {
     handle,
     // Everything on a room's table, as a page loads it.
-    read: (roomId: string) => ({
-      pieces: q.pieces.all(roomId),
-      notes: q.notes.all(roomId, null),
-      noteReactions: q.noteReactions.all(roomId),
-      noteReplies: q.noteReplies.all(roomId),
-      refs: q.refs.all(roomId, null),
-      trays: q.trays.all(roomId, null).map((t) => trayOut(t, roomId)),
-      scores: q.scores.all(roomId),
-    }),
+    read: (roomId: string) => {
+      const pieces = q.pieces.all(roomId)
+      const inTrays = trayLists(pieces)
+      return {
+        pieces,
+        notes: q.notes.all(roomId, null),
+        noteReactions: q.noteReactions.all(roomId),
+        noteReplies: q.noteReplies.all(roomId),
+        refs: q.refs.all(roomId, null),
+        trays: q.trays.all(roomId, null).map((t) => trayOut(t, roomId, inTrays)),
+        scores: q.scores.all(roomId),
+      }
+    },
     // The timelapse: the biggest group each time it grew, its cells a base64 bitset.
     snapshots: (roomId: string) => q.snapshots.all(roomId).map((s) => ({ t: s.t, size: s.size, pieces: Buffer.from(s.pieces).toString('base64') })),
     forget: (roomId: string) => snapped.delete(roomId),

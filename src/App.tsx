@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import Gallery, { GALLERY_OUT_MS } from './pages/Rooms.tsx'
-import Room from './pages/Room.tsx'
 import Tooltips from './components/Tooltips.tsx'
 import AccountPrompt from './components/Account.tsx'
 import type { AccountMode } from './components/Account.tsx'
@@ -17,6 +16,12 @@ import { setSound, soundOn } from './lib/sound.ts'
 import { lastRoom, store } from './lib/storage.ts'
 
 const linkLogin = takeLinkLogin()
+
+// A jigsaw's page is loaded on its own. Opening anywhere but the jigsaws page, which goes to a
+// jigsaw, it starts loading at once; on the jigsaws page, ahead of time (see Rooms.tsx).
+const loadRoom = () => import('./pages/Room.tsx')
+const Room = lazy(loadRoom)
+if (!isGallery(window.location.pathname)) loadRoom().catch(() => {})
 
 interface Prompt {
   mode: AccountMode
@@ -236,7 +241,9 @@ export default function App() {
     <AppCtx.Provider value={ctx}>
       <Tooltips />
       {shownRoom && (
-        <Room key={shownRoom} id={shownRoom} leaving={!roomId} arriving={arriving === shownRoom} onArrived={arrived} />
+        <Suspense fallback={null}>
+          <Room key={shownRoom} id={shownRoom} leaving={!roomId} arriving={arriving === shownRoom} onArrived={arrived} />
+        </Suspense>
       )}
       {galleryShown && <Gallery here={onGallery} closing={galleryClosing} newOpen={path === paths.new} />}
       {prompt && (

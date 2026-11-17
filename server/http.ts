@@ -1,7 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
-export function readJson<T>(req: IncomingMessage, limit = 64 * 1024) {
-  return new Promise<Partial<T>>((resolve, reject) => {
+import { promisify } from 'node:util'
+import { brotliCompress, constants, gzip } from 'node:zlib'
+
+const brotli = promisify(brotliCompress)
+const gzipped = promisify(gzip)
+
+// A request's whole body, failing once it's over limit bytes.
+export function readBody(req: IncomingMessage, limit: number) {
+  return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (c: Buffer) => {
@@ -11,18 +18,39 @@ export function readJson<T>(req: IncomingMessage, limit = 64 * 1024) {
         req.destroy()
       } else chunks.push(c)
     })
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'))
-      } catch (e) {
-        reject(e)
-      }
-    })
+    req.on('end', () => resolve(Buffer.concat(chunks, size)))
     req.on('error', reject)
   })
 }
 
-export function send(res: ServerResponse, reply: Reply) {
+export async function readJson<T>(req: IncomingMessage, limit = 64 * 1024): Promise<Partial<T>> {
+  return JSON.parse((await readBody(req, limit)).toString('utf8') || '{}')
+}
+
+// Whether a request's body is JSON, rather than a picture or a form with pictures in it.
+export const isJson = (req: IncomingMessage) => /^application\/json\b/i.test(req.headers['content-type'] || '')
+
+// A multipart/form-data body (see FormData in the page), parts with files in them as File.
+export async function readForm(req: IncomingMessage, limit: number) {
+  const body = await readBody(req, limit)
+  return new Request('http://x', { method: 'POST', headers: { 'Content-Type': req.headers['content-type'] || '' }, body }).formData()
+}
+
+// Answers smaller than this go as they are: compressing them saves next to nothing.
+const COMPRESS_MIN = 1024
+
+// The compression the page takes for an answer: brotli, gzip or none.
+function encodingFor(req: IncomingMessage) {
+  const taken = new Set<string>()
+  for (const part of String(req.headers['accept-encoding'] || '').split(',')) {
+    const [name, ...params] = part.split(';').map((s) => s.trim().toLowerCase())
+    // q=0 says not this one.
+    if (name && !params.some((p) => /^q=0(\.0*)?$/.test(p))) taken.add(name)
+  }
+  return taken.has('br') ? 'br' : taken.has('gzip') ? 'gzip' : null
+}
+
+export async function send(req: IncomingMessage, res: ServerResponse, reply: Reply) {
   if (!reply) reply = [404, { error: 'not found' }]
   if (!Array.isArray(reply)) {
     res.setHeader('Content-Type', reply.type)
@@ -30,11 +58,23 @@ export function send(res: ServerResponse, reply: Reply) {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox")
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    // Pictures are compressed already, so they go as they are.
     return res.end(reply.file)
   }
   res.statusCode = reply[0]
   res.setHeader('Content-Type', 'application/json')
-  res.end(JSON.stringify(reply[1]))
+  // The answer depends on what the page takes, so caches keep one per kind.
+  res.setHeader('Vary', 'Accept-Encoding')
+  const body = Buffer.from(JSON.stringify(reply[1]))
+  const encoding = body.length >= COMPRESS_MIN ? encodingFor(req) : null
+  if (!encoding) return res.end(body)
+  // Brotli at a low quality: nearly as small as its best for JSON, and many times faster.
+  const packed =
+    encoding === 'br'
+      ? await brotli(body, { params: { [constants.BROTLI_PARAM_QUALITY]: 4, [constants.BROTLI_PARAM_SIZE_HINT]: body.length } })
+      : await gzipped(body, { level: 6 })
+  res.setHeader('Content-Encoding', encoding)
+  res.end(packed)
 }
 
 // A route's answer: [status, body as JSON], a file that never changes, or nothing when it doesn't

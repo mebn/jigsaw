@@ -74,13 +74,33 @@ export async function renderTimelapse({ room, geo, image, frames, stopped = () =
     return path
   })
 
+  // The group's outline as last drawn, and its cells. The biggest group mostly only grows, so the
+  // next one is that outline with the new cells added, rather than made again from every cell.
+  let grown: Path2D | null = null
+  const grownCells = new Uint8Array(paths.length)
+  let grownCount = 0
+  const shapeOf = (cells: number[]) => {
+    let kept = 0
+    if (grown) for (const i of cells) kept += grownCells[i]
+    const grows = !!grown && kept === grownCount
+    const shape = grows && grown ? new Path2D(grown) : new Path2D()
+    if (!grows) grownCells.fill(0)
+    for (const i of cells) {
+      if (grownCells[i]) continue
+      grownCells[i] = 1
+      shape.addPath(paths[i])
+    }
+    grown = shape
+    grownCount = cells.length
+    return shape
+  }
+
   const draw = (cells: number[]) => {
     ctx.setTransform(1, 0, 0, 1, 0, 0)
     ctx.fillStyle = BACKGROUND
     ctx.fillRect(0, 0, W, H)
     ctx.setTransform(k, 0, 0, k, PAD, PAD)
-    const shape = new Path2D()
-    for (const i of cells) shape.addPath(paths[i])
+    const shape = shapeOf(cells)
     ctx.save()
     ctx.shadowColor = 'rgba(0, 0, 0, 0.3)'
     ctx.shadowBlur = 8

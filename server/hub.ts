@@ -1,9 +1,21 @@
 import type { PlayerRef, ServerMessage } from '../shared/protocol.ts'
+import { encode } from '../shared/wire.ts'
 import type { Db } from './db.ts'
+import { Message } from './ws.ts'
 import type { Socket } from './ws.ts'
 
 // A socket of a room, with the page's client id, the address it's from and the player on it.
 export type RoomSocket = Socket & { client: string; ip: string; player: PlayerRef | null }
+
+// A message made ready to go out (see shared/wire.ts), or null when it can't be.
+function made(msg: ServerMessage) {
+  try {
+    return new Message(encode(msg))
+  } catch (e) {
+    console.error('room socket:', e)
+    return null
+  }
+}
 
 // Who is in which room right now: their sockets, what goes out to them, and when players were last
 // in each room.
@@ -13,9 +25,12 @@ export function createHub({ prepare }: Db) {
     INSERT INTO times (room_id, user, seen) VALUES (?, ?, ?)
     ON CONFLICT (room_id, user) DO UPDATE SET seen = excluded.seen`)
 
+  // The message is made once (and compressed once), for every socket it goes to.
   function broadcast(roomId: string, msg: ServerMessage, except?: RoomSocket) {
-    const data = JSON.stringify(msg)
-    for (const ws of rooms.get(roomId) || []) if (ws !== except) ws.send(data)
+    const set = rooms.get(roomId)
+    if (!set?.size) return
+    const m = made(msg)
+    if (m) for (const ws of set) if (ws !== except) ws.sendMessage(m)
   }
 
   // Player ids in a room right now.
@@ -44,6 +59,11 @@ export function createHub({ prepare }: Db) {
 
   return {
     broadcast,
+    // A message to one socket.
+    send(ws: RoomSocket, msg: ServerMessage) {
+      const m = made(msg)
+      if (m) ws.sendMessage(m)
+    },
     online,
     // Puts the socket in the room, and takes it out when it closes.
     join(roomId: string, ws: RoomSocket) {
@@ -51,7 +71,10 @@ export function createHub({ prepare }: Db) {
       rooms.get(roomId)!.add(ws)
       presence(roomId)
       ws.onClose = () => {
-        if (!rooms.get(roomId)?.delete(ws)) return
+        const set = rooms.get(roomId)
+        if (!set?.delete(ws)) return
+        // A room nobody is in is forgotten, until someone opens it again.
+        if (!set.size) rooms.delete(roomId)
         broadcast(roomId, { type: 'gone', client: ws.client })
         presence(roomId, ws.player)
       }

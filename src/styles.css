@@ -32,6 +32,9 @@
      what's on the glass still reads. */
   --glass-fx: blur(2px) saturate(1.6) brightness(1.02);
   --glass-fx-thick: blur(28px) saturate(1.8);
+  /* A window's glass: the page behind it is already blurred by the scrim (see .modal-bg), so it
+     needs much less blur of its own to look as thick. */
+  --glass-fx-window: blur(14px) saturate(1.8);
   --glass-shine: rgba(255, 255, 255, 0.55);
   /* The raised chip of the chosen tab. */
   --chip: rgba(255, 255, 255, 0.8);
@@ -229,6 +232,8 @@ button {
 }
 .modal {
   box-shadow: var(--glass-rim), var(--glass-drop-deep);
+  backdrop-filter: var(--glass-fx-window) var(--refract,);
+  -webkit-backdrop-filter: var(--glass-fx-window);
 }
 /* Glass set in a window lies flat in it, without a shadow of its own. */
 .modal .tabs,
@@ -257,6 +262,7 @@ button {
     --glass-thick: var(--bg);
     --glass-fx: none;
     --glass-fx-thick: none;
+    --glass-fx-window: none;
   }
 }
 
@@ -600,11 +606,18 @@ button {
 .canvas.dragging .tile {
   pointer-events: none;
 }
-.cell {
+/* Everything on it, moved as one as it scrolls (see Canvas in Rooms.tsx). Each cell in it has a
+   3D transform of its own, so it moves as a layer when it drifts. */
+.canvas-world {
   position: absolute;
   top: 0;
   left: 0;
   will-change: transform;
+}
+.cell {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 /* A section's heading on the canvas: in progress, or finished. */
 .canvas-heading {
@@ -728,13 +741,6 @@ button {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-.art-pic img.full {
-  opacity: 0;
-  transition: opacity 0.4s;
-}
-.art-pic img.full.on {
-  opacity: 1;
 }
 /* A soft light where the pointer is. */
 .art-pic::after {

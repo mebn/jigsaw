@@ -11,7 +11,9 @@
 //   outline's width and has the silhouettes, grown a little, cut back out,
 // - the drop shadow of lifted pieces: their silhouettes at a third of the resolution, blurred.
 //
-// Positions reach the GPU in device pixels, worked out on the CPU, so the shaders don't need the camera.
+// Positions reach the GPU in device pixels, worked out on the CPU, except for the pieces lying still on
+// the table: those are in world units, in a buffer of their own that's only sent again when they
+// change, and the shader puts them on the screen with the camera.
 
 import { SDF_R } from './sprites.ts'
 import type { ShapePixels } from './sprites.ts'
@@ -53,8 +55,10 @@ interface GpuFrame {
   // The first down trays lie on the table, the rest are lifted.
   trays: GpuInstances & { down: number }
   refs: GpuInstances
+  // The pieces lying on the table, in world units, and a number that changes whenever they do.
+  still: GpuInstances & { ver: number }
   pieces: GpuInstances
-  seg: { still: GpuRange; trayed: GpuRange; trayedUp: GpuRange; lift: GpuRange; shade: GpuRange; sel: GpuRange; hl: GpuRange }
+  seg: { trayed: GpuRange; trayedUp: GpuRange; lift: GpuRange; shade: GpuRange; sel: GpuRange; hl: GpuRange }
   selBox: ScreenBox
   hlBox: ScreenBox
   selColor: Rgba
@@ -76,6 +80,7 @@ type PipeName =
   | 'trayMask'
   | 'ref'
   | 'piece'
+  | 'pieceWorld'
   | 'maskR'
   | 'maskG'
   | 'shadowMask'
@@ -139,9 +144,15 @@ export class PieceInstances extends Instances {
     const k = this.next()
     const c = Math.cos(a) * z
     const s = Math.sin(a) * z
-    this.data.set([c, s, -s, c, x, y], k)
+    const d = this.data
+    d[k] = c
+    d[k + 1] = s
+    d[k + 2] = -s
+    d[k + 3] = c
+    d[k + 4] = x
+    d[k + 5] = y
     this.u32[k + 6] = cell
-    this.data[k + 7] = alpha
+    d[k + 7] = alpha
   }
 }
 
@@ -152,7 +163,17 @@ export class TrayInstances extends Instances {
   // A tray's box (device px) with rounded corners, its fill and its border, how far it's lifted (0 to
   // 1, how strong its shadow is), and how far it's turned around its middle (radians).
   put(rect: readonly number[], fill: readonly number[], stroke: readonly number[], radius: number, width: number, lift: number, angle = 0) {
-    this.data.set([...rect, ...fill, ...stroke, radius, width, lift, angle], this.next())
+    const k = this.next()
+    const d = this.data
+    for (let j = 0; j < 4; j++) {
+      d[k + j] = rect[j]
+      d[k + 4 + j] = fill[j]
+      d[k + 8 + j] = stroke[j]
+    }
+    d[k + 12] = radius
+    d[k + 13] = width
+    d[k + 14] = lift
+    d[k + 15] = angle
   }
 }
 
@@ -163,7 +184,17 @@ export class RefInstances extends Instances {
   // An image's box (device px), its border, how see-through it is, the part of the picture that
   // shows ([x, y, w, h] as fractions of it), and how far it's turned around its middle (radians).
   put(rect: readonly number[], border: readonly number[], width: number, opacity: number, part: readonly number[], angle = 0) {
-    this.data.set([...rect, ...border, width, opacity, angle, 0, ...part], this.next())
+    const k = this.next()
+    const d = this.data
+    for (let j = 0; j < 4; j++) {
+      d[k + j] = rect[j]
+      d[k + 4 + j] = border[j]
+      d[k + 12 + j] = part[j]
+    }
+    d[k + 8] = width
+    d[k + 9] = opacity
+    d[k + 10] = angle
+    d[k + 11] = 0
   }
 }
 
@@ -311,8 +342,8 @@ struct O {
   @location(3) @interpolate(flat) cell: u32,
   @location(4) @interpolate(flat) alpha: f32,
 }
-@vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) m: vec4f, @location(1) pos: vec2f,
-              @location(2) cell: u32, @location(3) alpha: f32) -> O {
+// A corner of the piece in atlas cell, its turn and scale m and middle pos in device pixels.
+fn piece(vi: u32, m: vec4f, pos: vec2f, cell: u32, alpha: f32) -> O {
   let c = corner(vi);
   let l = (c - 0.5) * u.s0.zw;
   var o: O;
@@ -326,6 +357,16 @@ struct O {
   o.cell = cell;
   o.alpha = alpha;
   return o;
+}
+// A piece placed in device pixels.
+@vertex fn vs(@builtin(vertex_index) vi: u32, @location(0) m: vec4f, @location(1) pos: vec2f,
+              @location(2) cell: u32, @location(3) alpha: f32) -> O {
+  return piece(vi, m, pos, cell, alpha);
+}
+// A piece placed in world units (m unscaled), put on the screen with the camera.
+@vertex fn vsWorld(@builtin(vertex_index) vi: u32, @location(0) m: vec4f, @location(1) pos: vec2f,
+                   @location(2) cell: u32, @location(3) alpha: f32) -> O {
+  return piece(vi, m * u.cam.z, (pos - u.cam.xy) * u.cam.z + u.s0.xy * 0.5, cell, alpha);
 }
 // How far inside the piece this pixel is, in pixels of the mip level being read (negative outside;
 // each level has its own distance, see sprites.ts). Blending the shape's distance between sprite
@@ -598,12 +639,13 @@ async function makeCore(): Promise<GpuCore> {
   const trayBuffers: GPUVertexBufferLayout[] = [{ arrayStride: TRAY_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }]
   const mPicture = d.createShaderModule({ code: PICTURE })
   const mHalve = d.createShaderModule({ code: HALVE })
-  const [bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline, picture, halveColor] = await Promise.all([
+  const [bg, tray, trayMask, ref, piece, pieceWorld, maskR, maskG, shadowMask, blur, shadow, outline, picture, halveColor] = await Promise.all([
     pipe(mBg, 'vsFull', 'fsBg', [], { format }, []),
     pipe(mTray, 'vs', 'fs', trayBuffers, screen, []),
     pipe(mTray, 'vs', 'fsMask', trayBuffers, { format: 'r8unorm', blend: over }, []),
     pipe(mRef, 'vs', 'fs', [{ arrayStride: REF_FLOATS * 4, stepMode: 'instance', attributes: attrs('float32x4', 'float32x4', 'float32x4', 'float32x4') }], screen, [lTex]),
     pipe(mPiece, 'vs', 'fs', pieceBuffers, screen, [lAtlas]),
+    pipe(mPiece, 'vsWorld', 'fs', pieceBuffers, screen, [lAtlas]),
     pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.RED }, [lAtlas]),
     pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'rg8unorm', blend: max, writeMask: GPUColorWrite.GREEN }, [lAtlas]),
     pipe(mPiece, 'vs', 'fsMask', pieceBuffers, { format: 'r8unorm', blend: over }, [lAtlas]),
@@ -623,7 +665,7 @@ async function makeCore(): Promise<GpuCore> {
       primitive: { topology: 'triangle-list' },
     }),
   ])
-  const pipes: Record<PipeName, GPURenderPipeline> = { bg, tray, trayMask, ref, piece, maskR, maskG, shadowMask, blur, shadow, outline, picture, halveColor }
+  const pipes: Record<PipeName, GPURenderPipeline> = { bg, tray, trayMask, ref, piece, pieceWorld, maskR, maskG, shadowMask, blur, shadow, outline, picture, halveColor }
   return { device: d, format, sampler, l0, lAtlas, lTex, lPost, pipes, lost: new Set() }
 }
 
@@ -660,6 +702,8 @@ class Gpu {
   declare ubuf: GPUBuffer
   declare post: Record<PostName, GPUBuffer>
   declare buffers: Record<string, GPUBuffer>
+  // The version of the pieces lying still that's in the 'still' buffer (see frame()).
+  declare stillVer: number
   declare size: [number, number]
   declare xs: ExtraMask[]
   // Shared by every jigsaw, see GpuCore.
@@ -739,6 +783,7 @@ class Gpu {
       this.post[k] = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
     }
     this.buffers = {}
+    this.stillVer = NaN
     this.size = [0, 0]
     // Masks, settings and bind groups for other players' outlines, made as they're needed.
     this.xs = []
@@ -772,13 +817,42 @@ class Gpu {
   // Puts a piece's shape (every mip level of it, two bytes a pixel, see sprites.ts) in its cell of
   // the shape atlas.
   upload(cell: number, shape: ShapePixels) {
-    if (cell >= this.has.length) return
-    const [x, y, z] = this.cellAt(cell)
-    shape.forEach(({ w, h, data }, l) => {
-      if (l >= this.cell.levels) return
-      this.device.queue.writeTexture({ texture: this.shapes, mipLevel: l, origin: { x: x >> l, y: y >> l, z } }, data, { bytesPerRow: w * 2 }, { width: w, height: h })
-    })
-    this.has[cell] = 1
+    this.uploadMany([{ cell, shape }])
+  }
+
+  // The same for many pieces at once. Pieces in cells side by side along a row of the atlas go
+  // together, each mip level in one write, gutters and all (which stay clear).
+  uploadMany(list: { cell: number; shape: ShapePixels }[]) {
+    const { perRow, perPage, cw, levels } = this.cell
+    const items = list.filter((it) => it.cell < this.has.length).sort((a, b) => a.cell - b.cell)
+    for (let a = 0; a < items.length; ) {
+      // A run of cells one after another in the same row.
+      let b = a + 1
+      while (b < items.length && items[b].cell === items[b - 1].cell + 1 && items[b].cell % perRow !== 0 && Math.floor(items[b].cell / perPage) === Math.floor(items[a].cell / perPage)) b++
+      const [x, y, z] = this.cellAt(items[a].cell)
+      for (let l = 0; l < levels; l++) {
+        const first = items[a].shape[l]
+        if (!first) continue
+        const { w, h } = first
+        if (b - a === 1) {
+          this.device.queue.writeTexture({ texture: this.shapes, mipLevel: l, origin: { x: x >> l, y: y >> l, z } }, first.data, { bytesPerRow: w * 2 }, { width: w, height: h })
+          continue
+        }
+        // Each sprite's rows at its cell's place in one strip, two bytes a pixel.
+        const step = cw >> l
+        const W = (b - a - 1) * step + w
+        const strip = new Uint8Array(W * h * 2)
+        for (let k = a; k < b; k++) {
+          const lv = items[k].shape[l]
+          if (!lv || lv.w !== w || lv.h !== h) continue
+          const off = (k - a) * step * 2
+          for (let r = 0; r < h; r++) strip.set(lv.data.subarray(r * w * 2, (r + 1) * w * 2), r * W * 2 + off)
+        }
+        this.device.queue.writeTexture({ texture: this.shapes, mipLevel: l, origin: { x: x >> l, y: y >> l, z } }, strip, { bytesPerRow: W * 2 }, { width: W, height: h })
+      }
+      for (let k = a; k < b; k++) this.has[items[k].cell] = 1
+      a = b
+    }
   }
 
   // Draws the picture around every piece into the colour atlas, with its halved copies. image: the
@@ -847,32 +921,31 @@ class Gpu {
     this.device.queue.writeBuffer(this.corners, 0, data.buffer, data.byteOffset, data.byteLength)
   }
 
-  // The image reference images show: a canvas, with halved copies made for its mip levels.
+  // The image reference images show: a canvas, with halved copies made on the GPU for its mip levels.
   setRefImage(image: HTMLCanvasElement | OffscreenCanvas | null) {
     this.refTex?.destroy()
-    const levels: (HTMLCanvasElement | OffscreenCanvas)[] = []
-    if (image) {
-      let prev = image
-      levels.push(prev)
-      while (prev.width > 1 || prev.height > 1) {
-        const c = new OffscreenCanvas(Math.max(1, prev.width >> 1), Math.max(1, prev.height >> 1))
-        const x = c.getContext('2d')!
-        x.imageSmoothingQuality = 'high'
-        x.drawImage(prev, 0, 0, c.width, c.height)
-        levels.push(c)
-        prev = c
-      }
-    }
+    const d = this.device
     const [w, h] = image ? [image.width, image.height] : [1, 1]
-    this.refTex = this.device.createTexture({
+    const levels = image ? Math.floor(Math.log2(Math.max(w, h))) + 1 : 1
+    this.refTex = d.createTexture({
       size: [w, h],
       format: 'rgba8unorm',
-      mipLevelCount: Math.max(1, levels.length),
+      mipLevelCount: levels,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     })
-    levels.forEach((src, l) => {
-      this.device.queue.copyExternalImageToTexture({ source: src }, { texture: this.refTex, mipLevel: l, premultipliedAlpha: true }, { width: src.width, height: src.height })
-    })
+    if (image) {
+      d.queue.copyExternalImageToTexture({ source: image }, { texture: this.refTex, mipLevel: 0, premultipliedAlpha: true }, { width: w, height: h })
+      const pipeline = this.pipes.halveColor
+      const enc = d.createCommandEncoder()
+      for (let l = 1; l < levels; l++) {
+        const pass = enc.beginRenderPass({ colorAttachments: [{ view: this.layer(this.refTex, 0, l), loadOp: 'clear', storeOp: 'store', clearValue: [0, 0, 0, 0] }] })
+        pass.setPipeline(pipeline)
+        pass.setBindGroup(0, d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: this.layer(this.refTex, 0, l - 1) }] }))
+        pass.draw(3)
+        pass.end()
+      }
+      d.queue.submit([enc.finish()])
+    }
     this.gRef = this.device.createBindGroup({ layout: this.lTex, entries: [{ binding: 0, resource: this.refTex.createView() }] })
   }
 
@@ -945,8 +1018,9 @@ class Gpu {
   //   W, H: the screen in device pixels; cam: [x, y, device pixels per world unit]; sprite: [w, h]
   //   in world units; bg: colour [r, g, b, a];
   //   trays: { data, count, down }, the first down lying on the table, the rest lifted (prm.z: how
-  //   far); refs: { data, count }; pieces: { data, count }, with ranges [first, count] in seg: still,
-  //   trayed, trayedUp (in lifted trays) and lift (drawn in that order), shade (the part of lift
+  //   far); refs: { data, count }; still: { data, count, ver }, the pieces lying on the table in
+  //   world units (sent again when ver changes); pieces: { data, count }, with ranges [first, count]
+  //   in seg: trayed, trayedUp (in lifted trays) and lift (drawn in that order), shade (the part of lift
   //   that casts a shadow), sel and hl (outlined); selBox, hlBox: the
   //   outlined pieces' box [x0, y0, x1, y1] in device pixels; selColor, hlColor; outline: [width,
   //   cut]; extra: more outlines, [{ range: [first, count], box, color, over }], over the lifted pieces when over; selUnder: the selection outline goes under the lifted pieces; hlOver: the hover outline (the
@@ -971,6 +1045,13 @@ class Gpu {
     d.queue.writeBuffer(this.ubuf, 0, U)
 
     const pieces = this.fill('pieces', f.pieces.data, f.pieces.count * PIECE_FLOATS)
+    // Sent again only when they changed: the other panes, and frames where only the camera moved,
+    // draw from what's there.
+    let still = this.buffers.still
+    if (!still || f.still.ver !== this.stillVer) {
+      still = this.fill('still', f.still.data, f.still.count * PIECE_FLOATS)
+      this.stillVer = f.still.ver
+    }
     const trays = this.fill('trays', f.trays.data, f.trays.count * TRAY_FLOATS)
     const refs = this.fill('refs', f.refs.data, f.refs.count * REF_FLOATS)
     const { seg } = f
@@ -1108,7 +1189,12 @@ class Gpu {
       pass.draw(3)
       pass.setScissorRect(px, py, W, H)
     }
-    piecesOf(seg.still)
+    if (f.still.count) {
+      pass.setPipeline(this.pipes.pieceWorld)
+      pass.setBindGroup(1, this.gAtlas)
+      pass.setVertexBuffer(0, still)
+      pass.draw(6, f.still.count)
+    }
     pass.end()
     pass = enc.beginRenderPass({
       colorAttachments: [{ view: this.ctxTop.getCurrentTexture().createView(), loadOp: load, storeOp: 'store', clearValue: [0, 0, 0, 0] }],

@@ -261,13 +261,11 @@ export interface PiecePlacement {
 export const PREVIEW_W = 1200
 export const PREVIEW_H = 630
 
-// What a new jigsaw is made from: image, thumb and preview (its link preview picture) are data
-// URLs.
+// What a new jigsaw is made from, besides its pictures: sent as JSON in the room part of a form,
+// with the picture, its thumbnail and its link preview picture as files in the image, thumb and
+// preview parts (see api.create in src/lib/api.ts).
 export interface NewRoom extends PuzzleSpec {
   name: string
-  image: string
-  thumb: string
-  preview?: string
   private: boolean
   pieces: PiecePlacement[]
   passphrase?: string

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import { api } from '../lib/api.ts'
 import type { RoomSummary } from '../../shared/protocol.ts'
@@ -11,10 +11,18 @@ import Dialog from '../components/Dialog.tsx'
 import Tabs from '../components/Tabs.tsx'
 import Settings from '../components/Settings.tsx'
 import Confirm from '../components/Confirm.tsx'
-import NewRoom from './NewRoom.tsx'
 import { useLinger } from '../lib/linger.ts'
-import { warmGpu } from '../lib/gpu.ts'
 import { isTyping, overlays } from '../lib/overlays.ts'
+
+const NewRoom = lazy(() => import('./NewRoom.tsx'))
+// Fetches the jigsaw page's code ahead (App.tsx loads it lazily), so a jigsaw opened from here
+// doesn't wait for it: once the page is idle, or as soon as the pointer is over a jigsaw.
+let roomCode: Promise<unknown> | null = null
+const preloadRoom = () => {
+  roomCode ??= import('./Room.tsx').catch(() => {
+    roomCode = null
+  })
+}
 
 // The jigsaws page: a gallery on a canvas that drags and scrolls up and down (but doesn't zoom), the
 // jigsaws' pictures in columns. Jigsaws in progress come first, with how far along they are under
@@ -147,11 +155,27 @@ const EASE_MS = 70
 // screen they can be moved until a gap past their top or bottom reaches the screen's. Scrolling eases
 // smoothly to where it's sent, never past either end.
 // render(p) makes the jigsaw for each place.
-function Canvas({ list, col, maxCol, gap, render }: { list: RoomSummary[]; col: number; maxCol: number; gap: number; render: (p: Placed) => ReactNode }) {
+// Memoised, so it only renders again when what it shows changes.
+const Canvas = memo(function Canvas({
+  list,
+  col,
+  maxCol,
+  gap,
+  render,
+}: {
+  list: RoomSummary[]
+  col: number
+  maxCol: number
+  gap: number
+  render: (p: Placed) => ReactNode
+}) {
   const field = useRef<HTMLDivElement>(null)
+  // Everything on the canvas, moved as one as it scrolls; each jigsaw in it moves only to drift.
+  const world = useRef<HTMLDivElement>(null)
   const cells = useRef<(HTMLDivElement | null)[]>([])
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight })
-  const { placed, headings, w: W, h: H } = layout(list, col, maxCol, gap, Math.min(view.w - 2 * gap, MAX_WIDTH))
+  const width = Math.min(view.w - 2 * gap, MAX_WIDTH)
+  const { placed, headings, w: W, h: H } = useMemo(() => layout(list, col, maxCol, gap, width), [list, col, maxCol, gap, width])
   const heads = useRef<(HTMLDivElement | null)[]>([])
   const key = list.map((r) => r.id).join() + col + W
 
@@ -161,29 +185,57 @@ function Canvas({ list, col, maxCol, gap, render }: { list: RoomSummary[]; col: 
   const cam = useRef({ x: 0, y: 0, ty: 0, vy: 0 })
   const mouse = useRef({ x: 0, y: 0, sx: 0, sy: 0 })
   const frame = useRef(0)
+  // Where the canvas and each jigsaw and heading on it were last put, and whether a jigsaw was off
+  // the screen, so only what changed is written.
+  const shown = useRef(new WeakMap<HTMLDivElement, { x: number; y: number; hidden: boolean }>())
   const place = useRef<() => boolean>(() => false)
   place.current = () => {
     const el = field.current
-    if (!el) return false
+    const all = world.current
+    if (!el || !all) return false
     const vw = el.clientWidth
     const vh = el.clientHeight
-    const cx = vw / 2
-    const cy = TOP + (vh - TOP - BOTTOM) / 2
     const c = cam.current
     const m = mouse.current
     m.sx += (m.x - m.sx) * 0.08
     m.sy += (m.y - m.sy) * 0.08
+    // The canvas's middle on the screen.
+    const ox = vw / 2 - c.x
+    const oy = TOP + (vh - TOP - BOTTOM) / 2 - c.y
+    const was = shown.current.get(all)
+    if (!was || was.x !== ox || was.y !== oy) {
+      all.style.transform = `translate3d(${ox}px, ${oy}px, 0)`
+      shown.current.set(all, { x: ox, y: oy, hidden: false })
+    }
     placed.forEach((p, k) => {
       const cell = cells.current[k]
       if (!cell) return
-      const sx = cx + p.x - c.x - m.sx * DRIFT * p.depth
-      const sy = cy + p.y - c.y - m.sy * DRIFT * p.depth
-      cell.style.transform = `translate3d(${sx}px, ${sy}px, 0)`
-      cell.style.visibility = sx > vw + 40 || sy > vh + 40 || sx + p.w < -40 || sy + p.h + p.cap < -40 ? 'hidden' : ''
+      // Rounded to a twentieth of a pixel, so the very end of a drift writes nothing.
+      const x = Math.round((p.x - m.sx * DRIFT * p.depth) * 20) / 20
+      const y = Math.round((p.y - m.sy * DRIFT * p.depth) * 20) / 20
+      const sx = ox + x
+      const sy = oy + y
+      const hidden = sx > vw + 40 || sy > vh + 40 || sx + p.w < -40 || sy + p.h + p.cap < -40
+      let was = shown.current.get(cell)
+      if (!was) {
+        was = { x: NaN, y: NaN, hidden: !hidden }
+        shown.current.set(cell, was)
+      }
+      if (was.hidden !== hidden) {
+        cell.style.visibility = hidden ? 'hidden' : ''
+        was.hidden = hidden
+      }
+      if (hidden || (was.x === x && was.y === y)) return
+      cell.style.transform = `translate3d(${x}px, ${y}px, 0)`
+      was.x = x
+      was.y = y
     })
     headings.forEach((hd, k) => {
       const el = heads.current[k]
-      if (el) el.style.transform = `translate3d(${cx + hd.x - c.x}px, ${cy + hd.y - c.y}px, 0)`
+      const was = el && shown.current.get(el)
+      if (!el || (was && was.x === hd.x && was.y === hd.y)) return
+      el.style.transform = `translate3d(${hd.x}px, ${hd.y}px, 0)`
+      shown.current.set(el, { x: hd.x, y: hd.y, hidden: false })
     })
     // Still drifting towards the pointer.
     return Math.abs(m.x - m.sx) + Math.abs(m.y - m.sy) > 0.002
@@ -348,34 +400,36 @@ function Canvas({ list, col, maxCol, gap, render }: { list: RoomSummary[]; col: 
   }, [draw])
 
   return (
-    <div ref={field} className="canvas">
-      {placed.map((p, k) => (
-        <div
-          key={p.r.id}
-          ref={(el) => {
-            cells.current[k] = el
-          }}
-          className="cell"
-          style={{ width: p.w }}
-        >
-          {render(p)}
-        </div>
-      ))}
-      {headings.map((hd, k) => (
-        <div
-          key={hd.title}
-          ref={(el) => {
-            heads.current[k] = el
-          }}
-          className="cell canvas-heading"
-        >
-          {hd.title}
-          <span className="n">{hd.n}</span>
-        </div>
-      ))}
+    <div ref={field} className="canvas" onPointerOver={preloadRoom} onPointerDown={preloadRoom}>
+      <div ref={world} className="canvas-world">
+        {placed.map((p, k) => (
+          <div
+            key={p.r.id}
+            ref={(el) => {
+              cells.current[k] = el
+            }}
+            className="cell"
+            style={{ width: p.w }}
+          >
+            {render(p)}
+          </div>
+        ))}
+        {headings.map((hd, k) => (
+          <div
+            key={hd.title}
+            ref={(el) => {
+              heads.current[k] = el
+            }}
+            className="cell canvas-heading"
+          >
+            {hd.title}
+            <span className="n">{hd.n}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
-}
+})
 
 interface GalleryProps {
   // On the jigsaws page (false while it waits over a jigsaw that is opening).
@@ -387,9 +441,18 @@ interface GalleryProps {
 
 export default function Gallery({ here, closing, newOpen }: GalleryProps) {
   const { player, playerId, openLogin } = useApp()
-  // WebGPU starts now, so a jigsaw opened from here shows sooner.
+  // WebGPU starts now, so a jigsaw opened from here shows sooner. Its code is loaded with the
+  // jigsaw page's, not with this page's.
   useEffect(() => {
-    warmGpu().catch(() => {})
+    import('../lib/gpu.ts')
+      .then((gpu) => gpu.warmGpu())
+      .catch(() => {})
+    if (!window.requestIdleCallback) {
+      const t = setTimeout(preloadRoom, 1000)
+      return () => clearTimeout(t)
+    }
+    const idle = window.requestIdleCallback(preloadRoom, { timeout: 2000 })
+    return () => window.cancelIdleCallback(idle)
   }, [])
   // The jigsaws, null while they load, or 'failed'.
   const [rooms, setRooms] = useState<RoomSummary[] | 'failed' | null>(null)
@@ -420,11 +483,14 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
   }, [load])
 
   // A jigsaw was clicked: the page fades and its table zooms in (see App.tsx and Room.tsx).
-  const pick = (e: MouseEvent<HTMLAnchorElement>, id: string) => {
-    if (!plainClick(e)) return
-    e.preventDefault()
-    if (here) navigate(paths.room(id))
-  }
+  const pick = useCallback(
+    (e: MouseEvent<HTMLAnchorElement>, id: string) => {
+      if (!plainClick(e)) return
+      e.preventDefault()
+      if (here) navigate(paths.room(id))
+    },
+    [here],
+  )
 
   // The jigsaw waiting for a yes in the delete dialog.
   const [doomed, setDoomed] = useState<RoomSummary | null>(null)
@@ -446,38 +512,43 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
   // Where in the new jigsaw window's header its Create button goes (see NewRoom).
   const [createSlot, setCreateSlot] = useState<HTMLDivElement | null>(null)
 
-  const list = Array.isArray(rooms) ? rooms : []
-  const progress = list.filter((r) => shown(r) && !r.done)
-  const finished = list.filter((r) => shown(r) && r.done)
+  // The jigsaws shown, those in progress first.
+  const list = useMemo(() => {
+    const all = Array.isArray(rooms) ? rooms.filter(shown) : []
+    return [...all.filter((r) => !r.done), ...all.filter((r) => r.done)]
+  }, [rooms, shown])
   const col = small ? COL_SMALL : COL
   const gap = small ? GAP_SMALL : GAP
   // Each jigsaw's picture, with how long it took under it when finished, or how far along it is.
-  const render = (p: Placed) => (
-    <Tile
-      r={p.r}
-      i={p.i}
-      onPick={pick}
-      below={<ArtInfo r={p.r} width={p.w} />}
-      extra={
-        !!playerId &&
-        p.r.owner === playerId && (
-          <button
-            className="icon-btn del"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDoomed(p.r)
-            }}
-            aria-label="Delete"
-            data-tip="Delete jigsaw"
-          >
-            <Trash />
-          </button>
-        )
-      }
-    >
-      <Art r={p.r} w={p.w} h={p.h} />
-    </Tile>
+  const render = useCallback(
+    (p: Placed) => (
+      <Tile
+        r={p.r}
+        i={p.i}
+        onPick={pick}
+        below={<ArtInfo r={p.r} width={p.w} />}
+        extra={
+          !!playerId &&
+          p.r.owner === playerId && (
+            <button
+              className="icon-btn del"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setDoomed(p.r)
+              }}
+              aria-label="Delete"
+              data-tip="Delete jigsaw"
+            >
+              <Trash />
+            </button>
+          )
+        }
+      >
+        <Art r={p.r} w={p.w} h={p.h} />
+      </Tile>
+    ),
+    [pick, playerId],
   )
 
   return (
@@ -526,12 +597,12 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
             Make the first one
           </button>
         </section>
-      ) : !progress.length && !finished.length ? (
+      ) : !list.length ? (
         <section className="gallery-empty">
           <p>No {tab} jigsaws.</p>
         </section>
       ) : (
-        <Canvas list={[...progress, ...finished]} col={col} maxCol={small ? COL_SMALL_MAX : COL} gap={gap} render={render} />
+        <Canvas list={list} col={col} maxCol={small ? COL_SMALL_MAX : COL} gap={gap} render={render} />
       )}
 
       {newShown && (
@@ -544,7 +615,9 @@ export default function Gallery({ here, closing, newOpen }: GalleryProps) {
           keepTyping
           actions={<div className="create-slot" ref={setCreateSlot} />}
         >
-          <NewRoom slot={createSlot} />
+          <Suspense fallback={<span className="spin" />}>
+            <NewRoom slot={createSlot} />
+          </Suspense>
         </Dialog>
       )}
       {doomed && (

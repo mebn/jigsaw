@@ -531,6 +531,7 @@ interface Handlers {
   menu: (e: MouseEvent) => void
   nodrag: (e: DragEvent) => void
   moved: () => void
+  scrolled: (e: Event) => void
 }
 // What pointer events the engine reads; React's events have them too.
 type PointerLike = { pointerId: number; clientX: number; clientY: number; pointerType?: string }
@@ -543,8 +544,8 @@ const ease = (dt: number, ms: number) => 1 - Math.exp(-dt / ms)
 const project = (cam: Cam, vw: number, vh: number, x: number, y: number): Vec2 => [(x - cam.x) * cam.z + vw / 2, (y - cam.y) * cam.z + vh / 2]
 const r2 = (v: number) => Math.round(v * 100) / 100
 const r3 = (v: number) => Math.round(v * 1000) / 1000
-// Live drag updates are throttled to this interval (ms).
-const LIVE_MS = 33
+// Live drag updates are throttled to this interval (ms): every pointer move of a 60 Hz screen.
+const LIVE_MS = 16
 // The burst where two pieces join: how long it lasts, after waiting for the pieces to land.
 const POP_MS = 520
 const POP_DELAY = 80
@@ -597,7 +598,7 @@ const INK_STALE = 4000
 const INK_STEP = 2
 
 // Cursor updates are throttled to this interval (ms); idle cursors vanish after CURSOR_IDLE.
-const CURSOR_MS = 50
+const CURSOR_MS = 33
 // How many moves of each player can be undone.
 const HISTORY = 100
 // Images, trays and notes as undo remembers them: plain copies. Two are the same when every field matches
@@ -703,7 +704,8 @@ export class Engine {
   n: number
   unit: Int32Array | null
   longs: Map<number, number[]>
-  paths: Path2D[]
+  // Each piece's outline for hit(), made the first time it's needed.
+  paths: (Path2D | undefined)[]
   x: Float64Array
   y: Float64Array
   r: Int8Array
@@ -830,21 +832,43 @@ export class Engine {
   last: number
   done: boolean
   ready: Promise<void>
-  // Per frame: the pieces' instances (still, active, lifted, then the outlined ones again), trays and images.
+  // Per frame: the pieces' instances (in trays, lifted, then the outlined ones again), trays and images.
   gPieces = new PieceInstances()
+  // The pieces lying still on the table, in world units, made again only when they change (see
+  // prepFrame()), and a count of the times they were.
+  gStill = new PieceInstances()
+  stillVer = 0
+  // What the next frame draws afresh (see invalidate()): the table on the GPU, and where the pieces
+  // lying still are. Otherwise only the 2D layers on top are drawn again.
+  sceneDirty = true
+  posesDirty = true
+  // Each pane's camera and place as last drawn (see viewsMoved()).
+  drawnViews: number[] = []
+  // Pieces' shapes waiting to go to the GPU, sent together before the next frame (see setSprite()).
+  toUpload: { cell: number; shape: ShapePixels }[] = []
+  // Each group's pieces, by group id (see regroup()).
+  gm = new Map<number, Set<number>>()
   // A frame's work shared by its panes, see prepFrame().
   fr = {
     x: new Float64Array(0),
     y: new Float64Array(0),
     a: new Float64Array(0),
-    still: new Int32Array(0),
     trayed: new Int32Array(0),
     up: new Int32Array(0),
-    nStill: 0,
     nTrayed: 0,
     nUp: 0,
     markedTrays: new Map<string, string>(),
     markedRefs: new Map<string, string>(),
+    // Where each carried piece was drawn this frame (see drawGpu()): x, y, angle and scale, for the
+    // pieces whose stamp is this frame's.
+    dx: new Float64Array(0),
+    dy: new Float64Array(0),
+    da: new Float64Array(0),
+    ds: new Float64Array(0),
+    dstamp: new Float64Array(0),
+    // Marks pieces as in a list being made (see prepFrame() and drawGpu()), by stamp.
+    tag: new Float64Array(0),
+    stamp: 0,
   }
   gTrays = new TrayInstances()
   gRefs = new RefInstances()
@@ -856,7 +880,9 @@ export class Engine {
   h!: Handlers
   host!: HTMLElement | null
   ro!: ResizeObserver
-  rect!: DOMRect
+  // The canvas's place in the window, see rect.
+  rectAt!: DOMRect
+  rectStale = false
   dirty?: boolean
   pointerAt!: Vec2 | null
   shift?: boolean
@@ -915,7 +941,7 @@ export class Engine {
     // start and act as one piece.
     this.unit = this.geo.unit
     this.longs = unitCells(this.unit)
-    this.paths = this.geo.pieces.map((p) => outlinePath(p.outline))
+    this.paths = new Array(n)
     this.x = new Float64Array(n)
     this.y = new Float64Array(n)
     this.r = new Int8Array(n)
@@ -962,6 +988,7 @@ export class Engine {
       this.tray[p.i] = p.t || null
       this.trayAt[p.i] = p.ta || 0
     }
+    this.indexGroups()
     const sizes = new Map()
     for (let i = 0; i < n; i++) sizes.set(this.g[i], (sizes.get(this.g[i]) || 0) + 1)
     this.order = Array.from({ length: n }, (_, i) => i).sort(
@@ -1102,22 +1129,25 @@ export class Engine {
       size: [this.room.width, this.room.height],
       uv: [1 / this.room.width, k / this.image.naturalHeight],
     })
+    const shapes: { cell: number; shape: ShapePixels }[] = []
     this.sprites.forEach((shape, i) => {
       if (shape === true || !shape) return
-      gpu.upload(i, shape)
+      shapes.push({ cell: i, shape })
       this.sprites[i] = true
     })
+    gpu.uploadMany(shapes)
     this.canvas.before(this.gpuEl)
     this.canvas.after(this.gpuTop)
     this.resize()
   }
 
-  // A piece's shape (every mip level of it, see spriteShape()), sent to the GPU, or kept until it's there.
+  // A piece's shape (every mip level of it, see spriteShape()), sent to the GPU with the others that
+  // came before the next frame, or kept until the GPU is there.
   setSprite(i: number, lv: ShapePixels) {
     if (!this.sprites[i]) this.built++
     this.sprites[i] = lv
     if (!this.gpu) return
-    this.gpu.upload(i, lv)
+    this.toUpload.push({ cell: i, shape: lv })
     this.sprites[i] = true
     this.fading.set(i, performance.now())
   }
@@ -1171,6 +1201,11 @@ export class Engine {
       moved: () => {
         this.rect = this.canvas.getBoundingClientRect()
       },
+      // A scroll only moves it when what scrolled holds it, and then it's read when next needed.
+      scrolled: (e) => {
+        const t = e.target
+        if (t === document || t === window || (t instanceof Node && t.contains(this.canvas))) this.rectStale = true
+      },
     }
     c.addEventListener('pointerdown', this.h.down)
     c.addEventListener('pointermove', this.h.move)
@@ -1187,7 +1222,7 @@ export class Engine {
     window.addEventListener('pointermove', this.h.track, true)
     document.documentElement.addEventListener('pointerleave', this.h.gone)
     window.addEventListener('blur', this.h.gone)
-    window.addEventListener('scroll', this.h.moved, { capture: true, passive: true })
+    window.addEventListener('scroll', this.h.scrolled, { capture: true, passive: true })
     window.addEventListener('resize', this.h.moved)
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(c)
@@ -1209,7 +1244,7 @@ export class Engine {
     window.removeEventListener('pointermove', this.h.track, true)
     document.documentElement.removeEventListener('pointerleave', this.h.gone)
     window.removeEventListener('blur', this.h.gone)
-    window.removeEventListener('scroll', this.h.moved, { capture: true })
+    window.removeEventListener('scroll', this.h.scrolled, { capture: true })
     window.removeEventListener('resize', this.h.moved)
     this.ro.disconnect()
     // A camera move not saved yet is saved now, so the jigsaw opens where it was left.
@@ -1294,8 +1329,37 @@ export class Engine {
     this.invalidate()
   }
 
+  // Something changed: the next frame draws everything again.
   invalidate() {
+    this.sceneDirty = true
+    this.posesDirty = true
+    this.invalidateOverlay()
+  }
+
+  // Only the camera (or what's drawn around the pieces) changed: the next frame draws the table
+  // again, with the pieces lying still where they were.
+  invalidateView() {
+    this.sceneDirty = true
+    this.invalidateOverlay()
+  }
+
+  // Only what's drawn in 2D over the table changed (other players' pointers, ink, bursts, buttons):
+  // the next frame leaves the GPU's canvases as they are.
+  invalidateOverlay() {
     if (!this.raf) this.raf = requestAnimationFrame(() => this.render())
+  }
+
+  // The canvas's place in the window, read again after a scroll the first time it's needed.
+  get rect(): DOMRect {
+    if (this.rectStale) {
+      this.rectStale = false
+      this.rectAt = this.canvas.getBoundingClientRect()
+    }
+    return this.rectAt
+  }
+  set rect(r: DOMRect) {
+    this.rectAt = r
+    this.rectStale = false
   }
 
   // ---- camera -------------------------------------------------------------
@@ -1488,7 +1552,7 @@ export class Engine {
     this.cam.x = wx - (sx - this.vw / 2) / this.cam.z
     this.cam.y = wy - (sy - this.vh / 2) / this.cam.z
     this.clampCam()
-    this.invalidate()
+    this.invalidateView()
   }
 
   // Eases the zoom around the middle of the view. Presses during the animation add up.
@@ -1596,9 +1660,36 @@ export class Engine {
   // ---- pieces -------------------------------------------------------------
 
   isComplete() {
-    const g = this.g[0]
-    for (let i = 1; i < this.n; i++) if (this.g[i] !== g) return false
-    return true
+    return this.gm.size <= 1
+  }
+
+  // Puts piece i in group gid, keeping each group's list of pieces (gm) up to date. Every change to
+  // this.g goes through here, or is followed by indexGroups().
+  regroup(i: number, gid: number) {
+    // As this.g would take it: whole pieces only, and the id as a 32 bit integer.
+    if (!Number.isInteger(i) || i < 0 || i >= this.n) return
+    gid |= 0
+    const was = this.g[i]
+    if (was === gid) return
+    const old = this.gm.get(was)
+    if (old) {
+      old.delete(i)
+      if (!old.size) this.gm.delete(was)
+    }
+    this.g[i] = gid
+    let s = this.gm.get(gid)
+    if (!s) this.gm.set(gid, (s = new Set()))
+    s.add(i)
+  }
+
+  // Lists every group's pieces afresh from this.g.
+  indexGroups() {
+    this.gm.clear()
+    for (let i = 0; i < this.n; i++) {
+      let s = this.gm.get(this.g[i])
+      if (!s) this.gm.set(this.g[i], (s = new Set()))
+      s.add(i)
+    }
   }
 
   // The cells of the piece cell i is part of: just i, or all of a long piece.
@@ -1613,19 +1704,38 @@ export class Engine {
     return !!u && list.length === this.cellsOf(list[0]).length && list.every((i) => u[i] === u[list[0]])
   }
 
+  // A group's pieces, lowest first.
   members(gid: number) {
+    const s = this.gm.get(gid)
+    if (!s) return []
+    // A big group is quicker found in one pass over every piece than sorted.
+    if (s.size * 8 <= this.n) return [...s].sort((a, b) => a - b)
     const out: number[] = []
     for (let i = 0; i < this.n; i++) if (this.g[i] === gid) out.push(i)
     return out
   }
 
+  // Puts these pieces on top of the others, in place.
   toTop(set: Set<number>) {
-    this.order = this.order.filter((i) => !set.has(i)).concat([...set])
+    if (!set.size) return
+    const o = this.order
+    let k = 0
+    for (let j = 0; j < o.length; j++) if (!set.has(o[j])) o[k++] = o[j]
+    o.length = k
+    for (const i of set) o.push(i)
   }
 
+  // These pieces and every piece in a group with them, lowest first.
   withGroups(ids: Iterable<number>) {
     const gids = new Set<number>()
     for (const i of ids) gids.add(this.g[i])
+    let total = 0
+    for (const gid of gids) total += this.gm.get(gid)?.size || 0
+    if (total * 8 <= this.n) {
+      const list: number[] = []
+      for (const gid of gids) for (const i of this.gm.get(gid) || []) list.push(i)
+      return new Set(list.sort((a, b) => a - b))
+    }
     const out = new Set<number>()
     for (let i = 0; i < this.n; i++) if (gids.has(this.g[i])) out.add(i)
     return out
@@ -1868,7 +1978,8 @@ export class Engine {
       const dy = wy - this.y[i]
       if (dx > R || dx < -R || dy > R || dy < -R) continue
       const [rx, ly] = rot(dx, dy, -this.r[i])
-      if (this.hitCtx.isPointInPath(this.paths[i], rx, ly)) return i
+      const path = (this.paths[i] ??= outlinePath(this.geo.pieces[i].outline))
+      if (this.hitCtx.isPointInPath(path, rx, ly)) return i
     }
     return -1
   }
@@ -2213,7 +2324,7 @@ export class Engine {
       if (t && Math.hypot(sx - t.sx, sy - t.sy) > CLICK_PX) this.pan.tap = null
       this.clampCam()
       if (this.marquee) this.updateMarquee()
-      this.invalidate()
+      this.invalidateView()
       return
     }
     const tb = this.trim?.box
@@ -2371,7 +2482,7 @@ export class Engine {
       this.cam.y += (e.deltaY * unit) / this.cam.z
       this.clampCam()
       this.follow()
-      return this.invalidate()
+      return this.invalidateView()
     }
     const [sx, sy] = this.pos(e)
     const dy = Math.max(-200, Math.min(200, e.deltaY * unit))
@@ -3081,7 +3192,7 @@ export class Engine {
         const d = ((v.r - this.r[i] + 5) % 4) - 1
         if (d) this.turns.set(i, { self: true, a: -d * Q })
         this.r[i] = v.r
-        this.g[i] = v.g
+        this.regroup(i, v.g)
         this.by[i] = v.by
         const t = v.t && this.trays.some((x) => x.id === v.t) ? v.t : null
         if (this.trayOf(i) !== t) into.set(t, [...(into.get(t) || []), i])
@@ -3656,7 +3767,7 @@ export class Engine {
     for (const i of group) gid = Math.min(gid, i)
     for (const i of group) {
       if (this.g[i] !== gid) {
-        this.g[i] = gid
+        this.regroup(i, gid)
         changed.add(i)
       }
     }
@@ -3727,6 +3838,7 @@ export class Engine {
     const from = this.devPlace(ids, big)
     const g0 = this.g.slice()
     this.g.fill(0)
+    this.indexGroups()
     this.joined(g0, ids, true)
     this.devEase(ids, from)
     this.toTop(new Set(ids))
@@ -3744,7 +3856,7 @@ export class Engine {
     for (const p of layout) {
       this.moving.set(p.i, [p.x, p.y])
       this.r[p.i] = p.r
-      this.g[p.i] = p.g
+      this.regroup(p.i, p.g)
       this.by[p.i] = null
     }
     this.setSelection(new Set())
@@ -3776,7 +3888,7 @@ export class Engine {
     this.strokes.set(`me:${id}`, { pts: [x, y], color: cursorColor(this.user || clientId), done: 0, t: performance.now() })
     this.ink = this.inkOut = { id, pointer, unsent: [r2(x), r2(y)] }
     this.out.ink.call()
-    this.invalidate()
+    this.invalidateOverlay()
   }
 
   moveInk(sx: number, sy: number) {
@@ -3790,7 +3902,7 @@ export class Engine {
     s.t = performance.now()
     k.unsent.push(r2(x), r2(y))
     this.out.ink.call()
-    this.invalidate()
+    this.invalidateOverlay()
   }
 
   endInk() {
@@ -3800,7 +3912,7 @@ export class Engine {
     if (s) s.done = performance.now()
     k.end = true
     this.out.ink.call(true)
-    this.invalidate()
+    this.invalidateOverlay()
   }
 
   // Sends the new points of this player's stroke (see out.ink), and the end of it once it's done.
@@ -3825,7 +3937,7 @@ export class Engine {
     for (let k = 0; k + 1 < pts.length && s.pts.length < LIMITS.strokePoints; k += 2) s.pts.push(pts[k], pts[k + 1])
     s.t = now
     if (msg.end) s.done = now
-    this.invalidate()
+    this.invalidateOverlay()
   }
 
   // How strongly a stroke shows now, 1 down to 0 as it fades.
@@ -3911,7 +4023,10 @@ export class Engine {
       this.markNotes()
       this.invalidate()
     } else if (msg.type === 'cursor') {
+      // A player's colour, learned here, is also the colour of their outlines on the table.
+      const player = this.players.get(msg.client)
       this.learnPlayer(msg)
+      if (this.players.get(msg.client) !== player) this.invalidate()
       if (msg.hide) this.cursors.delete(msg.client)
       else if (isFinite(msg.x!) && isFinite(msg.y!)) {
         const c = this.cursors.get(msg.client)
@@ -3923,7 +4038,8 @@ export class Engine {
           this.cursors.set(msg.client, { x: msg.x!, y: msg.y!, tx: msg.x!, ty: msg.y!, name, color, t: now, box: box && box.slice(), tbox: box })
         }
       }
-      this.invalidate()
+      // Pointers are drawn over the table, which stays as it is.
+      this.invalidateOverlay()
     } else if (msg.type === 'gone') {
       this.cursors.delete(msg.client)
       this.marks.delete(msg.client)
@@ -3935,6 +4051,7 @@ export class Engine {
       const d = this.remote.get(msg.client)
       if (d) for (const i of d.ids) this.held.delete(i)
       this.remote.delete(msg.client)
+      this.invalidate()
     }
   }
 
@@ -3975,7 +4092,7 @@ export class Engine {
       this.held.delete(p.i)
       this.moving.set(p.i, [p.x, p.y])
       this.r[p.i] = p.r
-      this.g[p.i] = p.g
+      this.regroup(p.i, p.g)
       if (p.by !== undefined) this.by[p.i] = p.by
       // Left out by pages from before trays were kept on the pieces: the tray stays as it was.
       if (p.t !== undefined && (p.t || null) !== this.tray[p.i]) {
@@ -5062,7 +5179,11 @@ export class Engine {
     const now = performance.now()
     const dt = Math.min(64, now - this.last)
     this.last = now
+    // Whether to draw again next frame: everything, the table for the camera (view), or only the
+    // 2D layers on top (over).
     let again = false
+    let view = false
+    let over = false
 
     if (this.built < this.n && this.spriteBuilder.behind) {
       this.spriteBuilder.buildSome(now + 12)
@@ -5084,7 +5205,7 @@ export class Engine {
       if (t >= 1) {
         this.camAnim = null
         if (!a.away) this.clampCam()
-      } else again = true
+      } else view = true
       this.usePane(was)
       if (this.marquee) this.updateMarquee()
     }
@@ -5117,7 +5238,7 @@ export class Engine {
       this.cam.y += (pv[1] * pdt) / 1000 / this.cam.z
       this.clampCam()
       this.follow()
-      again = true
+      view = true
     }
 
     if (this.drag) {
@@ -5191,7 +5312,7 @@ export class Engine {
       const f = ease(dt, 45)
       c.x += (c.tx - c.x) * f
       c.y += (c.ty - c.y) * f
-      if (Math.abs(c.tx - c.x) + Math.abs(c.ty - c.y) > 0.05) again = true
+      if (Math.abs(c.tx - c.x) + Math.abs(c.ty - c.y) > 0.05) over = true
       else {
         c.x = c.tx
         c.y = c.ty
@@ -5202,13 +5323,13 @@ export class Engine {
           c.box[k] += (c.tbox[k] - c.box[k]) * f
           far += Math.abs(c.tbox[k] - c.box[k])
         }
-        if (far > 0.05) again = true
+        if (far > 0.05) over = true
         else c.box = c.tbox.slice()
       }
     }
     if (this.cursors.size) {
       clearTimeout(this.idleTimer)
-      this.idleTimer = setTimeout(() => this.invalidate(), CURSOR_IDLE + 100)
+      this.idleTimer = setTimeout(() => this.invalidateOverlay(), CURSOR_IDLE + 100)
     }
 
     if (this.turns.size) {
@@ -5239,24 +5360,66 @@ export class Engine {
     this.liftHeld()
     if (this.stepObjs(dt)) again = true
 
-    if (this.pops.length) again = true
+    if (this.pops.length) over = true
     for (const [i, t0] of this.fading) {
       if (now - t0 >= FADE_IN_MS) this.fading.delete(i)
       else again = true
     }
     for (const [key, s] of this.strokes) {
       if (this.inkAlpha(s, now) <= 0) this.strokes.delete(key)
-      else again = true
+      else over = true
     }
 
     this.draw()
     if (again) this.invalidate()
+    else if (view) this.invalidateView()
+    else if (over) this.invalidateOverlay()
+  }
+
+  // Whether any pane's camera or place changed since the last frame, which then draws the table
+  // again even if nothing said so.
+  viewsMoved() {
+    const dc = this.drawnViews
+    let moved = dc.length !== this.panes.length * 7
+    dc.length = this.panes.length * 7
+    for (let k = 0; k < this.panes.length; k++) {
+      const c = (k === this.pane ? this.cam : this.cams[k]) || this.cam
+      const p = this.panes[k]
+      const at = k * 7
+      const now = [c.x, c.y, c.z, p.dx, p.dy, p.dw, p.dh]
+      for (let j = 0; j < 7; j++) {
+        if (dc[at + j] === now[j]) continue
+        dc[at + j] = now[j]
+        moved = true
+      }
+    }
+    return moved
+  }
+
+  // Whether pieces, trays or images are on the move, so where the pieces lie is worked out afresh
+  // every frame while they are.
+  inMotion() {
+    const fu = this.fingerUp
+    return (
+      !!(this.drag || this.lift || this.carry || this.refDrag || (fu && fu.value < 1)) ||
+      this.rlift.size > 0 ||
+      this.rsway.size > 0 ||
+      this.moving.size > 0 ||
+      this.turns.size > 0 ||
+      this.fading.size > 0 ||
+      this.lifts.size > 0 ||
+      this.glides.size > 0
+    )
   }
 
   // Draws each pane in turn (see split), the left one first. Views (the notes) follow the left one.
   draw() {
     const { ctx } = this
     const active = this.pane
+    if (this.gpu && this.toUpload.length) {
+      this.gpu.uploadMany(this.toUpload)
+      this.toUpload = []
+    }
     this.notes?.follow()
     if (this.dirty) {
       ctx.setTransform(1, 0, 0, 1, 0, 0)
@@ -5264,7 +5427,15 @@ export class Engine {
       this.dirty = false
     }
     this.clearOverlay()
-    if (this.gpu) this.prepFrame()
+    // The GPU draws only when something it shows changed: its canvases keep the last frame
+    // otherwise, under the 2D layers drawn every frame.
+    const pv = this.panV
+    const moved = this.viewsMoved()
+    const scene = !!this.gpu && (moved || this.sceneDirty || this.posesDirty || !!this.camAnim || !!(pv && (pv[0] || pv[1])) || this.inMotion())
+    if (scene) {
+      this.sceneDirty = false
+      this.prepFrame()
+    }
     for (let k = 0; k < this.panes.length; k++) {
       this.usePane(k)
       const { cam, vw, vh } = this
@@ -5280,7 +5451,7 @@ export class Engine {
           for (const fn of this.views) fn(cam, vw, vh)
         }
       }
-      if (this.gpu) this.drawGpu({ ...cam, w: vw, h: vh }, k)
+      if (scene) this.drawGpu({ ...cam, w: vw, h: vh }, k)
       if (!this.split) {
         this.drawChrome(true)
         continue
@@ -5302,10 +5473,12 @@ export class Engine {
     this.usePane(active)
   }
 
-  // What every pane's frame shares, worked out once a frame rather than once a pane: where each
-  // piece lying still is drawn (see poseInto()), in table order in three lists (on the table, in a
-  // tray, in a lifted tray), and what other players have marked. drawGpu() picks from these what
-  // its view shows.
+  // What every pane's frame shares, worked out once a frame rather than once a pane: the pieces
+  // lying still on the table as instances in world units (gStill, see gpu.ts), where each piece
+  // lying in a tray is drawn (see poseInto()), in table order in two lists (in a tray, in a lifted
+  // tray), and what other players have marked. drawGpu() picks from these what its view shows.
+  // Where the pieces lie is only worked out again when they changed (see invalidate()) or are on the
+  // move; moving the camera alone leaves it be.
   prepFrame() {
     const fr = this.fr
     const n = this.n
@@ -5313,37 +5486,56 @@ export class Engine {
       fr.x = new Float64Array(n)
       fr.y = new Float64Array(n)
       fr.a = new Float64Array(n)
-      fr.still = new Int32Array(n)
       fr.trayed = new Int32Array(n)
       fr.up = new Int32Array(n)
+      fr.dx = new Float64Array(n)
+      fr.dy = new Float64Array(n)
+      fr.da = new Float64Array(n)
+      fr.ds = new Float64Array(n)
+      fr.dstamp = new Float64Array(n)
+      fr.tag = new Float64Array(n)
     }
     fr.markedTrays = this.markedBy('tray')
     fr.markedRefs = this.markedBy('refs')
+    if (!this.posesDirty && !this.inMotion()) return
+    this.posesDirty = false
     const lifted = this.lift?.set
-    const rlifted = this.rlift.size ? new Set([...this.rlift.values()].flatMap((rl) => rl.ids)) : null
-    const inTray = this.trays.length ? new Set(this.trays.flatMap((t) => t.pieces)) : null
-    const inUp = inTray && new Set(this.trays.filter((t) => this.upOf('tray', t.id)).flatMap((t) => t.pieces))
-    let still = 0
+    const rlift = this.rlift
+    const rlifted = (i: number) => {
+      for (const rl of rlift.values()) if (rl.set.has(i)) return true
+      return false
+    }
+    // The pieces in a tray are tagged base, those in a lifted one base + 1.
+    const base = (fr.stamp += 2)
+    const tag = fr.tag
+    for (const t of this.trays) {
+      const v = this.upOf('tray', t.id) ? base + 1 : base
+      for (const i of t.pieces) tag[i] = v
+    }
+    const gs = this.gStill
+    gs.reset(n)
+    const now = performance.now()
     let trayed = 0
     let up = 0
     for (const i of this.order) {
-      if (lifted?.has(i) || rlifted?.has(i)) continue
+      if (lifted?.has(i) || (rlift.size && rlifted(i))) continue
       this.poseInto(i)
       fr.x[i] = this.qx
       fr.y[i] = this.qy
       fr.a[i] = this.qa
-      if (!inTray?.has(i)) fr.still[still++] = i
-      else if (inUp!.has(i)) fr.up[up++] = i
-      else fr.trayed[trayed++] = i
+      const w = tag[i]
+      if (w === base + 1) fr.up[up++] = i
+      else if (w === base) fr.trayed[trayed++] = i
+      else if (this.sprites[i] === true) gs.put(i, this.qa, 1, this.qx, this.qy, this.fadeOf(i, now))
     }
-    fr.nStill = still
     fr.nTrayed = trayed
     fr.nUp = up
+    this.stillVer++
   }
 
   // Builds a frame for the GPU (see gpu.ts) for view v, in device pixels: the trays and reference
-  // images in view, the pieces lying on the table in table order, the lifted pieces, and the
-  // selected and hovered pieces once more for their outlines.
+  // images in view, the pieces lying on the table in table order (made in prepFrame()), those in
+  // trays, the lifted pieces, and the selected and hovered pieces once more for their outlines.
   drawGpu(v: View, pane: number) {
     const { dpr } = this
     const z = v.z * dpr
@@ -5402,35 +5594,42 @@ export class Engine {
     const gp = this.gPieces
     gp.reset(2 * this.n + 8)
     const lifted = this.lift?.set
-    // The pieces lying still, where prepFrame() found them: those this view shows, from a list.
+    const now = performance.now()
+    // The pieces lying still in trays, where prepFrame() found them: those this view shows, from a list.
     const lying = (list: Int32Array, count: number) => {
       for (let k = 0; k < count; k++) {
         const i = list[k]
-        if (seen(fr.x[i], fr.y[i], R)) this.gpuPiece(i, fr.x[i], fr.y[i], fr.a[i], 1, v)
+        if (seen(fr.x[i], fr.y[i], R)) this.gpuPiece(i, fr.x[i], fr.y[i], fr.a[i], 1, v, now)
       }
     }
-    // Trays lie above the pieces on the table, and the pieces in them above the trays. Pieces in a
-    // lifted tray go over it, after the trays lying down.
-    lying(fr.still, fr.nStill)
-    const still = [0, gp.count]
+    // Trays lie above the pieces on the table (drawn from gStill), and the pieces in them above the
+    // trays. Pieces in a lifted tray go over it, after the trays lying down.
     lying(fr.trayed, fr.nTrayed)
     // No lifted tray in this view: what little shows of the pieces in one goes with the others.
     const upShown = traysDown < gTrays.count
     if (!upShown) lying(fr.up, fr.nUp)
-    const trayed = [still[1], gp.count - still[1]]
+    const trayed = [0, gp.count]
     const trayedUp = [gp.count, 0]
     if (upShown) lying(fr.up, fr.nUp)
     trayedUp[1] = gp.count - trayedUp[0]
     const lift = [gp.count, 0]
-    // Carried pieces (ours and others'), as they're drawn: id -> [x, y, angle, scale]. Outlines use
-    // these, so they fit the pieces while they're lifted, carried and put down again. Those riding
-    // in a moved tray come first, lying flat in it; then those lifted themselves, which cast a shadow.
-    const drawn = new Map<number, [number, number, number, number]>()
+    // Carried pieces (ours and others'), as they're drawn: x, y, angle and scale in fr.dx, dy, da and
+    // ds, for the pieces stamped with this frame's stamp. Outlines use these, so they fit the pieces
+    // while they're lifted, carried and put down again. Those riding in a moved tray come first,
+    // lying flat in it; then those lifted themselves, which cast a shadow.
+    const stamp = ++fr.stamp
+    const drawn = (i: number, x: number, y: number, a: number, s: number) => {
+      fr.dx[i] = x
+      fr.dy[i] = y
+      fr.da[i] = a
+      fr.ds[i] = s
+      fr.dstamp[i] = stamp
+    }
     const ours = (tray: boolean) => {
       if (!this.lift || !!this.lift.tray !== tray) return
       this.liftPoses((i, x, y, a, s) => {
-        drawn.set(i, [x, y, a, s])
-        if (seen(x, y, R * s)) this.gpuPiece(i, x, y, a, s, v)
+        drawn(i, x, y, a, s)
+        if (seen(x, y, R * s)) this.gpuPiece(i, x, y, a, s, v, now)
       })
     }
     // Pieces other players carry, grown a little as ours are.
@@ -5455,8 +5654,8 @@ export class Engine {
             this.qy = w!.ey + dx * ss + dy * sc
             this.qa += sa
           }
-          drawn.set(i, [this.qx, this.qy, this.qa, s])
-          if (seen(this.qx, this.qy, R * s)) this.gpuPiece(i, this.qx, this.qy, this.qa, s, v)
+          drawn(i, this.qx, this.qy, this.qa, s)
+          if (seen(this.qx, this.qy, R * s)) this.gpuPiece(i, this.qx, this.qy, this.qa, s, v, now)
         }
       }
     }
@@ -5467,18 +5666,30 @@ export class Engine {
     theirs(false)
     shade[1] = gp.count - shade[0]
     lift[1] = gp.count - lift[0]
-    // The outlined pieces exactly as they're drawn, and the box around them on the screen.
-    const outlined = (ids: Iterable<number>, box: number[]) => {
+    // The outlined pieces exactly as they're drawn, and the box around them on the screen. Those
+    // in skip are left out.
+    const outlined = (ids: Iterable<number>, box: number[], skip?: Set<number> | null) => {
       const first = gp.count
       for (const i of ids) {
-        let p = drawn.get(i)
-        if (!p) {
+        if (skip?.has(i)) continue
+        let x: number
+        let y: number
+        let a: number
+        let s: number
+        if (fr.dstamp[i] === stamp) {
+          x = fr.dx[i]
+          y = fr.dy[i]
+          a = fr.da[i]
+          s = fr.ds[i]
+        } else {
           this.poseInto(i)
-          p = [this.qx, this.qy, this.qa, 1]
+          x = this.qx
+          y = this.qy
+          a = this.qa
+          s = 1
         }
-        const [x, y, a, s] = p
         const e = R * s * z
-        if (!seen(x, y, R * s) || !this.gpuPiece(i, x, y, a, s, v)) continue
+        if (!seen(x, y, R * s) || !this.gpuPiece(i, x, y, a, s, v, now)) continue
         const X = sx(x)
         const Y = sy(y)
         box[0] = Math.min(box[0], X - e)
@@ -5491,34 +5702,58 @@ export class Engine {
     // While carrying pieces, the selection outline goes under them, and leaves them out.
     const selBox = [Infinity, Infinity, -Infinity, -Infinity]
     const carried = this.drag && lifted
-    const sel = this.sel.size ? outlined(carried ? [...this.sel].filter((i) => !carried.has(i)) : this.sel, selBox) : [0, 0]
+    const sel = this.sel.size ? outlined(this.sel, selBox, carried) : [0, 0]
     const hlBox = [Infinity, Infinity, -Infinity, -Infinity]
     // The hover outline leaves out selected pieces, which have the selection's.
-    const hover = this.hl && !this.drag ? this.hl.ids.filter((i) => !this.sel.has(i)) : []
+    const hover = this.hl && !this.drag ? this.hl.ids : null
     // The pieces we carry are outlined too, over everything. There is no hover while carrying, so
     // they take its place. Pieces riding along in a moved tray are not.
-    const hl = this.drag && this.lift ? (this.drag.tray ? [0, 0] : outlined(this.lift.ids, hlBox)) : hover.length ? outlined(hover, hlBox) : [0, 0]
+    const hl = this.drag && this.lift ? (this.drag.tray ? [0, 0] : outlined(this.lift.ids, hlBox)) : hover?.length ? outlined(hover, hlBox, this.sel) : [0, 0]
     // What other players hold, select or hover over, each in their cursor colour. What they carry is
     // outlined as it's drawn, lifted, over everything, like ours.
     const extra: GpuOutline[] = []
-    for (const c of new Set([...this.marks.keys(), ...this.remote.keys()])) {
+    const tag = fr.tag
+    const upList: number[] = []
+    const idList: number[] = []
+    const clients = (function* (e: Engine) {
+      yield* e.marks.keys()
+      for (const c of e.remote.keys()) if (!e.marks.has(c)) yield c
+    })(this)
+    for (const c of clients) {
       if (extra.length >= MAX_OUTLINES) break
       const m = this.marks.get(c)
       const rl = this.rlift.get(c)
-      // Pieces riding along in a tray they move aren't outlined, as with ours.
+      // Pieces riding along in a tray they move aren't outlined, as with ours. Those they carry
+      // themselves are tagged upT, the rest as they're listed idT, so each is listed once.
       const tray = rl?.target && rl.tray
-      const up = new Set(rl?.target && !tray ? rl.ids.filter((i) => !lifted?.has(i)) : [])
-      // Pieces we carry are left out: they're outlined in our colour, where we hold them.
-      const held = tray ? [] : this.remote.get(c)?.ids || []
-      const ids = new Set([...(m?.sel || []), ...(m?.hl || []), ...held].filter((i) => !up.has(i) && !lifted?.has(i)))
-      const color = rgba(this.colorOf(c))
-      if (ids.size) {
-        const box = [Infinity, Infinity, -Infinity, -Infinity]
-        extra.push({ range: outlined(ids, box), box, color })
+      const upT = (fr.stamp += 2)
+      const idT = upT + 1
+      upList.length = 0
+      idList.length = 0
+      if (rl?.target && !tray) {
+        for (const i of rl.ids) {
+          if (lifted?.has(i) || tag[i] === upT) continue
+          tag[i] = upT
+          upList.push(i)
+        }
       }
-      if (up.size) {
+      // Pieces we carry are left out: they're outlined in our colour, where we hold them.
+      const held = tray ? null : this.remote.get(c)?.ids
+      for (const list of [m?.sel, m?.hl, held]) {
+        for (const i of list || []) {
+          if (tag[i] === upT || tag[i] === idT || lifted?.has(i)) continue
+          tag[i] = idT
+          idList.push(i)
+        }
+      }
+      const color = rgba(this.colorOf(c))
+      if (idList.length) {
         const box = [Infinity, Infinity, -Infinity, -Infinity]
-        extra.push({ range: outlined(up, box), box, color, over: true })
+        extra.push({ range: outlined(idList, box), box, color })
+      }
+      if (upList.length) {
+        const box = [Infinity, Infinity, -Infinity, -Infinity]
+        extra.push({ range: outlined(upList, box), box, color, over: true })
       }
     }
 
@@ -5535,8 +5770,9 @@ export class Engine {
       bg: rgba(this.colors.bg),
       trays: { data: gTrays.data, count: gTrays.count, down: traysDown },
       refs: gRefs,
+      still: { data: this.gStill.data, count: this.gStill.count, ver: this.stillVer },
       pieces: gp,
-      seg: { still, trayed, trayedUp, lift, shade, sel, hl },
+      seg: { trayed, trayedUp, lift, shade, sel, hl },
       selBox,
       hlBox,
       extra,
@@ -5551,13 +5787,18 @@ export class Engine {
 
   // Adds piece i at (x, y), turned a and scaled s, to the frame's instances for view v, like a 2D
   // drawImage with the transform (a b c d e f). False while its sprite isn't on the GPU yet.
-  gpuPiece(i: number, x: number, y: number, a: number, s: number, v: View) {
+  gpuPiece(i: number, x: number, y: number, a: number, s: number, v: View, now = performance.now()) {
     if (this.sprites[i] !== true) return false
     const [px, py] = project(v, v.w, v.h, x, y)
-    const t0 = this.fading.get(i)
-    const k = t0 === undefined ? 1 : Math.min(1, (performance.now() - t0) / FADE_IN_MS)
-    this.gPieces.put(i, a, v.z * this.dpr * s, px * this.dpr, py * this.dpr, k * k * (3 - 2 * k))
+    this.gPieces.put(i, a, v.z * this.dpr * s, px * this.dpr, py * this.dpr, this.fadeOf(i, now))
     return true
+  }
+
+  // How far piece i has faded in at the time now (ms), 0 to 1, eased.
+  fadeOf(i: number, now: number) {
+    const t0 = this.fading.size ? this.fading.get(i) : undefined
+    const k = t0 === undefined ? 1 : Math.min(1, (now - t0) / FADE_IN_MS)
+    return k * k * (3 - 2 * k)
   }
 
   // Where each lifted piece is drawn: fn(i, x, y, angle, scale). Lifted pieces grow a little,
@@ -5716,13 +5957,13 @@ export class Engine {
   setHovered(key: string | null) {
     if (this.hovered === key) return
     this.hovered = key
-    this.invalidate()
+    this.invalidateOverlay()
   }
 
   // The context menu opened (kind, id) or closed (null) on a tray or image.
   setMenuFor(kind: string | null, id?: string | null) {
     this.menuFor = kind === 'tray' || kind === 'ref' ? `${kind}:${id}` : null
-    this.invalidate()
+    this.invalidateOverlay()
   }
 
   // Moves each tray's and image's buttons a frame's worth towards shown (hovered) or hidden.
@@ -5739,7 +5980,7 @@ export class Engine {
       else this.btnShow.set(key, next)
       if (next !== to) moving = true
     }
-    if (moving) this.invalidate()
+    if (moving) this.invalidateOverlay()
     else this.btnT = 0
   }
 

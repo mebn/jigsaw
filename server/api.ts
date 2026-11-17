@@ -14,6 +14,7 @@ import { createFeedback } from './feedback.ts'
 import { createPlayers } from './players.ts'
 import { createRooms } from './rooms.ts'
 import { createTable } from './table.ts'
+import { decode } from '../shared/wire.ts'
 import { attachWebSocket } from './ws.ts'
 import type { Socket } from './ws.ts'
 
@@ -55,17 +56,13 @@ function createApi(dbFile: string) {
     const ws: RoomSocket = Object.assign(socket, { client: url.searchParams.get('client') || '', ip, player: null })
     hub.join(roomId, ws)
     // Which build is being served, so a page still running an older one can reload (see src/lib/update.ts).
-    if (build) ws.send(JSON.stringify({ type: 'build', build }))
-    ws.onMessage = (text) => {
-      let msg: unknown
+    if (build) hub.send(ws, { type: 'build', build })
+    // Anything that isn't a message closes the socket.
+    ws.onMessage = (data) => {
+      const msg = decode(data)
+      if (!msg) return ws.closed(1007, 'not a message')
       try {
-        msg = JSON.parse(text)
-      } catch {
-        return
-      }
-      if (!msg || typeof msg !== 'object') return
-      try {
-        table.handle(roomId, ws, msg as Record<string, unknown>)
+        table.handle(roomId, ws, msg)
       } catch (e) {
         console.error('room socket:', e)
       }
@@ -76,9 +73,9 @@ function createApi(dbFile: string) {
     const url = new URL(req.url!, 'http://x')
     if (!url.pathname.startsWith('/api/')) return next()
     try {
-      send(res, await route(req, url.pathname.slice(5).split('/').filter(Boolean), url.searchParams))
+      await send(req, res, await route(req, url.pathname.slice(5).split('/').filter(Boolean), url.searchParams))
     } catch (e) {
-      send(res, [500, { error: String((e as Error).message || e) }])
+      await send(req, res, [500, { error: String((e as Error).message || e) }])
     }
   }
 

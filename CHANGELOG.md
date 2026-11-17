@@ -2,8 +2,11 @@
 
 ## 17 November 2026
 
+- The jigsaws page loads much faster and uses far less memory.
+- Smoother play with less battery use, especially on big jigsaws with other players around.
 - Jigsaws open faster, and other players show up sooner.
 - On phones, the jigsaws page no longer lets text run into other pictures.
+- Other players' pointers and the pieces they move follow them more closely.
 
 ## 16 November 2026
 

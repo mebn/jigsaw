@@ -47,7 +47,7 @@ Vite only strips the types when it builds or serves the app, so type errors don'
 ## Data
 
 - The SQLite database lives at `data/puzzle.db` and is created automatically on first start. The `data/` directory is git ignored.
-- The API is served under `/api`, with the WebSocket endpoint at `/api/ws`.
+- The API is served under `/api`, with the WebSocket endpoint at `/api/ws`, whose messages are protobuf (see `shared/wire.ts`).
 - Schema migrations in `server/migrations/` run automatically, in order, each time the server starts. See `AGENTS.md` for the rules on adding migrations.
 
 ## Email

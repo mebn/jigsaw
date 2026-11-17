@@ -5,7 +5,7 @@ import type { IncomingMessage } from 'node:http'
 import { LIMITS, PREVIEW_H, PREVIEW_W } from '../shared/protocol.ts'
 import type { NewRoom, PlayerRef, RoomDetails } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
-import { fail, ipOf, ok, printable, rateLimit, readJson } from './http.ts'
+import { fail, ipOf, isJson, ok, printable, rateLimit, readBody, readForm, readJson } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
 import type { SharedRoom } from './meta.ts'
@@ -18,13 +18,24 @@ type Table = ReturnType<typeof createTable>
 // The longest side of a jigsaw's thumbnail, in pixels (see encode() in NewRoom.tsx).
 const THUMB_SIDE = 480
 
-// Share of a jigsaw's pieces connected (0 to 1), from how many pieces (n) and groups it has.
-// A link preview picture as sent by the page (see src/lib/preview.ts): a JPEG data URL, at most
+// A picture as uploaded: its type and bytes.
+type Picture = { type: string; bytes: Buffer }
+
+// A picture sent as a data URL, as pages did before pictures went as files.
+function fromDataUrl(data: unknown): Picture | null {
+  const m = typeof data === 'string' ? /^data:([^;,]+);base64,(.*)$/s.exec(data) : null
+  return m ? { type: m[1].trim().toLowerCase(), bytes: Buffer.from(m[2], 'base64') } : null
+}
+// A picture sent as a file in a form (see api.create in the page), or null when that part isn't a file.
+async function fromPart(part: ReturnType<FormData['get']>): Promise<Picture | null> {
+  return part instanceof Blob ? { type: part.type.trim().toLowerCase(), bytes: Buffer.from(await part.arrayBuffer()) } : null
+}
+
+// A link preview picture as sent by the page (see src/lib/preview.ts): a JPEG of at most
 // PREVIEW_MAX bytes. Returns its bytes, or null for anything else.
 const PREVIEW_MAX = 1024 * 1024
-function previewBytes(data: unknown): Buffer | null {
-  const m = typeof data === 'string' ? /^data:image\/jpeg;base64,(.*)$/s.exec(data) : null
-  const bytes = m ? Buffer.from(m[1], 'base64') : null
+function previewBytes(p: Picture | null): Buffer | null {
+  const bytes = p?.type === 'image/jpeg' ? p.bytes : null
   return bytes && bytes.length <= PREVIEW_MAX && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? bytes : null
 }
 
@@ -32,13 +43,16 @@ function previewBytes(data: unknown): Buffer | null {
 // is turned away when uploaded, and one stored before this check is served as plain bytes.
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'])
 const imageType = (type: string) => (IMAGE_TYPES.has(type.trim().toLowerCase()) ? type.trim().toLowerCase() : 'application/octet-stream')
-// A picture sent as a data URL: its type and bytes, or null when it isn't a picture.
-function pictureOf(data: unknown): { type: string; bytes: Buffer } | null {
-  const m = typeof data === 'string' ? /^data:([^;,]+);base64,(.*)$/s.exec(data) : null
-  const type = m ? m[1].trim().toLowerCase() : ''
-  return m && IMAGE_TYPES.has(type) ? { type, bytes: Buffer.from(m[2], 'base64') } : null
-}
+// p, when it's one of those kinds of picture.
+const pictureOf = (p: Picture | null) => (p && IMAGE_TYPES.has(p.type) ? p : null)
 
+// The biggest upload of a new jigsaw: its picture, thumbnail, preview and where its pieces lie.
+const NEW_ROOM_MAX = 40 * 1024 * 1024
+
+// A bytes column as a Buffer, without copying it.
+const asBuffer = (u: Uint8Array) => Buffer.from(u.buffer, u.byteOffset, u.byteLength)
+
+// Share of a jigsaw's pieces connected (0 to 1), from how many pieces (n) and groups it has.
 const progress = (n: number, groups: number) => ({ progress: n > 1 ? (n - groups) / (n - 1) : 0, done: n > 0 && groups === 1 })
 
 // How many groups there are, and the time everyone spent, in room r.
@@ -48,7 +62,7 @@ const SECONDS = '(SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_i
 const PIECES = '(CASE WHEN r.units > 0 THEN r.units ELSE (SELECT COUNT(*) FROM pieces p WHERE p.room_id = r.id) END)'
 // Where room r's thumbnail is (see GET thumb), or '' when it has none. A link, not the picture, so
 // the list stays small and browsers keep each thumbnail.
-const THUMB = "(CASE WHEN length(r.thumb) > 0 THEN '/api/rooms/' || r.id || '/thumb' ELSE '' END) AS thumb"
+const THUMB = "(CASE WHEN r.has_thumb THEN '/api/rooms/' || r.id || '/thumb' ELSE '' END) AS thumb"
 
 export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: Players, table: Table) {
   const q = {
@@ -64,22 +78,29 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       ORDER BY r.created DESC`),
     room: prepare<Room>(
       `SELECT id, name, created, cols, rows, shape, seed, width, height, long_pieces AS longPieces, owner, private,
-              preview IS NOT NULL AS preview FROM rooms WHERE id = ?`,
+              has_preview AS preview FROM rooms WHERE id = ?`,
     ),
-    image: prepare<{ image: Uint8Array; image_type: string }>('SELECT image, image_type FROM rooms WHERE id = ?'),
+    // A jigsaw's pictures are in room_pictures (see migration 030), out of the way of the rest of it.
+    image: prepare<{ image: Uint8Array; image_type: string }>(
+      'SELECT p.image, r.image_type FROM room_pictures p JOIN rooms r ON r.id = p.room_id WHERE p.room_id = ?',
+    ),
     // What a jigsaw's link preview shows, see sharing().
     share: prepare<{ id: string; name: string; width: number; height: number; private: number; preview: number; thumb: number; n: number; groups: number }>(
-      `SELECT r.id, r.name, r.width, r.height, r.private, r.preview IS NOT NULL AS preview, length(r.thumb) > 0 AS thumb,
+      `SELECT r.id, r.name, r.width, r.height, r.private, r.has_preview AS preview, r.has_thumb AS thumb,
               ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
     ),
-    preview: prepare<{ preview: Uint8Array }>('SELECT preview FROM rooms WHERE id = ? AND preview IS NOT NULL'),
+    preview: prepare<{ preview: Uint8Array }>('SELECT preview FROM room_pictures WHERE room_id = ? AND preview IS NOT NULL'),
     // Only ever set once, so a preview can be cached for good and nobody can swap one that's there.
-    setPreview: prepare('UPDATE rooms SET preview = ? WHERE id = ? AND preview IS NULL'),
+    setPreview: prepare('UPDATE room_pictures SET preview = ? WHERE room_id = ? AND preview IS NULL'),
+    hasPreview: prepare('UPDATE rooms SET has_preview = 1 WHERE id = ?'),
     // Stored as text or as bytes, depending on how the jigsaw was saved.
-    thumb: prepare<{ thumb: string | Uint8Array }>('SELECT thumb FROM rooms WHERE id = ?'),
+    thumb: prepare<{ thumb: string | Uint8Array }>('SELECT thumb FROM room_pictures WHERE room_id = ?'),
+    // The picture columns of rooms are left empty, see migration 030.
     insertRoom: prepare(`
-      INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units, preview)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+      INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units,
+                         has_thumb, has_preview)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, x'', ?, '', ?, ?, ?, ?, ?, ?)`),
+    insertPictures: prepare('INSERT INTO room_pictures (room_id, image, thumb, preview) VALUES (?, ?, ?, ?)'),
     insertPiece: prepare('INSERT INTO pieces (room_id, idx, x, y, r, g) VALUES (?, ?, ?, ?, ?, ?)'),
     join: prepare('INSERT OR IGNORE INTO room_players (room_id, player_id, joined) VALUES (?, ?, ?)'),
     member: prepare('SELECT 1 FROM room_players WHERE room_id = ? AND player_id = ?'),
@@ -144,10 +165,25 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     const ip = ipOf(req)
     if (uploads.blocked(ip)) return fail(429, 'too many new jigsaws from here, try again later')
     uploads.count(ip)
-    const b = await readJson<NewRoom>(req, 40 * 1024 * 1024)
-    const picture = pictureOf(b.image)
-    // The thumbnail is kept as the data URL it came as; one that isn't a picture is left out.
-    const thumb = pictureOf(b.thumb) ? String(b.thumb) : ''
+    // The pictures come as files in a form, with the rest as JSON in its room part (see api.create in
+    // the page). Pages from before that send it all as JSON, the pictures as data URLs.
+    let b: Partial<NewRoom>
+    let pictures: { image: Picture | null; thumb: Picture | null; preview: Picture | null }
+    if (isJson(req)) {
+      const old = await readJson<NewRoom & { image: string; thumb: string; preview: string }>(req, NEW_ROOM_MAX)
+      b = old
+      pictures = { image: fromDataUrl(old.image), thumb: fromDataUrl(old.thumb), preview: fromDataUrl(old.preview) }
+    } else {
+      const form = await readForm(req, NEW_ROOM_MAX)
+      const room = form.get('room')
+      b = typeof room === 'string' ? JSON.parse(room) : {}
+      pictures = { image: await fromPart(form.get('image')), thumb: await fromPart(form.get('thumb')), preview: await fromPart(form.get('preview')) }
+    }
+    const picture = pictureOf(pictures.image)
+    // The thumbnail is kept as a data URL; one that isn't a picture is left out.
+    const small = pictureOf(pictures.thumb)
+    const thumb = small ? `data:${small.type};base64,${small.bytes.toString('base64')}` : ''
+    const preview = previewBytes(pictures.preview)
     if (!picture || !Array.isArray(b.pieces) || !b.pieces.length || b.pieces.length > LIMITS.pieces) return fail(400, 'bad request')
     // The creator proves who they are with their passphrase, and becomes the owner.
     const owner = players.whoIs(b.passphrase, ip)
@@ -167,16 +203,16 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
         Number(b.seed) | 0,
         Number(b.width),
         Number(b.height),
-        picture.bytes,
         picture.type,
-        thumb,
         owner.id,
         hidden ? 1 : 0,
         b.longPieces ? 1 : 0,
         // The cells of a long piece start out in one group, so there are as many pieces as groups.
         b.longPieces ? new Set(pieces.map((p) => p.g)).size : 0,
-        previewBytes(b.preview),
+        thumb ? 1 : 0,
+        preview ? 1 : 0,
       )
+      q.insertPictures.run(id, picture.bytes, thumb, preview)
       if (hidden) q.join.run(id, owner.id, Date.now())
       for (const p of pieces) q.insertPiece.run(id, p.i, p.x, p.y, p.r, p.g)
     })
@@ -202,31 +238,41 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
       return ok(details)
     }
     if (route === 'GET image') {
-      const img = q.image.get(id)!
-      return { file: Buffer.from(img.image), type: imageType(img.image_type) }
+      const img = q.image.get(id)
+      return img ? { file: asBuffer(img.image), type: imageType(img.image_type) } : fail(404, 'not found')
     }
     // The thumbnail, stored as a data URL, as a file; see sharing().
     if (route === 'GET thumb') {
-      const { thumb } = q.thumb.get(id)!
-      const m = /^data:([^;]+);base64,(.*)$/s.exec(typeof thumb === 'string' ? thumb : Buffer.from(thumb).toString('latin1'))
+      const thumb = q.thumb.get(id)?.thumb ?? ''
+      const m = /^data:([^;]+);base64,(.*)$/s.exec(typeof thumb === 'string' ? thumb : asBuffer(thumb).toString('latin1'))
       return m ? { file: Buffer.from(m[2], 'base64'), type: imageType(m[1]) } : fail(404, 'not found')
     }
     if (route === 'GET preview') {
       const p = q.preview.get(id)
-      return p ? { file: Buffer.from(p.preview), type: 'image/jpeg' } : fail(404, 'not found')
+      return p ? { file: asBuffer(p.preview), type: 'image/jpeg' } : fail(404, 'not found')
     }
     if (route === 'GET snapshots') return ok(table.snapshots(id))
     // A jigsaw made before link previews gets one from the first page to open it (see Room.tsx).
     // Read here, before the other posts, as it's bigger than they may be.
     // Only its maker may give it one (anyone logged in, for a jigsaw from before they had makers), so
     // nobody can put their own picture on someone else's link. Private jigsaws show no preview.
+    // It comes as the JPEG itself, with the player's passphrase in X-Passphrase (see api.preview in the
+    // page); from pages before that, as JSON with the picture as a data URL.
     if (route === 'POST preview') {
-      const p = await readJson<{ image: string; passphrase: string }>(req, 2 * PREVIEW_MAX)
-      const who = players.whoIs(p.passphrase, ipOf(req))
+      let passphrase: unknown = req.headers['x-passphrase']
+      let picture: Picture | null
+      if (isJson(req)) {
+        const p = await readJson<{ image: string; passphrase: string }>(req, 2 * PREVIEW_MAX)
+        passphrase = p.passphrase
+        picture = fromDataUrl(p.image)
+      } else picture = { type: String(req.headers['content-type'] || '').trim().toLowerCase(), bytes: await readBody(req, PREVIEW_MAX) }
+      const who = players.whoIs(passphrase, ipOf(req))
       if (!who || room.private || (room.owner && who.id !== room.owner)) return fail(403, 'only the player who made this jigsaw can set its preview')
-      const bytes = previewBytes(p.image)
+      const bytes = previewBytes(picture)
       if (!bytes) return fail(400, 'bad request')
-      q.setPreview.run(bytes, id)
+      tx(() => {
+        if (q.setPreview.run(bytes, id).changes) q.hasPreview.run(id)
+      })
       return ok({ ok: true })
     }
     const b = await readJson<{ passphrase: string; players: string[]; seconds: number; client: string }>(req)

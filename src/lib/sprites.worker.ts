@@ -1,9 +1,9 @@
 // Works out pieces' shapes off the main thread (see spriteShape()) and posts them back in batches,
-// as plain pixels the engine writes straight into the GPU's shape atlas. Gets { job, size, sc, levels, items },
-// items being { i, pts, codes } (see shapeOutline()), and posts { job, kind: 'front', items: [{ i,
-// shape }] } as it goes, then { job, kind: 'done' }, or { job, kind: 'fail' } if it can't draw here.
-// It's kept for the next jigsaw once done.
-import { spriteShape } from './sprites.ts'
+// as plain pixels the engine writes straight into the GPU's shape atlas. Gets { job, size, sc, levels,
+// S, pieces }, pieces being a run of pieces' outlines and sides (see packPieces()), and posts { job,
+// kind: 'front', items: [{ i, shape }] } as it goes, then { job, kind: 'done' }, or { job, kind:
+// 'fail' } if it can't draw here. It's kept for the next jigsaw once done.
+import { shapeOutline, spriteShape, unpackPiece } from './sprites.ts'
 import type { SpriteJob, SpriteReply } from './sprites.ts'
 
 // This runs as a module worker, but the app is type checked with the DOM's globals: the worker's own
@@ -17,7 +17,7 @@ declare const self: {
 const BATCH_MS = 16
 
 self.onmessage = (e) => {
-  const { job, size, sc, levels, items: todo } = e.data
+  const { job, size, sc, levels, S, pieces } = e.data
   try {
     const [w, h] = size
     const ctx = new OffscreenCanvas(w, h).getContext('2d', { willReadFrequently: true })
@@ -32,9 +32,9 @@ self.onmessage = (e) => {
       transfer = []
       t = performance.now()
     }
-    for (const it of todo) {
-      const shape = spriteShape(ctx, sc, it, levels)
-      items.push({ i: it.i, shape })
+    for (let k = 0; k + 1 < pieces.starts.length; k++) {
+      const shape = spriteShape(ctx, sc, shapeOutline(unpackPiece(pieces, k), { S }), levels)
+      items.push({ i: pieces.first + k, shape })
       for (const lv of shape) transfer.push(lv.data.buffer)
       flush()
     }

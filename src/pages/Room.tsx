@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent } from 'react'
 import { api, openRoomSocket } from '../lib/api.ts'
 import { renderPreview } from '../lib/preview.ts'
@@ -16,7 +16,6 @@ import { useTimes } from '../lib/times.ts'
 import { isPlainKey, isTyping, onTable, overlays, useEscapeFallback, useOverlay } from '../lib/overlays.ts'
 import { Pencil, Picture, PodiumIcon, Rooms, Share } from '../components/icons.tsx'
 import Settings from '../components/Settings.tsx'
-import { BasicsDialog } from '../components/Help.tsx'
 import type { OpenSettings } from '../components/Settings.tsx'
 import Players, { rankPlayers } from '../components/Players.tsx'
 import type { NameOf, Stats } from '../components/Players.tsx'
@@ -35,11 +34,15 @@ import SplitButton from '../components/SplitButton.tsx'
 import type { SplitPanes } from '../components/SplitButton.tsx'
 import SplitLines from '../components/SplitLines.tsx'
 import type { SplitCut } from '../components/SplitLines.tsx'
-import ShareDialog from '../components/ShareDialog.tsx'
 import PictureMap from '../components/PictureMap.tsx'
 import Search from '../components/Search.tsx'
 import { playSnap } from '../lib/sound.ts'
 import { canFullscreen, toggleFullscreen } from '../lib/fullscreen.ts'
+
+// Windows that are opened now and then, loaded when first opened.
+const BasicsDialog = lazy(() => import('../components/Help.tsx').then((m) => ({ default: m.BasicsDialog })))
+const loadShare = () => import('../components/ShareDialog.tsx')
+const ShareDialog = lazy(loadShare)
 
 // No browser menu on a right click in the bar along the top, except in a text field.
 const noMenu = (e: MouseEvent) => {
@@ -135,6 +138,10 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
   const [session, setSession] = useState<Session | null>(null)
   const engine = session?.engine ?? null
   const [done, setDone] = useState(false)
+  // Sharing is offered once it's finished, so its window is loaded ahead.
+  useEffect(() => {
+    if (done) loadShare().catch(() => {})
+  }, [done])
   const createNote = useRef<CreateNote | null>(null)
   const openPlayers = useRef<(() => void) | null>(null)
   // Escape with nothing open over the table is for the table first, then for the settings.
@@ -561,7 +568,11 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         </div>
       )}
       {menu && engine && <ContextMenu key={`${menu.kind}:${menu.id}:${menu.x}:${menu.y}`} engine={engine} at={menu} onClose={closeMenu} />}
-      {basicsShown && <BasicsDialog onClose={closeBasics} onAll={allControls} closing={basicsClosing} />}
+      {basicsShown && (
+        <Suspense fallback={null}>
+          <BasicsDialog onClose={closeBasics} onAll={allControls} closing={basicsClosing} />
+        </Suspense>
+      )}
       {party && <Celebration key={partyKey} onDone={endParty} />}
       {import.meta.env.DEV && devMenu && engine && (
         <DevMenu
@@ -602,12 +613,14 @@ export default function Room({ id, leaving = false, arriving = false, onArrived 
         />
       )}
       {engine && shareShown && ranked && (
-        <ShareDialog
-          engine={engine}
-          ranked={ranked}
-          onClose={closeShare}
-          closing={shareClosing}
-        />
+        <Suspense fallback={null}>
+          <ShareDialog
+            engine={engine}
+            ranked={ranked}
+            onClose={closeShare}
+            closing={shareClosing}
+          />
+        </Suspense>
       )}
       {engine && searchShown && (
         <Search

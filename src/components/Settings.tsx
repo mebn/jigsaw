@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import { useApp } from '../lib/app.ts'
 import {
@@ -14,14 +14,19 @@ import {
   User,
   Wrench,
 } from './icons.tsx'
-import Changelog from './Changelog.tsx'
 import Feedback from './Feedback.tsx'
 import Dialog from './Dialog.tsx'
-import { AccountPanel } from './AccountPanel.tsx'
-import HelpPanel from './Help.tsx'
 import { useLinger } from '../lib/linger.ts'
 import PrivateRoom from './PrivateRoom.tsx'
 import { isPlainKey, useEscapeFallback } from '../lib/overlays.ts'
+
+// The panels and windows behind it, loaded when the dialog first opens.
+const loadChangelog = () => import('./Changelog.tsx')
+const loadAccount = () => import('./AccountPanel.tsx')
+const loadHelp = () => import('./Help.tsx')
+const Changelog = lazy(loadChangelog)
+const AccountPanel = lazy(() => loadAccount().then((m) => ({ default: m.AccountPanel })))
+const HelpPanel = lazy(loadHelp)
 
 // Header button that opens the settings dialog, with its panels in a list down the side:
 // general (dark mode, sounds, then feedback, the changelog and the source link), account, and in a
@@ -76,6 +81,11 @@ export default function Settings({ privateRoom = false, help = false, openRef }:
       openRef.current = null
     }
   }, [openRef])
+
+  useEffect(() => {
+    if (!panel) return
+    Promise.all([loadChangelog(), loadAccount(), loadHelp()]).catch(() => {})
+  }, [panel])
 
   useEscapeFallback((e) => {
     if (e.repeat || e.shiftKey) return false
@@ -183,13 +193,19 @@ export default function Settings({ privateRoom = false, help = false, openRef }:
                 </section>
               </>
             )}
-            {shown === 'account' && <AccountPanel onClose={close} />}
-            {shown === 'help' && <HelpPanel />}
+            <Suspense fallback={null}>
+              {shown === 'account' && <AccountPanel onClose={close} />}
+              {shown === 'help' && <HelpPanel />}
+            </Suspense>
           </div>
         </Dialog>
       )}
       {sharing && roomId && <PrivateRoom id={roomId} onClose={closeSharing} />}
-      {changelogShown && <Changelog onClose={closeChangelog} closing={changelogClosing} />}
+      {changelogShown && (
+        <Suspense fallback={null}>
+          <Changelog onClose={closeChangelog} closing={changelogClosing} />
+        </Suspense>
+      )}
       {feedbackShown && <Feedback onClose={closeFeedback} closing={feedbackClosing} />}
     </span>
   )

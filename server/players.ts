@@ -3,7 +3,7 @@ import type { IncomingMessage } from 'node:http'
 import { ERRORS, LIMITS } from '../shared/protocol.ts'
 import type { PlayerRef } from '../shared/protocol.ts'
 import type { Db } from './db.ts'
-import { fail, ipOf, ok, printable, rateLimit, readJson } from './http.ts'
+import { fail, ipOf, isJson, ok, printable, rateLimit, readBody, readJson } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
 import { WORDS } from './words.ts'
@@ -30,15 +30,17 @@ function checkPassword(password: unknown, stored: string | null) {
   return want.length === got.length && timingSafeEqual(got, want)
 }
 
-// A profile picture as the page sends it: a small square JPEG, PNG or WebP as a data URL.
+// A profile picture as the page sends it: a small square JPEG, PNG or WebP, its type and bytes.
 const AVATAR_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const AVATAR_MAX = 256 * 1024
-function avatarOf(data: unknown): { type: string; bytes: Buffer } | null {
+function avatarOf(type: string, bytes: Buffer): { type: string; bytes: Buffer } | null {
+  type = type.trim().toLowerCase()
+  return AVATAR_TYPES.has(type) && bytes.length > 0 && bytes.length <= AVATAR_MAX ? { type, bytes } : null
+}
+// One sent as a data URL, as pages did before pictures went as they are.
+function avatarOfDataUrl(data: unknown) {
   const m = typeof data === 'string' ? /^data:([^;,]+);base64,(.*)$/s.exec(data) : null
-  const type = m ? m[1].trim().toLowerCase() : ''
-  if (!m || !AVATAR_TYPES.has(type)) return null
-  const bytes = Buffer.from(m[2], 'base64')
-  return bytes.length > 0 && bytes.length <= AVATAR_MAX ? { type, bytes } : null
+  return m ? avatarOf(m[1], Buffer.from(m[2], 'base64')) : null
 }
 
 interface PlayerBody {
@@ -109,8 +111,13 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
 
   // POST /api/players[/claim|login|email-login|email|rename|avatar]
   async function route(req: IncomingMessage, action: string | undefined): Promise<Reply> {
-    // A profile picture is a bigger body than the rest.
-    const b = await readJson<PlayerBody>(req, action === 'avatar' ? 512 * 1024 : undefined)
+    // A profile picture comes as the picture itself (see api.setAvatar in the page), with the
+    // passphrase in X-Passphrase; pages from before that send JSON, a bigger body than the rest.
+    const rawAvatar = action === 'avatar' && !isJson(req)
+    const avatarBytes = rawAvatar ? await readBody(req, 512 * 1024) : null
+    const b: Partial<PlayerBody> = rawAvatar
+      ? { passphrase: String(req.headers['x-passphrase'] || '') }
+      : await readJson<PlayerBody>(req, action === 'avatar' ? 512 * 1024 : undefined)
     const ip = ipOf(req)
     const tooMany = fail(429, 'too many tries, wait a few minutes')
     if ((action === undefined || action === 'claim') && signups.blocked(ip)) return fail(429, 'too many new players from here, try again later')
@@ -179,8 +186,10 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
       if (guesses.blocked(ip)) return tooMany
       const who = whoIs(b.passphrase, ip)
       if (!who) return fail(404, ERRORS.unknownPassphrase)
-      const picture = avatarOf(b.image)
-      if (b.image && !picture) return fail(400, 'that picture is not a JPEG, PNG or WebP of at most 256 KB')
+      // None when the body (or image) is empty.
+      const given = avatarBytes ? avatarBytes.length > 0 : !!b.image
+      const picture = avatarBytes ? avatarOf(String(req.headers['content-type'] || ''), avatarBytes) : avatarOfDataUrl(b.image)
+      if (given && !picture) return fail(400, 'that picture is not a JPEG, PNG or WebP of at most 256 KB')
       const p = q.setAvatar.get(picture?.bytes ?? null, picture?.type ?? null, picture ? Date.now() : 0, who.id)!
       hub.renamed(p)
       return ok(p)
@@ -192,7 +201,8 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
   function avatar(id: string): Reply {
     const row = q.avatar.get(id)
     if (!row?.avatar || !row.avatar_type) return
-    return { file: Buffer.from(row.avatar), type: row.avatar_type }
+    // The stored bytes as they are, not copied.
+    return { file: Buffer.from(row.avatar.buffer, row.avatar.byteOffset, row.avatar.byteLength), type: row.avatar_type }
   }
 
   return { whoIs, asking, byId, route, avatar }

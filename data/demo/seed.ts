@@ -61,8 +61,10 @@ for (const p of players)
 
 // ---- statements ------------------------------------------------------------
 const q = {
-  room: prepare(`INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units, preview)
-                 VALUES (?, 'Jigsaw', ?, ?, ?, ?, ?, ?, ?, ?, 'image/jpeg', ?, ?, 0, 0, 0, ?)`),
+  room: prepare(`INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units,
+                                    has_thumb, has_preview)
+                 VALUES (?, 'Jigsaw', ?, ?, ?, ?, ?, ?, ?, x'', 'image/jpeg', '', ?, 0, 0, 0, 1, 1)`),
+  pictures: prepare('INSERT INTO room_pictures (room_id, image, thumb, preview) VALUES (?, ?, ?, ?)'),
   piece: prepare('INSERT INTO pieces (room_id, idx, x, y, r, g, by, tray, tray_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   tray: prepare('INSERT INTO trays (id, room_id, x, y, w, h, name, color, author, created, num, auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
   note: prepare('INSERT INTO notes (id, room_id, x, y, text, author, created, tray) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)'),
@@ -133,7 +135,8 @@ plans.forEach((plan) => {
   const owner = state === 'fresh' ? players.find((p) => p.weight === 10)! : someone()
 
   const thumb = 'data:image/jpeg;base64,' + readFileSync(plan.base + '-thumb.jpg').toString('base64')
-  q.room.run(id, created, cols, rows, shape, seed, W, H, readFileSync(plan.base + '-full.jpg'), thumb, owner.id, readFileSync(plan.base + '-preview.jpg'))
+  q.room.run(id, created, cols, rows, shape, seed, W, H, owner.id)
+  q.pictures.run(id, readFileSync(plan.base + '-full.jpg'), thumb, readFileSync(plan.base + '-preview.jpg'))
 
   // The fresh jigsaw: exactly as the new jigsaw page lays it out, nothing else on the table.
   if (state === 'fresh') {

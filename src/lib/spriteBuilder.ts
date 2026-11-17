@@ -1,7 +1,7 @@
 // Works out every piece's shape (see sprites.ts) for a jigsaw: in a few workers when the browser can,
-// each given a run of pieces' outlines, and sent back as plain pixels for the GPU. Otherwise, or if
+// each given a run of pieces' outlines (packed, see packPieces()), and sent back as plain pixels for the GPU. Otherwise, or if
 // a worker fails, on the main thread, a slice of a frame at a time (see buildSome()).
-import { mipLevels, shapeOutline, spriteShape, spriteSize } from './sprites.ts'
+import { mipLevels, packPieces, shapeOutline, spriteShape, spriteSize } from './sprites.ts'
 import type { ShapePixels, SpriteJob, SpriteReply } from './sprites.ts'
 import type { PuzzleGeometry } from './geometry.ts'
 
@@ -141,14 +141,9 @@ export class SpriteBuilder {
         }
       }
       worker.onerror = () => stop(true)
-      const items: SpriteJob['items'] = []
-      const transfer: Transferable[] = []
-      for (let i = part * per; i < Math.min(n, (part + 1) * per); i++) {
-        const o = shapeOutline(this.geo.pieces[i], this.geo)
-        items.push({ i, ...o })
-        transfer.push(o.pts.buffer, o.codes.buffer)
-      }
-      worker.postMessage({ job, size, sc, levels, items } satisfies SpriteJob, transfer)
+      const pieces = packPieces(this.geo.pieces, part * per, Math.min(n, (part + 1) * per))
+      const transfer = [pieces.outlines.buffer, pieces.starts.buffer, pieces.sides.buffer, pieces.inner.buffer]
+      worker.postMessage({ job, size, sc, levels, S: this.geo.S, pieces } satisfies SpriteJob, transfer)
     })
   }
 
