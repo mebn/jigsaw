@@ -1,5 +1,11 @@
 # Changelog
 
+## 20 November 2026
+
+- The jigsaws page opens on **My jigsaws**: the ones you made or played, with See all to sort them.
+- **Public** shows jigsaws people are playing now, with Browse all to sort the rest.
+- Pictures on the jigsaws page load as you scroll to them.
+
 ## 17 November 2026
 
 - The jigsaws page loads much faster and uses far less memory.

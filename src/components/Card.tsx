@@ -2,7 +2,6 @@ import { Fragment } from 'react'
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { formatDuration, plural } from '../lib/format.ts'
 import { paths } from '../lib/router.ts'
-import { Lock } from './icons.tsx'
 
 // What a jigsaw's picture and the line under it need, from the jigsaws page or a player's window.
 interface ArtRoom {
@@ -15,33 +14,46 @@ interface ArtRoom {
   progress: number
   done: boolean
   finished: number
+  // How many players are in it right now, when known.
+  online?: number
 }
 
 const finishedOn = (ms: number) => new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 
-// A jigsaw's picture. The thumbnail is sharp enough for a tile even on a high density screen.
-export function Art({ r, w, h }: { r: ArtRoom; w: number; h: number }) {
+// A jigsaw's picture. The thumbnail is sharp enough for a tile even on a high density screen. A lazy
+// one waits for the gallery to load it as it nears the screen (see Canvas in Gallery.tsx).
+export function Art({ r, w, h, lazy = false }: { r: ArtRoom; w: number; h: number; lazy?: boolean }) {
   return (
     <span className="art-pic" style={{ width: w, height: h }}>
-      <img src={r.thumb} alt="" draggable={false} decoding="async" />
+      <img {...(lazy ? { 'data-src': r.thumb } : { src: r.thumb })} alt="" draggable={false} decoding="async" />
     </span>
   )
 }
 
 // What the line under a jigsaw's picture says: how long it took and when it was finished, or how far
-// along it is, and how many pieces it has.
+// along it is and who's playing it now; how many pieces it has, and whether it's private.
 function infoParts(r: ArtRoom) {
   const pieces = { text: plural(r.n, 'piece'), title: '' }
+  const hidden = r.private ? [{ text: 'Private', title: 'Only people with the link can join' }] : []
   return r.done
-    ? [{ text: formatDuration(r.seconds), title: 'Time it took' }, ...(r.finished > 0 ? [{ text: finishedOn(r.finished), title: 'Finished on' }] : []), pieces]
-    : [{ text: `${Math.round(r.progress * 100)}% done`, title: 'Pieces connected' }, pieces]
+    ? [
+        { text: formatDuration(r.seconds), title: 'Time it took' },
+        ...(r.finished > 0 ? [{ text: finishedOn(r.finished), title: 'Finished on' }] : []),
+        pieces,
+        ...hidden,
+      ]
+    : [
+        { text: `${Math.round(r.progress * 100)}% done`, title: 'Pieces connected' },
+        ...(r.online ? [{ text: `${r.online} playing`, title: 'Playing now' }] : []),
+        pieces,
+        ...hidden,
+      ]
 }
 
 // The caption's text and the room between its parts and around its dots (CSS px, see .art-info).
 const INFO_FONT_PX = 12
 const INFO_SPACING = 0.02 * INFO_FONT_PX
 const INFO_GAP = 6
-const LOCK_PX = 12
 let measure: CanvasRenderingContext2D | null = null
 const textWidth = (text: string) => {
   if (!measure) {
@@ -59,8 +71,7 @@ export function infoLines(r: ArtRoom, width = Infinity) {
   const lines: (typeof parts)[] = []
   let used = 0
   parts.forEach((p, k) => {
-    // The lock follows the last part.
-    const w = textWidth(p.text) + (k === parts.length - 1 && !r.done && r.private ? INFO_GAP + LOCK_PX : 0)
+    const w = textWidth(p.text)
     if (lines.length && used + dot + w <= width) {
       lines[lines.length - 1].push(p)
       used += dot + w
@@ -89,7 +100,6 @@ export function ArtInfo({ r, width }: { r: ArtRoom; width?: number }) {
               <span title={p.title || undefined}>{p.text}</span>
             </Fragment>
           ))}
-          {l === lines.length - 1 && !r.done && !!r.private && <Lock aria-label="Private" />}
         </span>
       ))}
     </span>

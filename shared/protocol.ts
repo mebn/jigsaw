@@ -99,6 +99,41 @@ export interface RoomSummary {
   done: boolean
   // When it was finished (ms since epoch), or 0 when not known.
   finished: number
+  // How many other players (not the one asking) are in it right now.
+  online: number
+}
+
+// The jigsaws page (GET /api/rooms/home): the asking player's own jigsaws (made, connected in, or
+// private ones they opened), in progress and the latest finished, and the public jigsaws in progress
+// that were played last. Each list is the first part of one that may be longer: the totals say how long.
+export interface HomeRooms {
+  mine: RoomSummary[]
+  mineTotal: number
+  finished: RoomSummary[]
+  finishedTotal: number
+  public: RoomSummary[]
+  publicTotal: number
+}
+
+// The lists GET /api/rooms/list pages through: the player's own jigsaws in progress (mine), their
+// finished ones (finished), and public jigsaws in progress (public).
+export type RoomListKind = 'mine' | 'finished' | 'public'
+// The orders a list can be in: last played first (for their own jigsaws, by them), newest first,
+// nearest done first, most pieces first, and for finished ones, last finished first and the biggest
+// share of the connections made by the asking player first.
+export type RoomSort = 'recent' | 'newest' | 'nearly' | 'pieces' | 'finished' | 'share'
+// A page of a list: next is where the next page starts, or null at the end.
+export interface RoomPage {
+  rooms: RoomSummary[]
+  total: number
+  next: number | null
+}
+
+// What a player has done in all their jigsaws together.
+export interface PlayerStats {
+  made: number
+  connections: number
+  seconds: number
 }
 
 // A jigsaw a player has played: connections is how many they made, time how long they spent on it and

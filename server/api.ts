@@ -42,10 +42,13 @@ function createApi(dbFile: string) {
     if (area === 'lan' && get) return [200, { address: lanAddress() }]
     if (area === 'players') {
       if (id && get && action === 'avatar') return players.avatar(id)
+      if (id && get && action === 'stats') return rooms.stats(id)
       if (id && get && !action) return rooms.profile(req, id)
       if (req.method === 'POST' && !action) return players.route(req, id)
     }
     if (area === 'feedback' && req.method === 'POST' && !id) return feedback.route(req)
+    if (area === 'rooms' && get && !action && id === 'home') return rooms.home(req)
+    if (area === 'rooms' && get && !action && id === 'list') return rooms.list(req, query)
     if (area === 'rooms') return id ? rooms.room(req, id, action) : rooms.rooms(req)
   }
 
