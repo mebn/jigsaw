@@ -173,7 +173,7 @@ function AvatarField({ player }: { player: Player }) {
 }
 
 // What this player has done in all their jigsaws together: jigsaws made, connections made and time
-// spent, added up from their profile (see api.player()).
+// spent (see api.stats()).
 function Stats({ player }: { player: Player }) {
   const [stats, setStats] = useState<{ made: number; connections: number; seconds: number } | null>(null)
   const [failed, setFailed] = useState(false)
@@ -182,20 +182,13 @@ function Stats({ player }: { player: Player }) {
     setStats(null)
     setFailed(false)
     api
-      .player(player.id, player.passphrase)
-      .then((d) => {
-        if (dead) return
-        setStats({
-          made: d.rooms.filter((r) => r.owner === player.id).length,
-          connections: d.rooms.reduce((t, r) => t + r.connections, 0),
-          seconds: d.rooms.reduce((t, r) => t + r.time, 0),
-        })
-      })
+      .stats(player.id)
+      .then((d) => !dead && setStats(d))
       .catch(() => !dead && setFailed(true))
     return () => {
       dead = true
     }
-  }, [player.id, player.passphrase])
+  }, [player.id])
 
   if (failed) return <p className="modal-note">Couldn't load your stats.</p>
   if (!stats) return <span className="spin" aria-label="Loading stats" />

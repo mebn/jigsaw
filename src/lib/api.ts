@@ -8,7 +8,11 @@ import type {
   PlayerProfile,
   PlayerRef,
   RoomDetails,
-  RoomSummary,
+  HomeRooms,
+  PlayerStats,
+  RoomListKind,
+  RoomPage,
+  RoomSort,
   ServerMessage,
   ServerMessageOf,
   Snapshot,
@@ -86,8 +90,15 @@ export const api = {
     request<PlayerRef>('/api/players/avatar', { method: 'POST', body: image ? dataUrlBlob(image) : undefined, as: passphrase }),
   feedback: (text: string, passphrase?: string | null, room?: string | null) => post<{ ok: true }>('/api/feedback', { text, passphrase, room }),
   lan: () => request<{ address: string | null }>('/api/lan'),
-  // Private jigsaws only come back for a player who has them.
-  rooms: (passphrase?: string | null) => request<RoomSummary[]>('/api/rooms', { as: passphrase }),
+  // What the jigsaws page shows: this player's jigsaws and the public ones played last.
+  home: (passphrase?: string | null) => request<HomeRooms>('/api/rooms/home', { as: passphrase }),
+  // A page of one of the whole lists, from start.
+  list: (kind: RoomListKind, o: { sort?: RoomSort; start?: number }, passphrase?: string | null) => {
+    const params = new URLSearchParams({ kind, start: String(o.start || 0) })
+    if (o.sort) params.set('sort', o.sort)
+    return request<RoomPage>(`/api/rooms/list?${params}`, { as: passphrase })
+  },
+  stats: (id: string) => request<PlayerStats>(`/api/players/${encodeURIComponent(id)}/stats`),
   room: (id: string) => request<RoomDetails>(`/api/rooms/${id}`),
   player: (id: string, passphrase?: string | null) => request<PlayerProfile>(`/api/players/${encodeURIComponent(id)}`, { as: passphrase }),
   join: (id: string, passphrase: string) => post<{ ok: true }>(`/api/rooms/${id}/join`, { passphrase }),

@@ -3,8 +3,8 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import { LIMITS, PREVIEW_H, PREVIEW_W } from '../shared/protocol.ts'
-import type { NewRoom, PlayerRef, RoomDetails } from '../shared/protocol.ts'
-import type { Db } from './db.ts'
+import type { HomeRooms, NewRoom, PlayerRef, PlayerStats, RoomDetails, RoomListKind, RoomPage, RoomSort, RoomSummary } from '../shared/protocol.ts'
+import type { Db, Stmt } from './db.ts'
 import { fail, ipOf, isJson, ok, printable, rateLimit, readBody, readForm, readJson } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
@@ -14,6 +14,8 @@ import type { createTable } from './table.ts'
 
 type Room = Omit<RoomDetails, 'pieces' | 'notes' | 'noteReactions' | 'noteReplies' | 'refs' | 'trays' | 'times' | 'seen' | 'online' | 'players'>
 type Table = ReturnType<typeof createTable>
+// A row of a list of jigsaws, before its progress and who's in it are added.
+type SummaryRow = Omit<RoomSummary, 'progress' | 'done' | 'online'>
 
 // The longest side of a jigsaw's thumbnail, in pixels (see encode() in NewRoom.tsx).
 const THUMB_SIDE = 480
@@ -55,27 +57,58 @@ const asBuffer = (u: Uint8Array) => Buffer.from(u.buffer, u.byteOffset, u.byteLe
 // Share of a jigsaw's pieces connected (0 to 1), from how many pieces (n) and groups it has.
 const progress = (n: number, groups: number) => ({ progress: n > 1 ? (n - groups) / (n - 1) : 0, done: n > 0 && groups === 1 })
 
-// How many groups there are, and the time everyone spent, in room r.
-const GROUPS = '(SELECT COUNT(DISTINCT p.g) FROM pieces p WHERE p.room_id = r.id)'
-const SECONDS = '(SELECT COALESCE(SUM(t.seconds), 0) FROM times t WHERE t.room_id = r.id)'
-// A room's pieces: long pieces are stored per cell, so units counts them when there are any.
-const PIECES = '(CASE WHEN r.units > 0 THEN r.units ELSE (SELECT COUNT(*) FROM pieces p WHERE p.room_id = r.id) END)'
 // Where room r's thumbnail is (see GET thumb), or '' when it has none. A link, not the picture, so
 // the list stays small and browsers keep each thumbnail.
 const THUMB = "(CASE WHEN r.has_thumb THEN '/api/rooms/' || r.id || '/thumb' ELSE '' END) AS thumb"
+// What a list shows of room r. Its pieces, groups, time and when it was finished are kept on the room
+// (see migration 033), so a list doesn't count them up.
+const SUMMARY = `r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
+  ${THUMB}, r.owner, r.private, r.piece_count AS n, r.group_count AS groups, r.seconds, r.finished_at AS finished`
+// Room r is the asking player's (one ? for each of the three): they made it, made a connection in it,
+// or opened its private link.
+const MINE = `(r.owner = ? OR r.id IN (SELECT room_id FROM scores WHERE player_id = ? AND n > 0)
+  OR (r.private = 1 AND r.id IN (SELECT room_id FROM room_players WHERE player_id = ?)))`
+// The ways each list can be sorted, the first its default: the order, and a table joined for it
+// on the asking player (one ?) when it needs one.
+type Order = { order: string; join?: string }
+const NEARLY: Order = { order: '(r.piece_count - r.group_count) * 1.0 / MAX(r.piece_count - 1, 1) DESC, r.played_at DESC' }
+const NEWEST: Order = { order: 'r.created DESC' }
+const PIECES: Order = { order: 'r.piece_count DESC, r.created DESC' }
+const ORDERS: Record<RoomListKind, Partial<Record<RoomSort, Order>>> = {
+  // Their own jigsaws in progress: last played by them first.
+  mine: {
+    recent: { order: 'COALESCE(t.seen, 0) DESC, r.created DESC', join: 'LEFT JOIN times t ON t.room_id = r.id AND t.user = ?' },
+    newest: NEWEST,
+    nearly: NEARLY,
+    pieces: PIECES,
+  },
+  finished: {
+    finished: { order: 'r.finished_at DESC, r.created DESC' },
+    // Their share of the jigsaw's connections.
+    share: {
+      order: 'COALESCE(m.n, 0) * 1.0 / MAX(r.piece_count - 1, 1) DESC, r.finished_at DESC',
+      join: 'LEFT JOIN scores m ON m.room_id = r.id AND m.player_id = ?',
+    },
+    pieces: PIECES,
+  },
+  public: { recent: { order: 'r.played_at DESC, r.created DESC' }, newest: NEWEST, nearly: NEARLY, pieces: PIECES },
+}
+const KINDS: readonly RoomListKind[] = ['mine', 'finished', 'public']
+// sort when list kind can be sorted that way, else its default.
+const sortFor = (kind: RoomListKind, sort: string | null | undefined) =>
+  (sort && sort in ORDERS[kind] ? sort : Object.keys(ORDERS[kind])[0]) as RoomSort
+
+// How many of each list the jigsaws page shows before "See all", and how many a page of a list has.
+const HOME = { mine: 40, finished: 10, public: 20 }
+const PAGE = 40
 
 export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: Players, table: Table) {
   const q = {
-    list: prepare<{ n: number; groups: number } & Record<string, unknown>>(`
-      SELECT r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
-             ${THUMB}, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
-             -- When a finished jigsaw was finished: its last snapshot (the biggest group last grew,
-             -- to the whole picture), or for one finished before snapshots, when someone was last in it.
-             COALESCE((SELECT MAX(s.t) FROM snapshots s WHERE s.room_id = r.id),
-                      (SELECT MAX(t.seen) FROM times t WHERE t.room_id = r.id), 0) AS finished
-      FROM rooms r
-      WHERE r.private = 0 OR r.id IN (SELECT room_id FROM room_players WHERE player_id = ?)
-      ORDER BY r.created DESC`),
+    // How many jigsaws a player made, the connections they made and the time they spent, in all.
+    stats: prepare<PlayerStats>(`
+      SELECT (SELECT COUNT(*) FROM rooms WHERE owner = ?1) AS made,
+             (SELECT COALESCE(SUM(n), 0) FROM scores WHERE player_id = ?1) AS connections,
+             (SELECT COALESCE(SUM(seconds), 0) FROM times WHERE user = ?1) AS seconds`),
     room: prepare<Room>(
       `SELECT id, name, created, cols, rows, shape, seed, width, height, long_pieces AS longPieces, owner, private,
               has_preview AS preview FROM rooms WHERE id = ?`,
@@ -87,7 +120,7 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     // What a jigsaw's link preview shows, see sharing().
     share: prepare<{ id: string; name: string; width: number; height: number; private: number; preview: number; thumb: number; n: number; groups: number }>(
       `SELECT r.id, r.name, r.width, r.height, r.private, r.has_preview AS preview, r.has_thumb AS thumb,
-              ${PIECES} AS n, ${GROUPS} AS groups FROM rooms r WHERE r.id = ?`,
+              r.piece_count AS n, r.group_count AS groups FROM rooms r WHERE r.id = ?`,
     ),
     preview: prepare<{ preview: Uint8Array }>('SELECT preview FROM room_pictures WHERE room_id = ? AND preview IS NOT NULL'),
     // Only ever set once, so a preview can be cached for good and nobody can swap one that's there.
@@ -98,8 +131,8 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     // The picture columns of rooms are left empty, see migration 030.
     insertRoom: prepare(`
       INSERT INTO rooms (id, name, created, cols, rows, shape, seed, width, height, image, image_type, thumb, owner, private, long_pieces, units,
-                         has_thumb, has_preview)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, x'', ?, '', ?, ?, ?, ?, ?, ?)`),
+                         has_thumb, has_preview, piece_count, group_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, x'', ?, '', ?, ?, ?, ?, ?, ?, ?, ?)`),
     insertPictures: prepare('INSERT INTO room_pictures (room_id, image, thumb, preview) VALUES (?, ?, ?, ?)'),
     insertPiece: prepare('INSERT INTO pieces (room_id, idx, x, y, r, g) VALUES (?, ?, ?, ?, ?, ?)'),
     join: prepare('INSERT OR IGNORE INTO room_players (room_id, player_id, joined) VALUES (?, ?, ?)'),
@@ -127,9 +160,8 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     // The jigsaws a player made, made connections in or spent time in, with their share of each.
     // Private ones only when the asking player (?2) has the link too.
     playerRooms: prepare<{ n: number; groups: number; theirs: number } & Record<string, unknown>>(`
-      SELECT r.id, r.name, r.created, r.width, r.height, ${THUMB}, r.owner, r.private, ${PIECES} AS n, ${GROUPS} AS groups, ${SECONDS} AS seconds,
-             COALESCE((SELECT MAX(s.t) FROM snapshots s WHERE s.room_id = r.id),
-                      (SELECT MAX(t2.seen) FROM times t2 WHERE t2.room_id = r.id), 0) AS finished,
+      SELECT r.id, r.name, r.created, r.width, r.height, ${THUMB}, r.owner, r.private, r.piece_count AS n, r.group_count AS groups,
+             r.seconds, r.finished_at AS finished,
              COALESCE(m.n, 0) AS connections, COALESCE(t.seconds, 0) AS theirs, COALESCE(t.seen, 0) AS seen
       FROM rooms r
       LEFT JOIN scores m ON m.room_id = r.id AND m.player_id = ?1
@@ -156,10 +188,84 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     return ok({ ...p, rooms })
   }
 
+  // The lists of jigsaws, each made the first time it's asked for: kind, sorted by sort.
+  const lists = new Map<string, { page: Stmt<SummaryRow>; count: Stmt<{ n: number }>; joined: boolean }>()
+  function listOf(kind: RoomListKind, sort: RoomSort) {
+    const key = `${kind} ${sort}`
+    let l = lists.get(key)
+    if (!l) {
+      const where = [
+        kind === 'public' ? 'r.private = 0' : MINE,
+        kind === 'finished' ? 'r.group_count = 1' : 'r.group_count != 1',
+      ].join(' AND ')
+      const { order, join = '' } = ORDERS[kind][sort]!
+      l = {
+        page: prepare<SummaryRow>(`SELECT ${SUMMARY} FROM rooms r ${join} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`),
+        count: prepare<{ n: number }>(`SELECT COUNT(*) AS n FROM rooms r WHERE ${where}`),
+        joined: !!join,
+      }
+      lists.set(key, l)
+    }
+    return l
+  }
+  // A page of a list, from start, for player me ('' for nobody: their own lists are empty).
+  function page(kind: RoomListKind, me: string, opts: { sort?: RoomSort; start?: number; limit: number }): RoomPage {
+    if (kind !== 'public' && !me) return { rooms: [], total: 0, next: null }
+    const { start = 0, limit } = opts
+    const l = listOf(kind, sortFor(kind, opts.sort))
+    const params = kind === 'public' ? [] : [me, me, me]
+    const rows = l.page.all(...(l.joined ? [me] : []), ...params, limit + 1, start)
+    const more = rows.length > limit
+    const rooms = rows.slice(0, limit).map((r) => summary(r, me))
+    return { rooms, total: l.count.get(...params)?.n ?? 0, next: more ? start + limit : null }
+  }
+  // A row of a list as the page shows it, for player me: who's playing is everyone else in it, so
+  // someone just back from a jigsaw (its socket still closing) isn't counted as playing it.
+  const summary = (r: SummaryRow, me: string): RoomSummary => ({
+    ...r,
+    ...progress(r.n, r.groups),
+    online: hub.online(r.id).filter((id) => id !== me).length,
+  })
+
+  // GET /api/rooms/home: what the jigsaws page shows (see HomeRooms).
+  function home(req: IncomingMessage): HomeRooms {
+    const me = players.asking(req)?.id || ''
+    const mine = page('mine', me, { limit: HOME.mine })
+    const finished = page('finished', me, { limit: HOME.finished })
+    const pub = page('public', me, { limit: HOME.public })
+    return {
+      mine: mine.rooms,
+      mineTotal: mine.total,
+      finished: finished.rooms,
+      finishedTotal: finished.total,
+      public: pub.rooms,
+      publicTotal: pub.total,
+    }
+  }
+
+  // GET /api/rooms/list?kind=&sort=&start=: a page of one of the lists (see RoomListKind).
+  function list(req: IncomingMessage, query: URLSearchParams): Reply {
+    const kind = query.get('kind') as RoomListKind
+    if (!KINDS.includes(kind)) return fail(400, 'bad request')
+    const sort = query.get('sort')
+    const me = players.asking(req)?.id || ''
+    return ok(
+      page(kind, me, {
+        sort: sortFor(kind, sort),
+        start: Math.max(0, Number(query.get('start')) | 0),
+        limit: PAGE,
+      }),
+    )
+  }
+
   // GET and POST /api/rooms
   async function rooms(req: IncomingMessage): Promise<Reply> {
-    // Private jigsaws are listed only for players who have opened them.
-    if (req.method === 'GET') return ok(q.list.all(players.asking(req)?.id || '').map((r) => ({ ...r, ...progress(r.n, r.groups) })))
+    // Pages from before the jigsaws page had its own lists get its lists in one.
+    if (req.method === 'GET') {
+      const h = home(req)
+      const seen = new Set<string>()
+      return ok([...h.mine, ...h.finished, ...h.public].filter((r) => !seen.has(r.id) && !!seen.add(r.id)))
+    }
     if (req.method !== 'POST') return
     // A new jigsaw is a big upload, read before its maker can be checked: each address gets so many.
     const ip = ipOf(req)
@@ -192,6 +298,8 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     const hidden = !!b.private
     const id = hidden ? randomBytes(12).toString('base64url') : randomUUID().slice(0, 8)
     const pieces = b.pieces
+    // The cells of a long piece start out in one group, so there are as many pieces as groups.
+    const groups = new Set(pieces.map((p) => p.g)).size
     tx(() => {
       q.insertRoom.run(
         id,
@@ -207,10 +315,11 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
         owner.id,
         hidden ? 1 : 0,
         b.longPieces ? 1 : 0,
-        // The cells of a long piece start out in one group, so there are as many pieces as groups.
-        b.longPieces ? new Set(pieces.map((p) => p.g)).size : 0,
+        b.longPieces ? groups : 0,
         thumb ? 1 : 0,
         preview ? 1 : 0,
+        b.longPieces ? groups : pieces.length,
+        groups,
       )
       q.insertPictures.run(id, picture.bytes, thumb, preview)
       if (hidden) q.join.run(id, owner.id, Date.now())
@@ -318,6 +427,10 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     exists: (id: string) => !!q.room.get(id),
     sharing,
     profile,
+    // GET /api/players/:id/stats
+    stats: (id: string): Reply => ok(q.stats.get(id)),
+    home: (req: IncomingMessage): Reply => ok(home(req)),
+    list,
     rooms,
     room,
   }

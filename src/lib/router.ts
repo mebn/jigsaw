@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react'
+import type { RoomListKind } from '../../shared/protocol.ts'
 
 // The app's addresses: plain paths, no hash. /home is the jigsaws page and /new the same with the
-// new jigsaw form open; /r/<id> is a jigsaw. / opens the last jigsaw (see App).
+// new jigsaw form open; under /home are the whole lists the page shows the start of (lists); /r/<id>
+// is a jigsaw. / opens the last jigsaw (see App).
 export const paths = {
   rooms: '/home',
   new: '/new',
   room: (id: string) => `/r/${id}`,
+  lists: { mine: '/home/playing', finished: '/home/finished', public: '/home/browse' } satisfies Record<RoomListKind, string>,
 }
 
-// The jigsaw a path opens, and whether it is the jigsaws page.
+// The jigsaw a path opens, the whole list it shows, and whether it is the jigsaws page (with a list
+// or not).
 export const roomOf = (path: string) => (path.startsWith('/r/') ? path.slice(3) : null)
-export const isGallery = (path: string) => path === paths.rooms || path === paths.new
+export const listOf = (path: string) => (Object.entries(paths.lists).find(([, p]) => p === path)?.[0] as RoomListKind | undefined) ?? null
+export const isGallery = (path: string) => path === paths.rooms || path === paths.new || !!listOf(path)
 
 // Every route change goes through here or the back button.
 export function navigate(path: string, replace = false) {
