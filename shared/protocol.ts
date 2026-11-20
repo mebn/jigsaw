@@ -54,6 +54,14 @@ export interface PlayerLogin extends PlayerRef {
   email?: string | null
 }
 
+// What the page sends about its browser when signing up or logging in (see server/devices.ts).
+export interface DeviceInfo {
+  storage: 'persisted' | 'ok' | 'blocked'
+  // CSS pixels and pixel ratio, as 390x844@3.
+  screen: string
+  webgpu: boolean
+}
+
 // What a jigsaw is cut from: its grid, the picture's size, the shape of its pieces and its seed.
 // longPieces is a boolean, or 0/1 as the server stores it.
 export interface PuzzleSpec {

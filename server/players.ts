@@ -6,6 +6,7 @@ import type { Db } from './db.ts'
 import { fail, ipOf, isJson, ok, printable, rateLimit, readBody, readJson } from './http.ts'
 import type { Reply } from './http.ts'
 import type { Hub } from './hub.ts'
+import { createDevices } from './devices.ts'
 import { WORDS } from './words.ts'
 
 type PlayerRow = PlayerRef & { email: string | null }
@@ -49,9 +50,13 @@ interface PlayerBody {
   email: string
   password: string
   image: string | null
+  // What the page says about its browser (DeviceInfo), when signing up or logging in.
+  device: unknown
 }
 
-export function createPlayers({ prepare, tx }: Db, hub: Hub) {
+export function createPlayers(db: Db, hub: Hub) {
+  const { prepare, tx } = db
+  const devices = createDevices(db)
   const q = {
     player: prepare<PlayerRef>('SELECT id, name, avatar_at AS avatar FROM players WHERE id = ?'),
     // A passphrase, or the token of a device logged in with an email and password.
@@ -125,7 +130,9 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
       const name = cleanName(b.name)
       if (!name) return fail(400, 'name required')
       signups.count(ip)
-      return ok(create(name))
+      const p = create(name)
+      devices.seen(p.id, req, 'signup', b.device)
+      return ok(p)
     }
     // Browsers from before passphrases only know a name, which proves nothing: they get a new player
     // when the name is free, and are otherwise asked to log in or start fresh (409). A player from
@@ -135,12 +142,15 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
       if (!name) return fail(400, 'name required')
       if (q.named.get(name)) return fail(409, ERRORS.nameTaken)
       signups.count(ip)
-      return ok(create(name))
+      const p = create(name)
+      devices.seen(p.id, req, 'claim', b.device)
+      return ok(p)
     }
     if (action === 'login') {
       if (guesses.blocked(ip)) return tooMany
       const p = whoIs(b.passphrase, ip)
       if (!p) return fail(404, ERRORS.unknownPassphrase)
+      devices.seen(p.id, req, 'login', b.device)
       return ok({ ...p, passphrase: normalize(b.passphrase) })
     }
     // Log in with an email and password: this device gets its own token to use as its passphrase.
@@ -151,6 +161,7 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
         guesses.count(ip)
         return fail(404, 'wrong email or password')
       }
+      devices.seen(p.id, req, 'email-login', b.device)
       return ok({ id: p.id, name: p.name, email: p.email, avatar: p.avatar, passphrase: newSession(p.id) })
     }
     // Switch from a passphrase to an email and password. The passphrase stops working, on every
@@ -169,6 +180,7 @@ export function createPlayers({ prepare, tx }: Db, hub: Hub) {
         q.useEmail.run(email, hashPassword(b.password), who.id)
         passphrase = newSession(who.id)
       })
+      devices.seen(who.id, req, 'email', b.device)
       return ok({ id: who.id, name: who.name, email, avatar: who.avatar, passphrase })
     }
     if (action === 'rename') {

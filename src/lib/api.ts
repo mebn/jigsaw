@@ -2,6 +2,7 @@ import { newBuild } from './update.ts'
 import { decode, encode } from '../../shared/wire.ts'
 import type {
   ClientMessage,
+  DeviceInfo,
   NewRoom,
   PlayerLogin,
   PlayerProfile,
@@ -57,12 +58,27 @@ export interface NewRoomPictures {
   preview?: Blob
 }
 
+// This browser, sent along when signing up or logging in.
+async function device(): Promise<DeviceInfo> {
+  let storage: DeviceInfo['storage'] = 'ok'
+  try {
+    localStorage.setItem('storageCheck', '1')
+    localStorage.removeItem('storageCheck')
+    if (await navigator.storage?.persisted?.()) storage = 'persisted'
+  } catch {
+    storage = 'blocked'
+  }
+  return { storage, screen: `${screen.width}x${screen.height}@${+devicePixelRatio.toFixed(2)}`, webgpu: 'gpu' in navigator }
+}
+const postWithDevice = async <T>(url: string, body: object) => post<T>(url, { ...body, device: await device() })
+
 export const api = {
-  signUp: (name: string) => post<PlayerLogin>('/api/players', { name }),
-  claim: (name: string) => post<PlayerLogin>('/api/players/claim', { name }),
-  login: (passphrase: string) => post<PlayerLogin>('/api/players/login', { passphrase }),
-  loginEmail: (email: string, password: string) => post<PlayerLogin>('/api/players/email-login', { email, password }),
-  useEmail: (passphrase: string, email: string, password: string) => post<PlayerLogin>('/api/players/email', { passphrase, email, password }),
+  signUp: (name: string) => postWithDevice<PlayerLogin>('/api/players', { name }),
+  claim: (name: string) => postWithDevice<PlayerLogin>('/api/players/claim', { name }),
+  login: (passphrase: string) => postWithDevice<PlayerLogin>('/api/players/login', { passphrase }),
+  loginEmail: (email: string, password: string) => postWithDevice<PlayerLogin>('/api/players/email-login', { email, password }),
+  useEmail: (passphrase: string, email: string, password: string) =>
+    postWithDevice<PlayerLogin>('/api/players/email', { passphrase, email, password }),
   rename: (passphrase: string, name: string) => post<PlayerRef>('/api/players/rename', { passphrase, name }),
   // image: a data URL from avatarFromFile (see src/lib/avatars.ts), or null to take it away. Sent as
   // the picture itself (nothing, to take it away).
