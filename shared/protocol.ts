@@ -90,6 +90,8 @@ export interface RoomSummary {
   // Where its thumbnail is, or '' when it has none.
   thumb: string
   owner: string | null
+  // The name of the player who made it, or null for jigsaws from before they had makers.
+  ownerName: string | null
   private: number
   n: number
   groups: number

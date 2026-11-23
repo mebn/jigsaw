@@ -60,10 +60,11 @@ const progress = (n: number, groups: number) => ({ progress: n > 1 ? (n - groups
 // Where room r's thumbnail is (see GET thumb), or '' when it has none. A link, not the picture, so
 // the list stays small and browsers keep each thumbnail.
 const THUMB = "(CASE WHEN r.has_thumb THEN '/api/rooms/' || r.id || '/thumb' ELSE '' END) AS thumb"
-// What a list shows of room r. Its pieces, groups, time and when it was finished are kept on the room
+// What a list shows of room r, with its maker's name. Its pieces, groups, time and when it was finished are kept on the room
 // (see migration 033), so a list doesn't count them up.
 const SUMMARY = `r.id, r.name, r.created, r.cols, r.rows, r.shape, r.seed, r.width, r.height, r.long_pieces AS longPieces,
-  ${THUMB}, r.owner, r.private, r.piece_count AS n, r.group_count AS groups, r.seconds, r.finished_at AS finished`
+  ${THUMB}, r.owner, (SELECT name FROM players WHERE id = r.owner) AS ownerName, r.private, r.piece_count AS n,
+  r.group_count AS groups, r.seconds, r.finished_at AS finished`
 // Room r is the asking player's (one ? for each of the three): they made it, made a connection in it,
 // or opened its private link.
 const MINE = `(r.owner = ? OR r.id IN (SELECT room_id FROM scores WHERE player_id = ? AND n > 0)

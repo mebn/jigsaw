@@ -4,6 +4,7 @@
 
 - The jigsaws page has **All**, **Mine**, **In progress** and **Finished** tabs, loading more as you scroll.
 - Sort jigsaws by recent, nearly done or biggest.
+- An **i** button on each jigsaw shows its picture, who made it and more.
 
 ## 20 November 2026
 

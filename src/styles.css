@@ -24,10 +24,14 @@
   --glass-thick: rgba(250, 250, 250, 0.74);
   --glass-line: rgba(255, 255, 255, 0.7);
   /* Light caught along the top and bottom edges, and a faint glow just inside them. */
-  --glass-rim: inset 0 1px 0.5px rgba(255, 255, 255, 0.95), inset 0 -1px 0.5px rgba(255, 255, 255, 0.55), inset 0 0 8px rgba(255, 255, 255, 0.2),
-    0 0 0 1px rgba(0, 0, 0, 0.04);
-  --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.2);
-  --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.06), 0 36px 80px -16px rgba(0, 0, 0, 0.38);
+  --glass-rim:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.55),
+    inset 0 0 8px rgba(255, 255, 255, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  --glass-drop:
+    0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.2);
+  --glass-drop-deep:
+    0 2px 6px rgba(0, 0, 0, 0.06), 0 36px 80px -16px rgba(0, 0, 0, 0.38);
   /* Thin glass is nearly clear: what's behind it is hardly blurred, only lightened a little so
      what's on the glass still reads. */
   --glass-fx: blur(2px) saturate(1.6) brightness(1.02);
@@ -56,7 +60,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
+  :root:not([data-theme="light"]) {
     --bg: #0a0a0a;
     --fg: #f5f5f5;
     --muted: rgba(245, 245, 245, 0.45);
@@ -76,19 +80,24 @@
     --glass: rgba(255, 255, 255, 0.05);
     --glass-thick: rgba(22, 22, 24, 0.72);
     --glass-line: rgba(255, 255, 255, 0.12);
-    --glass-rim: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.12), inset 0 0 14px rgba(255, 255, 255, 0.05),
-      0 0 0 1px rgba(0, 0, 0, 0.35);
+    --glass-rim:
+      inset 0 1px 0.5px rgba(255, 255, 255, 0.32),
+      inset 0 -1px 0.5px rgba(255, 255, 255, 0.12),
+      inset 0 0 14px rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.35);
     --glass-fx: blur(2px) saturate(1.7) brightness(0.78);
-    --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
-    --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
+    --glass-drop:
+      0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
+    --glass-drop-deep:
+      0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
     --glass-shine: rgba(255, 255, 255, 0.1);
     --chip: rgba(255, 255, 255, 0.14);
-    --chip-drop: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --chip-drop:
+      inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
     color-scheme: dark;
   }
 }
 
-:root[data-theme='dark'] {
+:root[data-theme="dark"] {
   --field: rgba(245, 245, 245, 0.035);
   --line-strong: rgba(245, 245, 245, 0.32);
   --ring: rgba(245, 245, 245, 0.1);
@@ -108,14 +117,19 @@
   --glass: rgba(255, 255, 255, 0.05);
   --glass-thick: rgba(22, 22, 24, 0.72);
   --glass-line: rgba(255, 255, 255, 0.12);
-  --glass-rim: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.12), inset 0 0 14px rgba(255, 255, 255, 0.05),
-    0 0 0 1px rgba(0, 0, 0, 0.35);
+  --glass-rim:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.32),
+    inset 0 -1px 0.5px rgba(255, 255, 255, 0.12),
+    inset 0 0 14px rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.35);
   --glass-fx: blur(2px) saturate(1.7) brightness(0.78);
-  --glass-drop: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
-  --glass-drop-deep: 0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
+  --glass-drop:
+    0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -8px rgba(0, 0, 0, 0.6);
+  --glass-drop-deep:
+    0 2px 6px rgba(0, 0, 0, 0.3), 0 36px 80px -16px rgba(0, 0, 0, 0.8);
   --glass-shine: rgba(255, 255, 255, 0.1);
   --chip: rgba(255, 255, 255, 0.14);
-  --chip-drop: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --chip-drop:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 1px 3px rgba(0, 0, 0, 0.4);
   color-scheme: dark;
 }
 
@@ -135,7 +149,13 @@ body,
 body {
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.4 ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  font:
+    14px/1.4 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -243,11 +263,15 @@ button {
 }
 /* A soft light on a bar where the pointer is (--gx and --gy, see lib/glass.ts). */
 .float::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(90px circle at var(--gx, 50%) var(--gy, 0px), var(--glass-shine), transparent 70%);
+  background: radial-gradient(
+    90px circle at var(--gx, 50%) var(--gy, 0px),
+    var(--glass-shine),
+    transparent 70%
+  );
   opacity: 0;
   transition: opacity 0.4s;
   pointer-events: none;
@@ -308,7 +332,7 @@ button {
 /* What dims and blurs the page behind a window. It's a layer of its own, behind the window, so the
    window's glass has the page to look through to. */
 .modal-bg::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
@@ -703,7 +727,8 @@ button {
   position: relative;
   display: grid;
   place-items: center;
-  transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)) translateY(var(--lift, 0px));
+  transform: perspective(900px) rotateX(var(--rx, 0deg))
+    rotateY(var(--ry, 0deg)) translateY(var(--lift, 0px));
   transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .tile:hover .pic {
@@ -777,10 +802,14 @@ button {
 }
 /* A soft light where the pointer is. */
 .art-pic::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.22), transparent 55%);
+  background: radial-gradient(
+    circle at var(--mx, 50%) var(--my, 50%),
+    rgba(255, 255, 255, 0.22),
+    transparent 55%
+  );
   opacity: 0;
   transition: opacity 0.3s;
   pointer-events: none;
@@ -789,8 +818,9 @@ button {
   opacity: 1;
 }
 
-/* The owner's delete button, on hover. */
-.tile .del {
+/* The info button, and the owner's delete button left of it, on hover. */
+.tile .del,
+.tile .about {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -814,8 +844,25 @@ button {
   top: 10px;
   right: 10px;
 }
+/* The delete button sits left of the info button. */
+.tile .about ~ .del {
+  right: 42px;
+}
+.tile.art .about {
+  top: 10px;
+  right: 10px;
+}
+.tile.art .about ~ .del {
+  right: 46px;
+}
+/* The info button keeps its glass under the pointer, a shade darker. */
+.tile .about:hover:not(:disabled) {
+  background: linear-gradient(var(--hover), var(--hover)), var(--glass-thick);
+}
 .tile:hover .del,
-.tile:focus-visible .del {
+.tile:focus-visible .del,
+.tile:hover .about,
+.tile:focus-visible .about {
   opacity: 1;
 }
 .tile .del:hover:not(:disabled) {
@@ -823,14 +870,60 @@ button {
   background: var(--danger);
   color: #fff;
 }
-.tile .del svg {
+.tile .del svg,
+.tile .about svg {
   width: 16px;
   height: 16px;
 }
 @media (hover: none) {
-  .tile .del {
+  .tile .del,
+  .tile .about {
     opacity: 1;
   }
+}
+
+/* A jigsaw's info window: its picture over what there is to know about it. */
+.modal.room-info {
+  width: min(440px, calc(100vw - 32px));
+}
+.room-info-pic {
+  position: relative;
+  width: 100%;
+  max-height: 50dvh;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--glass-line);
+}
+.room-info-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.room-info-pic img + img {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.room-info-pic img.on {
+  opacity: 1;
+}
+.room-info-rows {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.room-info-rows > div {
+  display: grid;
+  grid-template-columns: 7.5em 1fr;
+  gap: 12px;
+}
+.room-info-rows dt {
+  color: var(--muted);
+}
+.room-info-rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .gallery-empty {
@@ -909,7 +1002,10 @@ button {
   outline: 0;
   background: var(--field);
   font-size: 15px;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
 }
 .text:hover {
   border-color: var(--line-strong);
@@ -962,13 +1058,21 @@ textarea.text {
   font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
-  transition: opacity 0.2s, transform 0.3s var(--spring), background 0.2s, border-color 0.2s, box-shadow 0.2s;
+  transition:
+    opacity 0.2s,
+    transform 0.3s var(--spring),
+    background 0.2s,
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 /* Glass like the bars (see "liquid glass"). The main button is tinted dark, still see-through. */
 .primary {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--glass-line));
   background-color: color-mix(in srgb, var(--accent) 88%, transparent);
-  background-image: linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 60%);
+  background-image: linear-gradient(
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0) 60%
+  );
   color: #fff;
 }
 .primary:hover:not(:disabled) {
@@ -1015,7 +1119,7 @@ textarea.text {
   height: 16px;
 }
 
-input[type='range'] {
+input[type="range"] {
   --p: 50%;
   flex: 1;
   height: 20px;
@@ -1025,49 +1129,59 @@ input[type='range'] {
   appearance: none;
   -webkit-appearance: none;
 }
-input[type='range']:focus {
+input[type="range"]:focus {
   outline: 0;
 }
-input[type='range']::-webkit-slider-runnable-track {
+input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--fg) 0 var(--p), var(--line) var(--p) 100%);
+  background: linear-gradient(
+    to right,
+    var(--fg) 0 var(--p),
+    var(--line) var(--p) 100%
+  );
 }
-input[type='range']::-moz-range-track {
+input[type="range"]::-moz-range-track {
   height: 4px;
   border-radius: 2px;
   background: var(--line);
 }
-input[type='range']::-moz-range-progress {
+input[type="range"]::-moz-range-progress {
   height: 4px;
   border-radius: 2px;
   background: var(--fg);
 }
-input[type='range']::-webkit-slider-thumb {
+input[type="range"]::-webkit-slider-thumb {
   width: 18px;
   height: 18px;
   margin-top: -7px;
   border: 3px solid var(--bg);
   border-radius: 50%;
   background: var(--fg);
-  box-shadow: 0 0 0 1px var(--fg), 0 1px 4px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 0 0 1px var(--fg),
+    0 1px 4px rgba(0, 0, 0, 0.2);
   transition: transform 0.1s;
   appearance: none;
   -webkit-appearance: none;
 }
-input[type='range']::-moz-range-thumb {
+input[type="range"]::-moz-range-thumb {
   width: 12px;
   height: 12px;
   border: 3px solid var(--bg);
   border-radius: 50%;
   background: var(--fg);
-  box-shadow: 0 0 0 1px var(--fg), 0 1px 4px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 0 0 1px var(--fg),
+    0 1px 4px rgba(0, 0, 0, 0.2);
 }
-input[type='range']:active::-webkit-slider-thumb {
+input[type="range"]:active::-webkit-slider-thumb {
   transform: scale(1.12);
 }
-input[type='range']:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 1px var(--fg), 0 0 0 5px var(--ring);
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 1px var(--fg),
+    0 0 0 5px var(--ring);
 }
 
 .toggle {
@@ -1157,7 +1271,10 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   color: var(--muted);
   cursor: pointer;
   outline: 0;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
 }
 .stage:hover,
 .stage.over {
@@ -1187,7 +1304,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .stage-pic canvas {
   display: block;
   border-radius: 4px;
-  box-shadow: 0 1px 2px var(--art-shadow), 0 18px 40px -18px var(--art-shadow);
+  box-shadow:
+    0 1px 2px var(--art-shadow),
+    0 18px 40px -18px var(--art-shadow);
 }
 .stage-empty {
   display: grid;
@@ -1204,7 +1323,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   border: 1px solid var(--line);
   border-radius: 50%;
   background: var(--bg);
-  transition: border-color 0.15s, transform 0.2s;
+  transition:
+    border-color 0.15s,
+    transform 0.2s;
 }
 .stage:hover .stage-icon {
   border-color: var(--fg);
@@ -1268,7 +1389,9 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   letter-spacing: -0.03em;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
-  transition: border-color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
 }
 .count-num:hover {
   background: var(--hover);
@@ -1298,7 +1421,10 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   background: var(--field);
   color: var(--muted);
   font-size: 11px;
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
 }
 .shape:hover {
   border-color: var(--line-strong);
@@ -1412,7 +1538,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   transition: background 0.15s;
 }
 .split-line::before {
-  content: '';
+  content: "";
   position: absolute;
   inset: 0 -5px;
 }
@@ -1481,7 +1607,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
     transform: rotate(360deg);
   }
 }
-
 
 /* ---- header stats & notes ---- */
 
@@ -1554,7 +1679,6 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   touch-action: none;
 }
 
-
 /* ---- reactions ---- */
 
 .react-pick {
@@ -1615,7 +1739,8 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   font-size: calc(var(--u) * 0.26);
   /* --up: how far the tray the note is stuck to is lifted while it's moved (0 to 1), which deepens the
      note's shadow with it (see follow() in Notes.tsx). */
-  --drop: 0 calc(var(--u) * (0.06 + 0.3 * var(--up, 0))) calc(var(--u) * (0.24 + 0.5 * var(--up, 0)))
+  --drop: 0 calc(var(--u) * (0.06 + 0.3 * var(--up, 0)))
+    calc(var(--u) * (0.24 + 0.5 * var(--up, 0)))
     rgba(0, 0, 0, calc(0.18 + 0.12 * var(--up, 0)));
   box-shadow: var(--drop);
   pointer-events: auto;
@@ -1930,11 +2055,21 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
 .player-dots li + li {
   margin-left: -6px;
 }
-.player-dots li:nth-child(1) { z-index: 5; }
-.player-dots li:nth-child(2) { z-index: 4; }
-.player-dots li:nth-child(3) { z-index: 3; }
-.player-dots li:nth-child(4) { z-index: 2; }
-.player-dots li:nth-child(5) { z-index: 1; }
+.player-dots li:nth-child(1) {
+  z-index: 5;
+}
+.player-dots li:nth-child(2) {
+  z-index: 4;
+}
+.player-dots li:nth-child(3) {
+  z-index: 3;
+}
+.player-dots li:nth-child(4) {
+  z-index: 2;
+}
+.player-dots li:nth-child(5) {
+  z-index: 1;
+}
 .player-btn {
   display: block;
   padding: 0;
@@ -1991,7 +2126,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   position: relative;
 }
 .player-dot.you::after {
-  content: 'You';
+  content: "You";
   position: absolute;
   bottom: -7px;
   left: 50%;
@@ -1999,7 +2134,11 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   border-radius: 999px;
   background: var(--fg);
   color: var(--bg);
-  font: 700 8px/1.2 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    700 8px/1.2 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   transform: translateX(-50%);
@@ -2488,7 +2627,11 @@ button.basics-more {
   border-bottom-width: 2px;
   border-radius: 6px;
   background: var(--field);
-  font: 500 12px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    500 12px/1 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
   white-space: nowrap;
 }
 
@@ -2520,7 +2663,11 @@ button.basics-more {
   border-bottom-width: 2px;
   border-radius: 6px;
   color: var(--muted);
-  font: 600 11px/1.2 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    600 11px/1.2 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
   text-align: center;
 }
 
@@ -2535,7 +2682,12 @@ button.basics-more {
   height: min(680px, calc(100dvh - 32px - var(--notch)));
   /* The side with the list of panels is greyer, from top to bottom, with a line along its edge:
      the dialog's padding (24) and the list (200, from 8 to the left of it) and half the gap. */
-  background-image: linear-gradient(to right, var(--hover) 228px, var(--line) 228px 229px, transparent 229px);
+  background-image: linear-gradient(
+    to right,
+    var(--hover) 228px,
+    var(--line) 228px 229px,
+    transparent 229px
+  );
 }
 /* The panels in a list down the side, the panel showing beside them, scrolling by itself. The
    list's icons line up with the title. */
@@ -2655,7 +2807,7 @@ button.basics-more {
   transition: background 0.15s;
 }
 .switch::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 2px;
   left: 2px;
@@ -2725,7 +2877,11 @@ button.link:hover {
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--field);
-  font: 500 15px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    500 15px/1.2 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
 }
 .passphrase .copy-btn {
   width: 32px;
@@ -2767,13 +2923,16 @@ button.link:hover {
 }
 .settings-key {
   color: var(--muted);
-  font: 600 11px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    600 11px/1 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 .settings-row svg.settings-ext {
   width: 14px;
   height: 14px;
 }
-
 
 .modal-actions {
   justify-content: flex-end;
@@ -2798,7 +2957,6 @@ button.link:hover {
   background: var(--danger);
   color: #fff;
 }
-
 
 /* ---- podium (finished jigsaws) ---- */
 
@@ -2860,7 +3018,9 @@ button.link:hover {
 }
 .podium-share:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 4px var(--ring), 0 10px 24px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 0 0 4px var(--ring),
+    0 10px 24px rgba(0, 0, 0, 0.35);
 }
 .podium-share svg {
   width: 18px;
@@ -2919,7 +3079,11 @@ button.link:hover {
   background: var(--bronze);
 }
 .stand-rank {
-  font: 800 44px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    800 44px/1 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 .place-1 .stand-rank {
   font-size: 60px;
@@ -2960,7 +3124,11 @@ button.link:hover {
 .room-link .text {
   flex: 1;
   min-width: 0;
-  font: 13px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    13px/1.2 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
 }
 .room-link .copy-btn {
   flex: none;
@@ -3001,7 +3169,6 @@ button.link:hover {
   margin: 0;
   overflow-wrap: anywhere;
 }
-
 
 /* ---- right click menu ---- */
 
@@ -3077,7 +3244,11 @@ button.link:hover {
 }
 .context-menu kbd {
   color: var(--muted);
-  font: 600 11px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    600 11px/1 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 /* The split screen button, with a narrow arrow beside it that opens its menu of layouts. */
 .split-btn {
@@ -3153,11 +3324,10 @@ button.link:hover {
   background: var(--c);
   transform: scale(1.12);
 }
-.context-menu .tray-colors button[aria-checked='true'] {
+.context-menu .tray-colors button[aria-checked="true"] {
   outline: 2px solid var(--c);
   outline-offset: 2px;
 }
-
 
 /* Sharing a finished jigsaw (see ShareDialog.tsx): the picture and the timelapse side by side,
    each with its own button. */
@@ -3383,7 +3553,7 @@ button.link:hover {
   font-weight: 500;
 }
 .search-meta > * + *::before {
-  content: '·';
+  content: "·";
   margin-right: 6px;
   color: var(--muted);
 }
@@ -3398,7 +3568,11 @@ button.link:hover {
   border: 1px solid var(--line-strong);
   border-radius: 5px;
   color: var(--muted);
-  font: 500 12px/1 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font:
+    500 12px/1 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
   opacity: 0;
 }
 .search-item.on .search-enter {
