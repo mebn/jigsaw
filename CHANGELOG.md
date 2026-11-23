@@ -1,5 +1,10 @@
 # Changelog
 
+## 23 November 2026
+
+- The jigsaws page has **All**, **Mine**, **In progress** and **Finished** tabs, loading more as you scroll.
+- Sort jigsaws by recent, nearly done or biggest.
+
 ## 20 November 2026
 
 - The jigsaws page opens on **My jigsaws**: the ones you made or played, with See all to sort them.

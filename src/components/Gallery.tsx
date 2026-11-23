@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent, ReactNode } from 'react'
 import type { RoomSummary } from '../../shared/protocol.ts'
-import { navigate } from '../lib/router.ts'
 import { infoLines } from './Card.tsx'
 import { isTyping, overlays } from '../lib/overlays.ts'
 
@@ -34,9 +33,6 @@ const CAPTION_LINE = 17
 // A section's heading, with the room under it, and the extra room between the sections (CSS px).
 const HEADING = 44
 const BETWEEN = 72
-// A link to a section's whole list under it: the room above it, and its height (CSS px).
-const MORE_TOP = 8
-const MORE_H = 36
 // Room at the top of the screen for the bar and tabs, and at the bottom (CSS px).
 const TOP = 112
 const BOTTOM = 56
@@ -75,24 +71,19 @@ export interface Placed {
 // How tall a jigsaw's picture is in a column col wide: as its shape, within reason.
 const tallness = (r: RoomSummary, col: number) => col * Math.min(1.5, Math.max(0.55, r.height / (r.width || 1)))
 
-// A section of the gallery: its heading, how many jigsaws it has in all (n), the ones shown, and
-// where the whole list is when it has more than are shown.
+// A section of the gallery: its heading, how many jigsaws it has in all (n), and the ones shown.
 export interface Section {
   title: string
   n: number
   rooms: RoomSummary[]
-  more?: { label: string; path: string }
 }
 
-// A section's heading on the canvas, or the link to its whole list under it (more, w wide): where it
-// starts, and what it says.
+// A section's heading on the canvas: where it starts, and what it says.
 interface Label {
   x: number
   y: number
   title: string
   n: number
-  w?: number
-  more?: string
 }
 
 // The jigsaws in columns, as many as fit in width, section after section, each under its heading:
@@ -101,7 +92,7 @@ interface Label {
 // has jigsaws, in the middle, so a few don't spread out across the page. Each section's first row
 // goes left to right, then each jigsaw goes in the shortest column so far. Columns are at least col
 // wide, widening up to maxCol to fill the width. Each jigsaw's caption takes as many lines as it needs
-// to fit under its picture. A section with more jigsaws than it shows has a link to them under it.
+// to fit under its picture.
 // Centred on 0, 0.
 function layout(sections: Section[], minCol: number, maxCol: number, gap: number, width: number) {
   const fit = Math.max(1, Math.floor((width + gap) / (minCol + gap)))
@@ -129,10 +120,6 @@ function layout(sections: Section[], minCol: number, maxCol: number, gap: number
       heights[c] += h + cap + gap
     })
     bottom = Math.max(top + HEADING, ...heights) - gap
-    if (s.more) {
-      labels.push({ x: 0, y: bottom + MORE_TOP, title: s.more.label, n: 0, w, more: s.more.path })
-      bottom += MORE_TOP + MORE_H
-    }
   })
   for (const p of [...placed, ...labels]) {
     p.x -= w / 2
@@ -438,37 +425,18 @@ export const Canvas = memo(function Canvas({
             {render(p)}
           </div>
         ))}
-        {labels.map((hd, k) =>
-          hd.more ? (
-            <a
-              key={`more ${hd.more}`}
-              ref={(el) => {
-                heads.current[k] = el
-              }}
-              href={hd.more}
-              className="cell canvas-more"
-              style={{ width: hd.w }}
-              onClick={(e) => {
-                if (!plainClick(e)) return
-                e.preventDefault()
-                navigate(hd.more!)
-              }}
-            >
-              <span>{hd.title}</span>
-            </a>
-          ) : (
-            <div
-              key={`${k} ${hd.title}`}
-              ref={(el) => {
-                heads.current[k] = el
-              }}
-              className="cell canvas-heading"
-            >
-              {hd.title}
-              <span className="n">{hd.n}</span>
-            </div>
-          ),
-        )}
+        {labels.map((hd, k) => (
+          <div
+            key={`${k} ${hd.title}`}
+            ref={(el) => {
+              heads.current[k] = el
+            }}
+            className="cell canvas-heading"
+          >
+            {hd.title}
+            <span className="n">{hd.n}</span>
+          </div>
+        ))}
       </div>
     </div>
   )

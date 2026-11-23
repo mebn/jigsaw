@@ -11,7 +11,7 @@ import type { PlayerLogin } from '../shared/protocol.ts'
 import { useLinger } from './lib/linger.ts'
 import { learnAvatars } from './lib/avatars.ts'
 import { useNotch } from './lib/fullscreen.ts'
-import { navigate, isGallery, listOf, paths, roomOf, takeLinkLogin, usePath } from './lib/router.ts'
+import { navigate, isGallery, paths, roomOf, takeLinkLogin, usePath } from './lib/router.ts'
 import { setSound, soundOn } from './lib/sound.ts'
 import { lastRoom, store } from './lib/storage.ts'
 
@@ -245,7 +245,7 @@ export default function App() {
           <Room key={shownRoom} id={shownRoom} leaving={!roomId} arriving={arriving === shownRoom} onArrived={arrived} />
         </Suspense>
       )}
-      {galleryShown && <Gallery here={onGallery} closing={galleryClosing} newOpen={path === paths.new} list={listOf(path)} />}
+      {galleryShown && <Gallery here={onGallery} closing={galleryClosing} newOpen={path === paths.new} />}
       {prompt && (
         <AccountPrompt
           key={prompt.mode}

@@ -1,36 +1,58 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { api } from '../lib/api.ts'
-import type { HomeRooms, RoomListKind, RoomSummary } from '../../shared/protocol.ts'
+import type { RoomSort, RoomSummary } from '../../shared/protocol.ts'
 import { useApp } from '../lib/app.ts'
 import { lastRoom, store } from '../lib/storage.ts'
 import { navigate, paths } from '../lib/router.ts'
 import { Back, Plus, Trash } from '../components/icons.tsx'
 import { Art, ArtInfo, Tile } from '../components/Card.tsx'
 import { Canvas, plainClick, preloadRoom } from '../components/Gallery.tsx'
-import type { Placed, Section } from '../components/Gallery.tsx'
+import type { Placed } from '../components/Gallery.tsx'
 import Dialog from '../components/Dialog.tsx'
 import Tabs from '../components/Tabs.tsx'
 import Settings from '../components/Settings.tsx'
 import Confirm from '../components/Confirm.tsx'
-import RoomList, { LIST_TITLES } from './RoomList.tsx'
+import SortButton from '../components/SortButton.tsx'
+import { useRoomLists } from '../lib/roomLists.ts'
+import type { RoomListDef } from '../lib/roomLists.ts'
 import { useLinger } from '../lib/linger.ts'
 
 const NewRoom = lazy(() => import('./NewRoom.tsx'))
 
-// The jigsaws page: the player's own jigsaws (made, connected in, or private ones they opened), those
-// in progress and the latest finished, or the public ones in progress that were played last, on a
-// gallery canvas (see Gallery.tsx). Each list that's longer than shown links to the whole of it, on
-// a page of its own under /home (list, see RoomList). Opening a jigsaw, the page stays over it until
-// its table is ready, then fades as the table zooms in (see App.tsx).
+// The jigsaws page: all public jigsaws, or the player's own (made, connected in, or private ones they
+// opened), those in progress and then the finished ones, in the order picked, on a gallery canvas
+// (see Gallery.tsx) that loads more as it nears the end. Opening a jigsaw, the page stays over it
+// until its table is ready, then fades as the table zooms in (see App.tsx).
 
 // How long the page takes to fade away over a jigsaw that opened (ms); matches the CSS.
 export const GALLERY_OUT_MS = 450
 
-type TabKey = 'mine' | 'public'
+type TabKey = 'public' | 'mine' | 'playing' | 'done'
 const TABS: { key: TabKey; title: string; hint: string }[] = [
-  { key: 'mine', title: 'My jigsaws', hint: 'Jigsaws you made or played' },
-  { key: 'public', title: 'Public', hint: 'Public jigsaws in progress' },
+  { key: 'public', title: 'All', hint: 'All public jigsaws' },
+  { key: 'mine', title: 'Mine', hint: 'Jigsaws you made or played' },
+  { key: 'playing', title: 'In progress', hint: 'Public jigsaws in progress' },
+  { key: 'done', title: 'Finished', hint: 'Finished public jigsaws' },
+]
+// The lists each tab shows, one after another.
+const PLAYING: RoomListDef = { kind: 'public', title: 'In progress' }
+const DONE: RoomListDef = { kind: 'publicFinished', title: 'Finished' }
+const LISTS: Record<TabKey, RoomListDef[]> = {
+  public: [PLAYING, DONE],
+  mine: [
+    { kind: 'mine', title: 'In progress' },
+    { kind: 'finished', title: 'Finished' },
+  ],
+  playing: [PLAYING],
+  done: [DONE],
+}
+// The orders the jigsaws can be in. Finished ones are always newest finished first, but by size when
+// sorted by that.
+const SORTS: { key: RoomSort; title: string }[] = [
+  { key: 'recent', title: 'Recent' },
+  { key: 'nearly', title: 'Nearly done' },
+  { key: 'pieces', title: 'Biggest' },
 ]
 
 interface GalleryProps {
@@ -39,11 +61,9 @@ interface GalleryProps {
   closing: boolean
   // The new jigsaw form is open over it (/new).
   newOpen: boolean
-  // The whole list it shows instead of its tabs, if any.
-  list: RoomListKind | null
 }
 
-export default function Gallery({ here, closing, newOpen, list: listHere }: GalleryProps) {
+export default function Gallery({ here, closing, newOpen }: GalleryProps) {
   const { player, playerId, openLogin } = useApp()
   // WebGPU starts now, so a jigsaw opened from here shows sooner. Its code is loaded with the
   // jigsaw page's, not with this page's.
@@ -58,34 +78,22 @@ export default function Gallery({ here, closing, newOpen, list: listHere }: Gall
     const idle = window.requestIdleCallback(preloadRoom, { timeout: 2000 })
     return () => window.cancelIdleCallback(idle)
   }, [])
-  // The whole list shown: it stays while the page fades over a jigsaw that is opening.
-  const [list, setList] = useState(listHere)
-  if (here && listHere !== list) setList(listHere)
-  // The jigsaws, null while they load, or 'failed'.
-  const [rooms, setRooms] = useState<HomeRooms | 'failed' | null>(null)
   // The jigsaw to go back to, as it was when the page opened: it stays while the page fades over a
   // jigsaw that is opening, so the bar in the top left doesn't change before it goes.
   const [last, setLast] = useState(lastRoom.get)
-  // Which jigsaws show, kept in this browser. Without a player there are none of their own.
-  const [tab, setTabState] = useState<TabKey>(() => (store.get('roomsTab') === 'public' || !player ? 'public' : 'mine'))
+  // Which jigsaws show, kept in this browser; all of them at first.
+  const [tab, setTabState] = useState<TabKey>(() => TABS.find((t) => t.key === store.get('roomsTab'))?.key ?? 'public')
   const setTab = (key: TabKey) => {
     store.set('roomsTab', key)
     setTabState(key)
   }
-  // Counts up when a jigsaw is deleted, so a whole list loads again.
-  const [version, setVersion] = useState(0)
-
-  const load = useCallback(
-    () =>
-      api
-        .home(player?.passphrase)
-        .then(setRooms)
-        .catch(() => setRooms('failed')),
-    [player?.passphrase],
-  )
-  useEffect(() => {
-    load()
-  }, [load])
+  // The order they're in, kept in this browser.
+  const [sort, setSortState] = useState<RoomSort>(() => SORTS.find((o) => o.key === store.get('roomsSort'))?.key ?? 'recent')
+  const setSort = (key: RoomSort) => {
+    store.set('roomsSort', key)
+    setSortState(key)
+  }
+  const { loading, failed, shown, sections, more, reload, drop } = useRoomLists(LISTS[tab], sort, player?.passphrase)
 
   // A jigsaw was clicked: the page fades and its table zooms in (see App.tsx and Room.tsx).
   const pick = useCallback(
@@ -105,41 +113,17 @@ export default function Gallery({ here, closing, newOpen, list: listHere }: Gall
     try {
       await api.remove(room.id, player?.passphrase)
     } catch {
-      return load()
+      return reload()
     }
     lastRoom.forget(room.id)
     if (last === room.id) setLast(null)
-    setVersion((v) => v + 1)
-    load()
+    drop(room.id)
   }
 
   const closeNew = useCallback(() => navigate(paths.rooms), [])
   const [newShown, newClosing] = useLinger(newOpen)
   // Where in the new jigsaw window's header its Create button goes (see NewRoom).
   const [createSlot, setCreateSlot] = useState<HTMLDivElement | null>(null)
-
-  // The sections the tab shows, each linking to its whole list when it has more.
-  const sections = useMemo((): Section[] => {
-    if (!rooms || rooms === 'failed') return []
-    const all: Section[] =
-      tab === 'mine'
-        ? [
-            {
-              title: 'In progress',
-              n: rooms.mineTotal,
-              rooms: rooms.mine,
-              more: rooms.mineTotal > rooms.mine.length ? { label: `See all ${rooms.mineTotal}`, path: paths.lists.mine } : undefined,
-            },
-            {
-              title: 'Finished',
-              n: rooms.finishedTotal,
-              rooms: rooms.finished,
-              more: rooms.finishedTotal > rooms.finished.length ? { label: `See all ${rooms.finishedTotal}`, path: paths.lists.finished } : undefined,
-            },
-          ]
-        : [{ title: 'In progress', n: rooms.publicTotal, rooms: rooms.public, more: { label: 'Browse all', path: paths.lists.public } }]
-    return all.filter((s) => s.rooms.length)
-  }, [rooms, tab])
 
   // Each jigsaw's picture, with how long it took under it when finished, or how far along it is.
   const render = useCallback(
@@ -177,20 +161,14 @@ export default function Gallery({ here, closing, newOpen, list: listHere }: Gall
     <div className={`gallery${!here ? ' going' : ''}${closing ? ' closing' : ''}`}>
       <header className="gallery-head">
         <div className="float">
-          {list ? (
-            <button className="icon-btn" onClick={() => navigate(paths.rooms)} aria-label="Back to the jigsaws" data-tip="Back to the jigsaws">
+          {last && (
+            <button className="icon-btn" onClick={() => navigate(paths.room(last))} aria-label="Back to the jigsaw" data-tip="Back to the jigsaw">
               <Back />
             </button>
-          ) : (
-            last && (
-              <button className="icon-btn" onClick={() => navigate(paths.room(last))} aria-label="Back to the jigsaw" data-tip="Back to the jigsaw">
-                <Back />
-              </button>
-            )
           )}
           <Settings />
         </div>
-        <h1>{list ? LIST_TITLES[list] : 'Jigsaws'}</h1>
+        <h1>Jigsaws</h1>
         <div className="gallery-actions">
           {!player && (
             <button className="secondary small" onClick={openLogin}>
@@ -204,53 +182,48 @@ export default function Gallery({ here, closing, newOpen, list: listHere }: Gall
         </div>
       </header>
 
-      {list ? (
-        <RoomList key={list} kind={list} render={render} version={version} />
+      <div className="gallery-tabs">
+        <Tabs tabs={TABS} value={tab} onChange={setTab} label="Show jigsaws" />
+        <SortButton sorts={SORTS} value={sort} onChange={setSort} />
+      </div>
+      {loading ? (
+        <div className="gallery-empty" aria-busy="true" aria-label="Loading jigsaws">
+          <span className="spin" />
+        </div>
+      ) : failed ? (
+        <section className="gallery-empty">
+          <p>Couldn't load the jigsaws.</p>
+          <button className="secondary" onClick={reload}>
+            Try again
+          </button>
+        </section>
+      ) : sections.length ? (
+        <Canvas sections={sections} start={shown} render={render} onNearEnd={more} />
+      ) : tab !== 'mine' ? (
+        <section className="gallery-empty">
+          <p>{tab === 'playing' ? 'No public jigsaws in progress.' : tab === 'done' ? 'No finished public jigsaws yet.' : 'No public jigsaws yet.'}</p>
+          <button className="primary" onClick={() => navigate(paths.new)}>
+            Make one
+          </button>
+        </section>
       ) : (
-        <>
-          <div className="gallery-tabs">
-            <Tabs tabs={TABS} value={tab} onChange={setTab} label="Show jigsaws" />
-          </div>
-          {!rooms ? (
-            <div className="gallery-empty" aria-busy="true" aria-label="Loading jigsaws">
-              <span className="spin" />
-            </div>
-          ) : rooms === 'failed' ? (
-            <section className="gallery-empty">
-              <p>Couldn't load the jigsaws.</p>
-              <button className="secondary" onClick={load}>
-                Try again
-              </button>
-            </section>
-          ) : sections.length ? (
-            <Canvas sections={sections} start={tab} render={render} />
-          ) : tab === 'public' ? (
-            <section className="gallery-empty">
-              <p>No public jigsaws in progress.</p>
+        <section className="gallery-empty">
+          <p>{player ? "You haven't made or played any jigsaws yet." : 'Log in to see the jigsaws you made and played.'}</p>
+          <div className="row">
+            {player ? (
               <button className="primary" onClick={() => navigate(paths.new)}>
-                Make one
+                New jigsaw
               </button>
-            </section>
-          ) : (
-            <section className="gallery-empty">
-              <p>{player ? "You haven't made or played any jigsaws yet." : 'Log in to see the jigsaws you made and played.'}</p>
-              <div className="row">
-                {player ? (
-                  <button className="primary" onClick={() => navigate(paths.new)}>
-                    New jigsaw
-                  </button>
-                ) : (
-                  <button className="primary" onClick={openLogin}>
-                    Log in
-                  </button>
-                )}
-                <button className="secondary" onClick={() => setTab('public')}>
-                  Public jigsaws
-                </button>
-              </div>
-            </section>
-          )}
-        </>
+            ) : (
+              <button className="primary" onClick={openLogin}>
+                Log in
+              </button>
+            )}
+            <button className="secondary" onClick={() => setTab('public')}>
+              All jigsaws
+            </button>
+          </div>
+        </section>
       )}
 
       {newShown && (

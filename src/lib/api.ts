@@ -8,7 +8,6 @@ import type {
   PlayerProfile,
   PlayerRef,
   RoomDetails,
-  HomeRooms,
   PlayerStats,
   RoomListKind,
   RoomPage,
@@ -90,9 +89,7 @@ export const api = {
     request<PlayerRef>('/api/players/avatar', { method: 'POST', body: image ? dataUrlBlob(image) : undefined, as: passphrase }),
   feedback: (text: string, passphrase?: string | null, room?: string | null) => post<{ ok: true }>('/api/feedback', { text, passphrase, room }),
   lan: () => request<{ address: string | null }>('/api/lan'),
-  // What the jigsaws page shows: this player's jigsaws and the public ones played last.
-  home: (passphrase?: string | null) => request<HomeRooms>('/api/rooms/home', { as: passphrase }),
-  // A page of one of the whole lists, from start.
+  // A page of one of the lists the jigsaws page shows, from start.
   list: (kind: RoomListKind, o: { sort?: RoomSort; start?: number }, passphrase?: string | null) => {
     const params = new URLSearchParams({ kind, start: String(o.start || 0) })
     if (o.sort) params.set('sort', o.sort)

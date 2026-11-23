@@ -92,8 +92,11 @@ const ORDERS: Record<RoomListKind, Partial<Record<RoomSort, Order>>> = {
     pieces: PIECES,
   },
   public: { recent: { order: 'r.played_at DESC, r.created DESC' }, newest: NEWEST, nearly: NEARLY, pieces: PIECES },
+  publicFinished: { finished: { order: 'r.finished_at DESC, r.created DESC' }, pieces: PIECES },
 }
-const KINDS: readonly RoomListKind[] = ['mine', 'finished', 'public']
+const KINDS: readonly RoomListKind[] = ['mine', 'finished', 'public', 'publicFinished']
+// Lists of public jigsaws, the same for everyone (no player in their query).
+const isPublic = (kind: RoomListKind) => kind === 'public' || kind === 'publicFinished'
 // sort when list kind can be sorted that way, else its default.
 const sortFor = (kind: RoomListKind, sort: string | null | undefined) =>
   (sort && sort in ORDERS[kind] ? sort : Object.keys(ORDERS[kind])[0]) as RoomSort
@@ -195,8 +198,8 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
     let l = lists.get(key)
     if (!l) {
       const where = [
-        kind === 'public' ? 'r.private = 0' : MINE,
-        kind === 'finished' ? 'r.group_count = 1' : 'r.group_count != 1',
+        isPublic(kind) ? 'r.private = 0' : MINE,
+        kind === 'finished' || kind === 'publicFinished' ? 'r.group_count = 1' : 'r.group_count != 1',
       ].join(' AND ')
       const { order, join = '' } = ORDERS[kind][sort]!
       l = {
@@ -210,10 +213,10 @@ export function createRooms({ prepare, tx, deleteRoom }: Db, hub: Hub, players: 
   }
   // A page of a list, from start, for player me ('' for nobody: their own lists are empty).
   function page(kind: RoomListKind, me: string, opts: { sort?: RoomSort; start?: number; limit: number }): RoomPage {
-    if (kind !== 'public' && !me) return { rooms: [], total: 0, next: null }
+    if (!isPublic(kind) && !me) return { rooms: [], total: 0, next: null }
     const { start = 0, limit } = opts
     const l = listOf(kind, sortFor(kind, opts.sort))
-    const params = kind === 'public' ? [] : [me, me, me]
+    const params = isPublic(kind) ? [] : [me, me, me]
     const rows = l.page.all(...(l.joined ? [me] : []), ...params, limit + 1, start)
     const more = rows.length > limit
     const rooms = rows.slice(0, limit).map((r) => summary(r, me))

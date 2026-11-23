@@ -556,7 +556,7 @@ button {
   text-transform: uppercase;
   color: var(--muted);
 }
-/* My jigsaws or public ones, under the title; on the whole list of public ones, its order. */
+/* Which jigsaws show, and the order button beside them, under the title. */
 .gallery-tabs {
   position: absolute;
   top: calc(72px + var(--notch));
@@ -565,11 +565,38 @@ button {
   z-index: 3;
   display: flex;
   justify-content: center;
+  gap: 8px;
   pointer-events: none;
   transition: opacity 0.2s;
 }
 .gallery-tabs .tabs {
   pointer-events: auto;
+}
+/* The order button beside the tabs, and its menu over the page. */
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 0 14px;
+  color: var(--fg);
+}
+.sort-btn svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  transition: transform 0.2s;
+}
+.sort-btn.open svg {
+  transform: rotate(180deg);
+}
+.context-menu.sort-menu {
+  z-index: 60;
+  min-width: 160px;
+}
+.sort-menu-check {
+  width: 1em;
+  text-align: center;
+  color: var(--muted);
 }
 .gallery-actions {
   display: flex;
@@ -580,6 +607,19 @@ button {
 @media (max-width: 600px) {
   .gallery-head h1 {
     display: none;
+  }
+  /* Four tabs and the order button fit across a phone, or wrap onto a second row. */
+  .gallery-tabs {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 16px;
+  }
+  .gallery-tabs .tab {
+    padding: 0 9px;
+    font-size: 12px;
+  }
+  .gallery-tabs .sort-btn {
+    padding: 0 7px 0 10px;
   }
   .gallery-head {
     grid-template-columns: 1fr 1fr;
@@ -639,36 +679,6 @@ button {
   opacity: 0.7;
 }
 .gallery.going .canvas-heading,
-.gallery.going .canvas-more {
-  opacity: 0;
-}
-/* The link under a section to the whole of its list. */
-.canvas-more {
-  display: flex;
-  justify-content: center;
-  height: 36px;
-  align-items: center;
-  text-decoration: none;
-  animation: fade 0.5s ease 0.3s both;
-  transition: opacity 0.2s;
-}
-.canvas-more span {
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--muted);
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-.canvas-more:hover span,
-.canvas-more:focus-visible span {
-  color: var(--fg);
-  background: var(--hover);
-}
 /* A jigsaw on the page: rises into place as the page comes in, the later ones a little later. */
 .tile {
   position: relative;

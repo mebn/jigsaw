@@ -116,8 +116,8 @@ export interface HomeRooms {
 }
 
 // The lists GET /api/rooms/list pages through: the player's own jigsaws in progress (mine), their
-// finished ones (finished), and public jigsaws in progress (public).
-export type RoomListKind = 'mine' | 'finished' | 'public'
+// finished ones (finished), public jigsaws in progress (public), and finished public ones (publicFinished).
+export type RoomListKind = 'mine' | 'finished' | 'public' | 'publicFinished'
 // The orders a list can be in: last played first (for their own jigsaws, by them), newest first,
 // nearest done first, most pieces first, and for finished ones, last finished first and the biggest
 // share of the connections made by the asking player first.
